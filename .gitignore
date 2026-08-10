@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+
+# macOS
+.DS_Store
+
+# Local design archives are source artifacts, not repo content
+*.zip
