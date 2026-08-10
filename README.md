@@ -1,5 +1,7 @@
 # Cross-Model Execution-Authority Control Loop
 
+[![ci](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml)
+
 A prototype that integrates a real OpenAI proposal stage with a real Claude
 execution stage while preserving a deterministic, fail-closed authority
 boundary.
