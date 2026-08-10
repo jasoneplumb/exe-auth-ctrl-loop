@@ -1,0 +1,64 @@
+name: Claude Review
+
+on:
+  pull_request:
+    types: [labeled]
+
+jobs:
+  claude-review:
+    # Only run when the review-requested label is added (not on every label event).
+    if: github.event.label.name == 'review-requested'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+      id-token: write # OIDC token for anthropics/claude-code-action auth
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Claude review
+        uses: anthropics/claude-code-action@4d7e1f0cd85743fdc93b1c8040ab54395da024e2 # v1.0.149
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          # The action's default tool allowlist is read-only; without these the
+          # posting tools are DENIED and the review silently posts nothing
+          # (permission_denials > 0, "No buffered inline comments"). These four
+          # let Claude actually post inline comments + a summary review.
+          claude_args: |
+            --allowedTools "mcp__github_inline_comment__create_inline_comment,Bash(gh pr review:*),Bash(gh pr comment:*),Bash(gh pr diff:*),Bash(gh pr view:*)"
+          prompt: |
+            Review this pull request as a senior engineer for the
+            exe-auth-ctrl-loop project: a cross-model execution-authority
+            control loop where OpenAI proposes, Claude requests execution, a
+            deterministic host-owned authority controller authorizes, and the
+            execution gateway is the only path to a registered side-effect
+            handler. Model outputs are untrusted requests, never authority.
+
+            Focus your review on:
+            1. Correctness bugs and logic errors.
+            2. Safety-invariant regressions — the README lists twelve; treat any
+               change that lets a handler run without a fresh, single-use,
+               exactly-scoped capability (or that widens a token's scope,
+               reuses evidence across partitions, or mutates a proposal after
+               approval) as blocking.
+            3. Security vulnerabilities and unsafe patterns, especially
+               confused-deputy and prompt-injection paths across the
+               model-to-host boundary.
+            4. Project conventions: Python 3.10+, src layout, relative imports
+               inside the package, offline deterministic tests (no external
+               API calls in tests), ruff/mypy/pytest must stay green.
+            5. Versioning discipline: any model, prompt, tool, policy, or
+               environment change must thread through PartitionKey rather than
+               reusing an existing evidence partition.
+
+            Post inline comments on specific lines where issues are found.
+
+            ALWAYS finish by submitting ONE formal PR review via
+            `gh pr review <PR> --comment --body "<verdict>"` — even if you found
+            no issues (state your overall verdict and "no blocking issues").
+
+            REPO: ${{ github.repository }}
+            PR NUMBER: ${{ github.event.pull_request.number }}
