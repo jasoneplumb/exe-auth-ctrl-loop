@@ -1,6 +1,7 @@
 # Cross-Model Execution-Authority Control Loop
 
 [![ci](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21894658.svg)](https://doi.org/10.5281/zenodo.21894658)
 
 A prototype that integrates a real OpenAI proposal stage with a real Claude
 execution stage while preserving a deterministic, fail-closed authority
@@ -12,10 +13,18 @@ host-owned authority controller selects versioned evidence, calculates a
 conservative success bound, applies policy, and issues a short-lived,
 single-use capability. The execution gateway is the only path to a handler.
 
-> **Status:** private prototype, staged for public release under the
+> **Status:** research prototype, released under the
 > [Apache-2.0 license](LICENSE). See [SECURITY.md](SECURITY.md) and the
 > [production trust boundary](#production-trust-boundary) before reusing any
 > of this in a real deployment.
+
+The design is published as a timestamped defensive disclosure:
+*Evidence-Partitioned Autonomy Authorization for LLM Agents: Single-Use
+Capability Tokens, a Selection-Bias Firewall, and Pre-Outcome Committed Audit
+Selection in a Cross-Model Execution-Authority Control Loop*
+([Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) ·
+[DOI 10.5281/zenodo.21894658](https://doi.org/10.5281/zenodo.21894658)).
+See [CITATION.cff](CITATION.cff) for citation metadata.
 
 ## Architecture
 
