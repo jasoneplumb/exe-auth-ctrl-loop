@@ -1,7 +1,11 @@
 # Cross-Model Execution-Authority Control Loop
 
 [![ci](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml/badge.svg)](https://github.com/jasoneplumb/exe-auth-ctrl-loop/actions/workflows/ci.yml)
-[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21894658.svg)](https://doi.org/10.5281/zenodo.21894658)
+[![Software DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21983061.svg)](https://doi.org/10.5281/zenodo.21983061)
+[![Disclosure DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.21894658.svg)](https://doi.org/10.5281/zenodo.21894658)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](pyproject.toml)
+[![Release](https://img.shields.io/github/v/release/jasoneplumb/exe-auth-ctrl-loop)](https://github.com/jasoneplumb/exe-auth-ctrl-loop/releases)
 
 A prototype that integrates a real OpenAI proposal stage with a real Claude
 execution stage while preserving a deterministic, fail-closed authority
