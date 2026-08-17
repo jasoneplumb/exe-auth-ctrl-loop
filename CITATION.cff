@@ -7,7 +7,14 @@ authors:
 version: 0.1.0
 license: Apache-2.0
 repository-code: "https://github.com/jasoneplumb/exe-auth-ctrl-loop"
+doi: 10.5281/zenodo.21983061
 identifiers:
+  - type: doi
+    value: 10.5281/zenodo.21983061
+    description: "Software archive, all versions (Zenodo)"
+  - type: doi
+    value: 10.5281/zenodo.21983062
+    description: "Software archive, v0.1.0 (Zenodo)"
   - type: doi
     value: 10.5281/zenodo.21894658
     description: "Timestamped design disclosure (Zenodo)"
