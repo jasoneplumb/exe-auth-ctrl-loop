@@ -14,3 +14,7 @@ build/
 
 # Local design archives are source artifacts, not repo content
 *.zip
+
+# Loop state stays untracked in the public repo (tracked copies belong in -ip)
+.qsitu/
+.intent/
