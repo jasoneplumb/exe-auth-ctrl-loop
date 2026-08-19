@@ -1,8 +1,22 @@
-"""Cross-model execution-authority control loop.
+"""
+Intent: Grant an agent execution authority only where a track record earned under that
+        exact configuration says it has been earned
+Context: OpenAI proposes, Claude requests execution, a deterministic host-owned controller
+        authorizes, and the gateway is the only path to a registered side-effect handler
+Pattern: Model output is never authority. Every model claim is a request the host verifies
+        against its own registry, evidence, and policy before anything runs.
+Future: Research prototype, single process. See the production trust boundary in README.md
+        before reusing any of it -- the gateway, the ledger, and token consumption all need
+        different implementations outside one process.
 
-OpenAI proposes, Claude requests execution, a deterministic host-owned
-authority controller authorizes, and the execution gateway is the only
-path to a registered side-effect handler.
+Module map:
+  authority.py  decision, evidence, capability issuance, gateway
+  tools.py      host-owned tool registry and schema validation
+  providers.py  OpenAI proposal generation
+  executor.py   Claude execution requests, verified per operation
+  pipeline.py   composition and ledger recording
+  ledger.py     tamper-evident hash chain
+  mcp.py        signed authority metadata for MCP tools/call
 """
 
 from __future__ import annotations

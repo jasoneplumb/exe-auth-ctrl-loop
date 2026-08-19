@@ -1,3 +1,13 @@
+"""
+Intent: Let the execution model ask for operations while ensuring asking is all it can do
+Context: Second stage. Receives a bundle from providers.py and drives authority.py and the
+        gateway; the model never reaches a handler itself.
+Pattern: Verify-then-authorize -- six structural checks run before authority is consulted
+        at all, so a malformed request never reaches the evidence lookup
+Future: Cross-run replay is out of scope here. The executed set lives inside one run, so
+        re-running the same bundle authorizes and executes again.
+"""
+
 from __future__ import annotations
 
 import json
@@ -89,6 +99,15 @@ run; do not route around it."""
         *,
         approved_proposal_ids: Iterable[str] = (),
     ) -> ExecutionRun:
+        """
+        intent: Drive one bundle to completion, or stop at the first thing not authorized
+        method: Turn loop over the model's tool requests, each handled and either executed
+                or refused; the first refusal ends the run
+        effect: No skip-and-continue. A blocked operation cannot be stepped over to reach a
+                later one, so a partial plan cannot be assembled out of the allowed parts.
+        constraint: Draft and clarification-needed bundles return before the model is called
+                    at all -- an incomplete proposal is never shown an execution surface
+        """
         if bundle.readiness == ProposalReadiness.DRAFT:
             return ExecutionRun(bundle.bundle_id, ExecutionStatus.NEEDS_REVISION, "", ())
         if bundle.readiness == ProposalReadiness.NEEDS_CLARIFICATION:
@@ -120,6 +139,10 @@ run; do not route around it."""
                 max_tokens=2048,
                 system=self.SYSTEM_PROMPT,
                 tools=tools,
+                # constraint: parallel tool use is off so effects are strictly serialized.
+                # Authority is re-evaluated between every operation, and an outcome that
+                # suspends a partition must be able to change the answer for the next call
+                # in the same run -- concurrent calls would race that re-evaluation.
                 tool_choice={"type": "auto", "disable_parallel_tool_use": True},
                 messages=messages,
             )
@@ -199,6 +222,18 @@ run; do not route around it."""
         approved: frozenset[str],
         executed: set[str],
     ) -> ExecutionStep:
+        """
+        intent: Decide whether one request from the model may become an effect
+        method: Six structural checks -- known id, not already run, tool matches, arguments
+                identical, schema still valid, effects unchanged -- then authority, then a
+                token, then the handler
+        effect: Structure is checked before evidence is consulted, so a tampered request is
+                refused without ever touching the track record
+        constraint: Argument comparison is whole-dictionary equality, not a subset test. An
+                    extra field is a mismatch, not an addition to be tolerated.
+        future: Python equality means 24 and 24.0 compare as identical, and the executed set
+                is per-run, so cross-run replay protection belongs to the deployment
+        """
         proposal_id = str(tool_input.pop("proposal_id", ""))
         proposal = proposals.get(proposal_id)
         if proposal is None:
@@ -277,6 +312,13 @@ run; do not route around it."""
 
     @staticmethod
     def _public_proposal(proposal: Proposal) -> dict[str, Any]:
+        """
+        intent: Show the execution model what it may select, and nothing that would help it
+                argue for more
+        constraint: Omits the partition, confidence, effects, assumptions, and unresolved
+                    questions. The model cannot see the evidence key it would be judged
+                    against, so it cannot tailor a request toward a well-stocked partition.
+        """
         return {
             "proposal_id": proposal.proposal_id,
             "intent": proposal.intent,
