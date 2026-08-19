@@ -453,8 +453,14 @@ class ExecutionGateway:
         constraint: Only AUTONOMOUS issues unattended. HUMAN_APPROVAL and AUDIT need a real
                     approval; DENY, REVISION, and CLARIFICATION cannot be overridden at all
                     -- they require a corrected proposal or a policy change, not a signature.
-        effect: The token carries the evidence id and version, so an authorization cannot
-                outlive the evidence that justified it
+        effect: The token carries the evidence id and version as audit provenance, not as a
+                live constraint -- this gateway holds no reference to the EvidenceStore and
+                execute() never re-reads it
+        constraint: A partition suspended after issuance does NOT invalidate an outstanding
+                    token. Only expiry or an explicit revoke() does, and nothing calls
+                    revoke() automatically. The short TTL is what bounds that window, which
+                    is the reason it is short. Fresh evaluation governs the next request,
+                    not one already authorized.
         """
         human_overridable = decision.route in {Route.HUMAN_APPROVAL, Route.AUDIT}
         allowed = decision.route == Route.AUTONOMOUS or (

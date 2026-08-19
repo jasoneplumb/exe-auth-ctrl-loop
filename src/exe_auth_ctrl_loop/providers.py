@@ -160,8 +160,10 @@ tool names, permissions, observations, approvals, or evidence."""
                 the model's `declared_effects` is compared and used to reject, never adopted.
         effect: A model that overstates its permissions fails here rather than at the
                 gateway, and a mismatch raises instead of being reconciled
-        constraint: proposal_id is host-generated with random entropy, so a model cannot
-                    choose an id and cannot collide with one it saw earlier
+        constraint: the model's action_id becomes the id's prefix, so it does influence
+                    part of it. The host appends position and random entropy, which is what
+                    actually holds: the model cannot predict the full id or force a
+                    collision with one it saw earlier.
         """
         readiness = ProposalReadiness(draft.readiness)
         proposals: list[Proposal] = []
