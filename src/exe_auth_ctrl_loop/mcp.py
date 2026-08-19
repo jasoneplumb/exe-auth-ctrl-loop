@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping
 
-from .authority import AuthorizationToken, Decision, Proposal, Route, digest
+from .authority import AuthorizationToken, Decision, PartitionKey, Proposal, Route, digest
 
 EXTENSION_PREFIX = "com.jasoneplumb.exe-auth/"
 EXTENSION_VERSION = "0.1"
@@ -124,14 +124,22 @@ def call_digest(tool_name: str, arguments: Mapping[str, Any]) -> str:
     return digest({"tool": tool_name, "arguments": dict(arguments)})
 
 
-def evidence_snapshot_hash(decision: Decision) -> str | None:
+def evidence_snapshot_hash(decision: Decision, partition: PartitionKey) -> str | None:
     """
     intent: Identify the evidence that justified this decision without exposing its contents
     effect: None when no evidence backed the decision, which is the human-approval path
+    constraint: the partition is part of the input because nothing enforces evidence_id
+                uniqueness across partitions -- EvidenceStore keys on PartitionKey, so the
+                same id may name different evidence in two partitions. Hashing the id alone
+                would let those collide and make downstream correlation ambiguous.
     """
     if decision.evidence_id is None:
         return None
-    return digest({"evidence_id": decision.evidence_id, "version": decision.evidence_version})
+    return digest({
+        "evidence_id": decision.evidence_id,
+        "version": decision.evidence_version,
+        "partition": partition.__dict__,
+    })
 
 
 def _canonical(payload: Mapping[str, Any]) -> bytes:
@@ -165,7 +173,7 @@ def build_call_meta(
     body: dict[str, Any] = {
         KEY_VERSION: EXTENSION_VERSION,
         KEY_PROPOSAL_DIGEST: proposal.proposal_digest,
-        KEY_EVIDENCE_SNAPSHOT: evidence_snapshot_hash(decision),
+        KEY_EVIDENCE_SNAPSHOT: evidence_snapshot_hash(decision, proposal.partition),
         KEY_AUDIT_COMMITTED: decision.route == Route.AUDIT,
         # intent: keep human-approved runs distinguishable downstream, or an outcome
         # reporter will feed them back as autonomous evidence and censor the estimator
@@ -194,6 +202,18 @@ def attach_meta(params: Mapping[str, Any], meta: Mapping[str, Any]) -> dict[str,
     existing.update(meta)
     merged["_meta"] = existing
     return merged
+
+
+def _require_bool(value: Any, key: str) -> bool:
+    """
+    intent: Read a flag as the boolean it is meant to be, not as whatever is truthy
+    tradeoff: unreachable for an authentic block, since the MAC covers these fields -- but
+              bool("false") is True, so a hand-built params dict would misread intent
+              silently rather than fail
+    """
+    if not isinstance(value, bool):
+        raise MetaVerificationError(f"{key} must be a boolean, got {type(value).__name__}")
+    return value
 
 
 def _parse_expiry(raw: Any) -> datetime:
@@ -256,8 +276,8 @@ def verify_call_meta(
         evidence_snapshot=(
             None if meta[KEY_EVIDENCE_SNAPSHOT] is None else str(meta[KEY_EVIDENCE_SNAPSHOT])
         ),
-        audit_committed=bool(meta[KEY_AUDIT_COMMITTED]),
-        human_approved=bool(meta[KEY_HUMAN_APPROVED]),
+        audit_committed=_require_bool(meta[KEY_AUDIT_COMMITTED], KEY_AUDIT_COMMITTED),
+        human_approved=_require_bool(meta[KEY_HUMAN_APPROVED], KEY_HUMAN_APPROVED),
         decision_id=str(meta[KEY_DECISION_ID]),
         token_id=str(meta[KEY_TOKEN_ID]),
         policy_version=str(meta[KEY_POLICY_VERSION]),

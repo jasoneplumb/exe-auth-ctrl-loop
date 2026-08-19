@@ -8,8 +8,11 @@ Pattern: One denial path per test, so a regression names the check that broke
 
 import random
 import unittest
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from unittest import mock
 
+from exe_auth_ctrl_loop import mcp
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
     EvidenceSnapshot,
@@ -30,6 +33,7 @@ from exe_auth_ctrl_loop.mcp import (
     MetaVerificationError,
     attach_meta,
     build_call_meta,
+    evidence_snapshot_hash,
     meta_key,
     validate_meta_prefix,
     verify_call_meta,
@@ -191,6 +195,44 @@ class CallMetaTests(unittest.TestCase):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
             )
+
+    def test_version_mismatch_is_rejected(self):
+        """
+        intent: A server that does not support this version must deny, not degrade
+        method: Move the module's supported version rather than editing the signed block,
+                so the MAC stays authentic and the version check is what fails
+        """
+        params = self.signed_params()
+        with mock.patch.object(mcp, "EXTENSION_VERSION", "99.99"):
+            with self.assertRaises(MetaVerificationError):
+                verify_call_meta(
+                    params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+                )
+
+    def test_non_boolean_flag_is_rejected(self):
+        """A hand-built block whose flag is the string "false" must not read as True."""
+        decision, token = self.authorize()
+        meta = dict(build_call_meta(decision, self.proposal, token, SECRET))
+        meta[KEY_AUDIT_COMMITTED] = "false"
+        meta[KEY_MAC] = mcp._mac({k: meta[k] for k in mcp._SIGNED_KEYS}, SECRET)
+        params = attach_meta({"name": "create_refund"}, meta)
+        with self.assertRaises(MetaVerificationError):
+            verify_call_meta(
+                params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+            )
+
+    def test_same_evidence_id_in_two_partitions_does_not_collide(self):
+        """
+        intent: Evidence ids are unique per partition, not globally
+        effect: Two partitions holding "ev-88" produce distinct evidenceSnapshot hashes,
+                so downstream correlation stays unambiguous
+        """
+        other_key = replace(self.key, task_category="payout")
+        decision, _ = self.authorize()
+        self.assertNotEqual(
+            evidence_snapshot_hash(decision, self.key),
+            evidence_snapshot_hash(decision, other_key),
+        )
 
     def test_unsigned_metadata_cannot_be_built(self):
         decision, token = self.authorize()

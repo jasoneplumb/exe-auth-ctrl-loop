@@ -38,7 +38,7 @@ required, and a missing key is a denial rather than a default.
 | --- | --- | --- |
 | `version` | string | Extension version. A mismatch denies rather than degrades. |
 | `proposalDigest` | string | Digest of the authorized proposal, as the host recorded it. |
-| `evidenceSnapshot` | string \| null | Digest of the evidence identity and version that justified the decision. `null` on the human-approval path, where no evidence backed it. |
+| `evidenceSnapshot` | string \| null | Digest of the evidence identity, version, **and partition** that justified the decision. `null` on the human-approval path, where no evidence backed it. |
 | `auditCommitted` | boolean | Whether this operation was drawn for audit. The draw is committed into the authorization record before the outcome exists. |
 | `humanApproved` | boolean | Whether a human approved this execution. |
 | `callDigest` | string | Digest of `{tool, arguments}` — the one field the server can independently recompute. |
@@ -55,6 +55,13 @@ reporter cannot tell an approved execution from an autonomous one, human-approve
 counted as autonomous successes — and the human filter has removed exactly the failures the
 autonomous path would have committed. The evidence base is then censored where the system is
 least trustworthy. Carrying the flag keeps the estimator on-policy across a process boundary.
+
+### On `evidenceSnapshot`
+
+The partition is part of the hash input, not just the evidence id and version. Evidence ids
+are unique *per partition* — `EvidenceStore` keys on `PartitionKey` — so hashing the id alone
+would let the same id in two partitions produce one hash and make downstream correlation
+ambiguous. The value stays opaque to the server, which never recomputes it.
 
 ### On `auditCommitted`
 
