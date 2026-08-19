@@ -28,6 +28,20 @@ from .authority import (
 )
 from .executor import ClaudeExecutionAgent, ExecutionRun, ExecutionStatus, ExecutionStep
 from .ledger import EventLedger, LedgerEvent
+from .mcp import (
+    EXTENSION_PREFIX,
+    EXTENSION_VERSION,
+    MetaKeyError,
+    MetaVerificationError,
+    VerifiedAuthority,
+    attach_meta,
+    build_call_meta,
+    call_digest,
+    evidence_snapshot_hash,
+    meta_key,
+    validate_meta_prefix,
+    verify_call_meta,
+)
 from .pipeline import CrossModelAuthorityLoop
 from .providers import (
     OpenAIProposalGenerator,
@@ -41,6 +55,8 @@ from .tools import ToolDefinition, ToolRegistry, ToolValidationError
 __version__ = "0.1.0"
 
 __all__ = [
+    "EXTENSION_PREFIX",
+    "EXTENSION_VERSION",
     "AuthorityController",
     "AuthorizationToken",
     "ClaudeExecutionAgent",
@@ -54,6 +70,8 @@ __all__ = [
     "ExecutionStatus",
     "ExecutionStep",
     "LedgerEvent",
+    "MetaKeyError",
+    "MetaVerificationError",
     "OpenAIProposalGenerator",
     "Outcome",
     "OutcomeStatus",
@@ -69,8 +87,16 @@ __all__ = [
     "ToolDefinition",
     "ToolRegistry",
     "ToolValidationError",
+    "VerifiedAuthority",
+    "attach_meta",
+    "build_call_meta",
+    "call_digest",
     "confidence_bin",
     "digest",
+    "evidence_snapshot_hash",
+    "meta_key",
     "utcnow",
+    "validate_meta_prefix",
+    "verify_call_meta",
     "wilson_lower_bound",
 ]

@@ -92,6 +92,21 @@ For every Claude tool request, the host verifies:
 Anthropic client tool documentation:
 <https://platform.claude.com/docs/en/agents-and-tools/tool-use/overview>
 
+### MCP protocol binding
+
+`exe_auth_ctrl_loop.mcp` carries an authorization with the tool call it authorizes, as
+vendor-namespaced metadata under `com.jasoneplumb.exe-auth/` on `tools/call` requests. The
+block carries the proposal digest, the evidence-snapshot hash, and the committed audit flag,
+and it is signed: `_meta` rides on a request a model asked for, so an unsigned block would be
+a claim a server cannot check.
+
+A receiving server recomputes the call digest from the tool name and arguments it actually
+received. Edited arguments, a substituted tool, a forged or stripped signature, and an
+expired authorization each deny.
+
+See [docs/mcp-extension.md](docs/mcp-extension.md) for the key specification and the
+verification order, and `python examples/mcp_demo.py` for a runnable round trip.
+
 ## Safety invariants
 
 1. **No capability, no execution.** Registered handlers are reachable only through the gateway.
@@ -176,9 +191,12 @@ alternatives and outcome-dependent costs.
 | `src/exe_auth_ctrl_loop/executor.py` | Claude client-tool loop with per-operation authorization |
 | `src/exe_auth_ctrl_loop/pipeline.py` | OpenAI-to-Claude orchestration with event recording |
 | `src/exe_auth_ctrl_loop/ledger.py` | In-memory tamper-evident event hash chain |
+| `src/exe_auth_ctrl_loop/mcp.py` | MCP binding: signed authority metadata on `tools/call` |
+| `docs/mcp-extension.md` | Key specification for the MCP extension |
 | `examples/example.py` | Offline deterministic example |
+| `examples/mcp_demo.py` | Offline MCP round trip, including the denial paths |
 | `examples/live_example.py` | Live OpenAI and Anthropic API example using a harmless mock handler |
-| `tests/` | Authority, provider, execution, mutation, approval, and ledger acceptance tests |
+| `tests/` | Authority, provider, execution, mutation, approval, ledger, and MCP binding acceptance tests |
 
 ## Getting started
 
@@ -197,6 +215,7 @@ The tests use fake provider clients and never call an external API:
 ```bash
 pytest
 python examples/example.py
+python examples/mcp_demo.py
 ```
 
 ### Lint and type-check
