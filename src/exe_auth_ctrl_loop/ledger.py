@@ -1,3 +1,16 @@
+"""
+Intent: Make the authorization record tamper-evident, so "why was this allowed?" has an
+        answer that cannot be quietly rewritten afterwards
+Context: pipeline.py appends proposal, decision, and execution events; the committed audit
+        draw lands here before any outcome exists, which is what makes audit selection
+        independent of results
+Pattern: Hash chain -- each event covers the previous event's hash, so altering any earlier
+        entry invalidates every entry after it
+Future: In-memory and single-process. Production needs durable append-only storage, and
+        ideally external anchoring, since a chain an attacker can rewrite wholesale proves
+        only internal consistency.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -20,7 +33,11 @@ class LedgerEvent:
 
 
 class EventLedger:
-    """In-memory hash chain; replace with durable append-only storage in production."""
+    """
+    intent: Append-only history of what was decided and what ran
+    constraint: No update or delete method exists, and none should be added -- the value of
+                the chain is that the only legal operation is append
+    """
 
     def __init__(self) -> None:
         self.events: list[LedgerEvent] = []
@@ -33,6 +50,12 @@ class EventLedger:
         payload: Mapping[str, Any],
         occurred_at: datetime | None = None,
     ) -> LedgerEvent:
+        """
+        intent: Add one event and link it to everything that came before
+        method: Hash the event body together with the previous event's hash
+        effect: Editing event 3 changes its hash, which breaks the link event 4 recorded --
+                so tampering is detectable at verify() rather than silent
+        """
         when = occurred_at or utcnow()
         previous = self.events[-1].event_hash if self.events else "GENESIS"
         body = {
@@ -58,6 +81,12 @@ class EventLedger:
         return event
 
     def verify(self) -> bool:
+        """
+        intent: Re-derive every hash and confirm the chain still holds
+        constraint: Detects edits to a retained chain. It cannot detect truncation of the
+                    tail or wholesale replacement, because a shorter chain re-derived from
+                    GENESIS is internally consistent -- that needs external anchoring.
+        """
         previous = "GENESIS"
         for event in self.events:
             body = {

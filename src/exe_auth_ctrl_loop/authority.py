@@ -1,3 +1,14 @@
+"""
+Intent: Decide whether one operation may run without a human, and issue a capability
+        narrow enough that the answer cannot be stretched into a different question
+Context: The host owns this module. Both model runtimes are upstream of it and neither can
+        reach past it -- providers.py proposes, executor.py requests, this authorizes
+Pattern: Fail-closed accumulation -- reasons are collected, and any reason at all withholds
+        autonomy. Nothing here grants on the absence of a check.
+Future: In-process only. A production gateway needs its own service identity, transactional
+        token consumption, and durable evidence storage.
+"""
+
 from __future__ import annotations
 
 import json
@@ -16,6 +27,12 @@ def utcnow() -> datetime:
 
 
 def digest(value: Any) -> str:
+    """
+    intent: Give any record a stable identity that changes if any field changes
+    method: Canonical JSON -- sorted keys, no whitespace -- then SHA-256
+    context: Underpins proposal binding, the evidence snapshot, and the ledger hash chain,
+             so equality of digests is what "unmodified" means everywhere in this package
+    """
     encoded = json.dumps(value, sort_keys=True, separators=(",", ":"), default=str).encode()
     return sha256(encoded).hexdigest()
 
@@ -45,6 +62,14 @@ class OutcomeStatus(str, Enum):
 
 @dataclass(frozen=True)
 class PartitionKey:
+    """
+    intent: Name the exact configuration a track record belongs to
+    constraint: Twelve fields, and evidence never pools across them. Both models' versions
+                AND both prompt versions are in the key, so changing a prompt invalidates a
+                record earned under the old one -- evidence from one configuration says
+                nothing about another.
+    """
+
     proposal_provider: str
     proposal_model_version: str
     proposal_prompt_version: str
@@ -83,6 +108,13 @@ class Proposal:
 
     @property
     def proposal_digest(self) -> str:
+        """
+        intent: Bind an authorization to this proposal and no other
+        effect: Every field is in the digest, so an argument edited after the decision
+                produces a different digest and the gateway refuses the token
+        future: Uses partition.__dict__; asdict() is safer against __slots__, but changing
+                it would alter every digest, so it is deferred rather than done quietly
+        """
         return digest({
             "id": self.proposal_id,
             "intent": self.intent,
@@ -200,10 +232,23 @@ class Outcome:
 
 
 class EvidenceStore:
+    """
+    Intent: Hold one track record per exact configuration, and decide what is allowed to
+            enter it
+    Pattern: Monotonic versioning -- snapshots are replaced, never mutated, so a decision
+            can name the exact evidence version it relied on
+    Future: In-memory. Production needs durable storage and the same version discipline.
+    """
+
     def __init__(self) -> None:
         self._items: dict[PartitionKey, EvidenceSnapshot] = {}
 
     def put(self, snapshot: EvidenceSnapshot) -> None:
+        """
+        intent: Replace a partition's snapshot while keeping version history meaningful
+        constraint: Versions must strictly increase -- a decision records the version it
+                    relied on, and a reused version would make that record ambiguous
+        """
         current = self._items.get(snapshot.key)
         if current and snapshot.version <= current.version:
             raise ValueError("evidence version must increase")
@@ -213,6 +258,20 @@ class EvidenceStore:
         return self._items.get(key)
 
     def adjudicate(self, key: PartitionKey, outcome: Outcome, autonomous: bool) -> None:
+        """
+        intent: Fold one adjudicated outcome into the track record -- or deliberately not
+        method: Severe failures suspend before any counting; otherwise only autonomous,
+                decisively-adjudicated outcomes update the counts
+        effect: This is the selection-bias firewall. Human-approved executions are dropped
+                on the floor rather than counted, because a reviewer removes exactly the
+                failures the autonomous path would have committed. Counting them would let
+                the system infer "I no longer need watching" from data that looks good only
+                because someone was watching -- and reviewing harder would earn autonomy
+                faster. Discarding real signal is the price of keeping the estimator
+                on-policy, and it is intended.
+        constraint: PENDING, PARTIAL, and DISPUTED are also dropped -- an ambiguous outcome
+                    is not evidence of success or of failure.
+        """
         current = self._items.get(key)
         if current is None:
             raise KeyError("partition not found")
@@ -223,6 +282,8 @@ class EvidenceStore:
                 suspended=True,
                 invalidation_reason="severe_failure",
             ))
+            # constraint: nothing in this package ever clears `suspended`. Autonomy is
+            # earned over many outcomes and withdrawn by one; restoring it is a human act.
             return
         if not autonomous or outcome.status not in {
             OutcomeStatus.ACCEPTABLE,
@@ -239,6 +300,16 @@ class EvidenceStore:
 
 
 def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
+    """
+    intent: Ask what success rate the evidence actually supports, not what it observed
+    method: One-sided Wilson score interval, which stays well behaved at small n and at
+            rates near 1.0 where the normal approximation falls apart
+    effect: Ten-for-ten returns roughly 0.72, not 1.0. Thin evidence cannot clear a high
+            threshold no matter how clean it looks, which is what makes n_min a floor
+            rather than the only defence.
+    tradeoff: Returns 0.0 for an empty record rather than raising, so an unknown partition
+              flows into the same "below threshold" path as a bad one
+    """
     if total <= 0:
         return 0.0
     p = successes / total
@@ -249,6 +320,14 @@ def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
 
 
 class AuthorityController:
+    """
+    Intent: Answer one question -- may this exact operation run right now without a human?
+    Context: Called by executor.py immediately before each tool invocation, never once per
+            plan. An approval earned earlier in a run buys nothing here.
+    Pattern: Deterministic given its inputs, apart from the audit draw, so a decision can be
+            replayed from the ledger and re-derived.
+    """
+
     def __init__(
         self,
         evidence: EvidenceStore,
@@ -262,6 +341,14 @@ class AuthorityController:
         self.clock = clock
 
     def evaluate(self, proposal: Proposal) -> Decision:
+        """
+        intent: Route one proposal, and record why in a form that survives the decision
+        method: Accumulate reason codes, then grant autonomy only if none were raised
+        effect: Reasons are additive and never cancel, so a new check can only narrow what
+                is authorized. Adding one cannot accidentally widen authority.
+        context: The returned Decision is what the gateway binds a token to and what the
+                 ledger records; nothing downstream re-derives the verdict.
+        """
         now = self.clock()
         reasons: list[str] = []
         snapshot = self.evidence.get(proposal.partition)
@@ -304,11 +391,19 @@ class AuthorityController:
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
 
+        # constraint: any reason at all withholds autonomy. There is no weighing and no
+        # threshold of severity -- the check is `bool(reasons)`, so a check that fires for
+        # an unforeseen reason still fails closed.
         blocking = bool(reasons)
         audit_draw: float | None = None
         audit_probability = 0.0
         if route not in {Route.DENY, Route.REVISION, Route.CLARIFICATION} and not blocking:
             audit_probability = self.policy.audit_rate
+            # intent: draw now, before the operation runs and before any outcome exists,
+            # and carry the draw into the Decision the ledger chains. Selecting audits
+            # afterwards -- or being able to revise the selection -- would let an operator
+            # or a strategic agent steer scrutiny away from the failures. Committing first
+            # makes audit selection provably independent of results.
             audit_draw = self.rng.random()
             route = Route.AUDIT if audit_draw < audit_probability else Route.AUTONOMOUS
             reasons.append(
@@ -332,6 +427,16 @@ class AuthorityController:
 
 
 class ExecutionGateway:
+    """
+    Intent: Be the only path from an authorization to a real side effect
+    Context: Holds the handler call. Neither model runtime can reach a handler except by
+            presenting a token this gateway issued.
+    Pattern: Capability, not permission check -- the token names one tool, one effect set,
+            one proposal digest, one use, and a short expiry.
+    Future: Tokens are in-process objects. Across a network they must be signed or held
+            server-side, and consumed transactionally rather than flagged.
+    """
+
     def __init__(self, clock: Callable[[], datetime] = utcnow) -> None:
         self.clock = clock
         self.tokens: dict[str, AuthorizationToken] = {}
@@ -343,6 +448,14 @@ class ExecutionGateway:
         policy: Policy,
         human_approved: bool = False,
     ) -> AuthorizationToken:
+        """
+        intent: Mint a capability scoped to exactly the decision that justified it
+        constraint: Only AUTONOMOUS issues unattended. HUMAN_APPROVAL and AUDIT need a real
+                    approval; DENY, REVISION, and CLARIFICATION cannot be overridden at all
+                    -- they require a corrected proposal or a policy change, not a signature.
+        effect: The token carries the evidence id and version, so an authorization cannot
+                outlive the evidence that justified it
+        """
         human_overridable = decision.route in {Route.HUMAN_APPROVAL, Route.AUDIT}
         allowed = decision.route == Route.AUTONOMOUS or (
             human_approved and human_overridable
@@ -372,6 +485,13 @@ class ExecutionGateway:
         proposal: Proposal,
         adapter: Callable[[Proposal], Any],
     ) -> Any:
+        """
+        intent: Spend a capability once, on the operation it was issued for
+        method: Re-check identity, liveness, and scope at the moment of use rather than
+                trusting that issuance is still valid
+        effect: Every mismatch raises PermissionError, so a caller cannot distinguish
+                "expired" from "wrong tool" by control flow and act on the difference
+        """
         token = self.tokens.get(token_id)
         if token is None or token.used or token.revoked:
             raise PermissionError("missing, consumed, or revoked token")
@@ -383,7 +503,10 @@ class ExecutionGateway:
             raise PermissionError("tool exceeds authorization")
         if not proposal.requested_effects <= token.allowed_effects:
             raise PermissionError("effect exceeds authorization")
-        token.used = True  # Production: atomically consume before invocation.
+        # tradeoff: flag-then-invoke is safe in one process but not across a network --
+        # two concurrent redemptions could both observe used=False. Production must consume
+        # the token transactionally before the handler is reached.
+        token.used = True
         return adapter(proposal)
 
     def revoke(self, token_id: str) -> None:

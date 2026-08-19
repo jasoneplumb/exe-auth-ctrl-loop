@@ -1,3 +1,14 @@
+"""
+Intent: Keep the facts about a tool -- its effects, version, risk, and schema -- on the
+        host's side of the boundary, where no model can restate them
+Context: authority.py reads risk and effects from here; executor.py validates every request
+        against it before a decision is even sought
+Pattern: Single source of truth. A model's claim about a tool is compared to this registry
+        and discarded on mismatch, never merged into it.
+Future: Handlers are plain callables in-process; production puts them behind a service
+        identity the model runtimes cannot address.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,6 +17,9 @@ from typing import Any, Callable, Mapping
 try:
     from jsonschema import Draft202012Validator
 except ImportError:  # pragma: no cover - exercised only without optional dependencies
+    # constraint: jsonschema is optional, so the fallback validator below must stay
+    # strictly narrower than the real one -- a permissive fallback would mean validation
+    # silently weakens when the dependency is absent.
     Draft202012Validator = None  # type: ignore[assignment,misc]
 
 
@@ -29,6 +43,12 @@ class ToolDefinition:
     handler: ToolHandler
 
     def classify_risk(self, parameters: Mapping[str, Any]) -> str:
+        """
+        intent: Let risk depend on the actual argument values, not just the tool
+        effect: A $24 refund and a $24,000 refund can land in different partitions and face
+                different thresholds, so evidence earned on the cheap case does not
+                authorize the expensive one
+        """
         if callable(self.risk_class):
             return self.risk_class(parameters)
         return self.risk_class
@@ -54,6 +74,12 @@ class ToolRegistry:
             raise ToolValidationError(f"unknown tool: {name}") from exc
 
     def validate(self, name: str, parameters: Mapping[str, Any]) -> None:
+        """
+        intent: Check arguments against the host's schema, not the model's idea of it
+        method: jsonschema when installed, otherwise the narrow fallback validator below
+        context: Runs twice per operation -- at proposal time and again at execution -- so
+                 a registry change between the two is caught rather than assumed away
+        """
         tool = self.get(name)
         if Draft202012Validator is not None:
             errors = sorted(
@@ -74,6 +100,13 @@ class ToolRegistry:
         return self.get(name).handler(parameters)
 
     def public_catalog(self) -> list[dict[str, Any]]:
+        """
+        intent: Show the proposing model what exists without showing it anything it could
+                use to claim authority
+        constraint: Deliberately omits `version`, `risk_class`, and `handler`. The host
+                    resolves those itself, so a model cannot propose a risk class or a tool
+                    version and have the claim believed.
+        """
         return [
             {
                 "name": tool.name,
@@ -88,6 +121,14 @@ class ToolRegistry:
     def anthropic_tools(
         self, proposal_ids_by_tool: Mapping[str, list[str]]
     ) -> list[dict[str, Any]]:
+        """
+        intent: Build the execution model's tool schema so that selecting a proposal is the
+                only move available to it
+        method: Inject a required `proposal_id` whose enum is exactly this bundle's ids,
+                then set additionalProperties=False and strict=True
+        effect: A tool call becomes a selector plus a verbatim echo. An id outside the enum
+                is rejected by the API before the host ever sees it.
+        """
         tools: list[dict[str, Any]] = []
         for name, proposal_ids in proposal_ids_by_tool.items():
             registered = self.get(name)
@@ -117,7 +158,13 @@ class ToolRegistry:
 
 
 def _validate_schema(schema: Mapping[str, Any], value: Any, path: str) -> None:
-    """Small fail-closed validator for the JSON Schema subset used by the prototype."""
+    """
+    intent: Validate without jsonschema installed, without ever being more permissive
+    method: Walk the small subset of JSON Schema the prototype uses
+    constraint: An unrecognised `type` raises rather than passing. A validator that ignored
+                what it did not understand would let an unknown construct through as valid,
+                which is the one failure mode a fallback must not have.
+    """
     expected = schema.get("type")
     type_checks = {
         "object": lambda v: isinstance(v, dict),
