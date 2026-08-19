@@ -29,6 +29,9 @@ EXTENSION_VERSION = "0.1"
 
 # constraint: MCP labels start with a letter and end with a letter or digit; hyphens are
 # interior-only. Names are alphanumeric at both ends with . _ - permitted between.
+# constraint: the empty name is deliberately accepted -- the spec reads "Unless empty, MUST
+# begin and end with an alphanumeric character", so a bare prefix is a legal key. Tightening
+# this would reject something MCP permits, and this module is the spec's rules in code.
 _LABEL = r"[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 _PREFIX_PATTERN = re.compile(rf"^(?:{_LABEL})(?:\.{_LABEL})*/$")
 _NAME_PATTERN = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)?$")
@@ -227,6 +230,10 @@ def verify_call_meta(
     missing = [key for key in _SIGNED_KEYS if key not in meta]
     if missing:
         raise MetaVerificationError(f"missing authority metadata: {sorted(missing)}")
+    # constraint: KEY_MAC is absent from _SIGNED_KEYS because it covers the signed set, not
+    # itself, so the loop above cannot catch a stripped MAC. This guard is load-bearing:
+    # without it a stripped MAC reaches str(meta[KEY_MAC]) below and raises KeyError instead
+    # of MetaVerificationError, which a caller catching the latter would not treat as denial.
     if KEY_MAC not in meta:
         raise MetaVerificationError("authority metadata is unsigned")
 

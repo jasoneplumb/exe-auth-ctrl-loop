@@ -67,6 +67,15 @@ class MetaKeyRuleTests(unittest.TestCase):
             with self.assertRaises(MetaKeyError):
                 meta_key(bad)
 
+    def test_empty_name_is_accepted_because_the_spec_permits_it(self):
+        """
+        intent: Pin the empty name as deliberate, not an oversight in the pattern
+        context: The spec reads "Unless empty, MUST begin and end with an alphanumeric
+                 character", so a bare prefix is a legal key and rejecting it would be
+                 stricter than MCP
+        """
+        self.assertEqual(meta_key(""), EXTENSION_PREFIX)
+
     def test_keys_carry_the_vendor_prefix(self):
         self.assertTrue(KEY_PROPOSAL_DIGEST.startswith(EXTENSION_PREFIX))
 
