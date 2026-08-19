@@ -209,8 +209,26 @@ class CallMetaTests(unittest.TestCase):
                     params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
                 )
 
+    def test_naive_clock_denies_rather_than_crashing(self):
+        """
+        intent: A server passing a naive clock must get a denial, not a TypeError
+        context: A caller gating on `except MetaVerificationError` would not catch
+                 TypeError, so the comparison crashing would fail open of the handler
+        """
+        params = self.signed_params()
+        with self.assertRaises(MetaVerificationError):
+            verify_call_meta(
+                params, "create_refund", dict(self.proposal.parameters), SECRET,
+                datetime(2026, 8, 19),  # naive on purpose
+            )
+
     def test_non_boolean_flag_is_rejected(self):
-        """A hand-built block whose flag is the string "false" must not read as True."""
+        """
+        intent: A hand-built block whose flag is the string "false" must not read as True
+        method: Reaches into mcp._mac and mcp._SIGNED_KEYS deliberately -- the test needs a
+                structurally valid MAC over a semantically bad body, which no public API
+                will produce. Not an anti-pattern to be tidied away.
+        """
         decision, token = self.authorize()
         meta = dict(build_call_meta(decision, self.proposal, token, SECRET))
         meta[KEY_AUDIT_COMMITTED] = "false"

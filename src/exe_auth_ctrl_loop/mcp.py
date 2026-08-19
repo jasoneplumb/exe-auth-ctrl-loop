@@ -17,7 +17,7 @@ from __future__ import annotations
 import hmac
 import json
 import re
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from hashlib import sha256
 from typing import Any, Mapping
@@ -138,7 +138,9 @@ def evidence_snapshot_hash(decision: Decision, partition: PartitionKey) -> str |
     return digest({
         "evidence_id": decision.evidence_id,
         "version": decision.evidence_version,
-        "partition": partition.__dict__,
+        # constraint: asdict rather than __dict__ -- identical output today, but __dict__
+        # disappears if PartitionKey ever gains __slots__, and it would fail silently
+        "partition": asdict(partition),
     })
 
 
@@ -258,17 +260,27 @@ def verify_call_meta(
         raise MetaVerificationError("authority metadata is unsigned")
 
     body = {key: meta[key] for key in _SIGNED_KEYS}
-    if not hmac.compare_digest(_mac(body, secret), str(meta[KEY_MAC])):
+    if not isinstance(meta[KEY_MAC], str):
+        raise MetaVerificationError("signature must be a string")
+    if not hmac.compare_digest(_mac(body, secret), meta[KEY_MAC]):
         raise MetaVerificationError("authority metadata failed authentication")
     if meta[KEY_VERSION] != EXTENSION_VERSION:
         raise MetaVerificationError(f"unsupported extension version: {meta[KEY_VERSION]!r}")
 
+    if not isinstance(meta[KEY_CALL_DIGEST], str):
+        raise MetaVerificationError("call digest must be a string")
     observed = call_digest(tool_name, arguments)
-    if not hmac.compare_digest(observed, str(meta[KEY_CALL_DIGEST])):
+    if not hmac.compare_digest(observed, meta[KEY_CALL_DIGEST]):
         raise MetaVerificationError("call does not match the authorized proposal")
 
     expires_at = _parse_expiry(meta[KEY_EXPIRES_AT])
-    if (now or datetime.now(timezone.utc)) >= expires_at:
+    # constraint: a naive clock would raise TypeError from the comparison below, and a
+    # server gating on `except MetaVerificationError` would not catch it -- an unhandled
+    # crash where a denial belongs. The annotation is not enforced at runtime, so check.
+    current = now or datetime.now(timezone.utc)
+    if current.tzinfo is None:
+        raise MetaVerificationError("the verifying clock must be timezone-aware")
+    if current >= expires_at:
         raise MetaVerificationError("authorization expired")
 
     return VerifiedAuthority(
