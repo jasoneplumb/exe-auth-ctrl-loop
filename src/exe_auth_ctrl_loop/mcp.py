@@ -1,18 +1,15 @@
-"""Model Context Protocol binding for the execution-authority control loop.
+"""
+Intent: Bind an authorization to the exact MCP tools/call it authorizes, so a receiving
+        server can verify that call rather than trust an assertion about it
+Context: Emitted by the host-owned gateway once authority.py has issued a token; consumed
+        by any MCP server holding the shared secret. Never emitted by a model.
+Pattern: Fail-closed verification — every check raises; there is no "unverified" return value
+Future: A remote server cannot detect replay of a valid block within the token TTL; closing
+        that needs a server-side nonce cache or a per-server audience field in the MAC
 
-Carries the proposal digest, evidence-snapshot hash, and committed audit flag as
-vendor-namespaced metadata on ``tools/call`` requests, so an MCP server can
-verify that the exact call it received was authorized before it produces a side
-effect.
-
-The metadata is emitted by the host-owned gateway, never by a model. It is
-authenticated: an MCP server recomputes the call digest from the tool name and
-arguments it actually received and checks the MAC, so a forwarded, replayed, or
-edited call fails closed rather than executing on an unverified claim.
-
-Key names follow the MCP ``_meta`` naming rules. The prefix is a third-party
-vendor prefix in reverse-DNS notation; prefixes whose second label is ``mcp`` or
-``modelcontextprotocol`` are reserved by the specification and are rejected here.
+Key names follow the MCP _meta naming rules. The prefix is a third-party vendor prefix in
+reverse-DNS notation; prefixes whose second label is `mcp` or `modelcontextprotocol` are
+reserved by the specification and are rejected here.
 """
 
 from __future__ import annotations
@@ -30,6 +27,8 @@ from .authority import AuthorizationToken, Decision, Proposal, Route, digest
 EXTENSION_PREFIX = "com.jasoneplumb.exe-auth/"
 EXTENSION_VERSION = "0.1"
 
+# constraint: MCP labels start with a letter and end with a letter or digit; hyphens are
+# interior-only. Names are alphanumeric at both ends with . _ - permitted between.
 _LABEL = r"[A-Za-z](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
 _PREFIX_PATTERN = re.compile(rf"^(?:{_LABEL})(?:\.{_LABEL})*/$")
 _NAME_PATTERN = re.compile(r"^(?:[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?)?$")
@@ -37,7 +36,7 @@ _RESERVED_SECOND_LABELS = frozenset({"mcp", "modelcontextprotocol"})
 
 
 class MetaKeyError(ValueError):
-    """A ``_meta`` key violates the MCP naming rules or squats a reserved prefix."""
+    """A _meta key violates the MCP naming rules or squats a reserved prefix."""
 
 
 class MetaVerificationError(PermissionError):
@@ -45,7 +44,13 @@ class MetaVerificationError(PermissionError):
 
 
 def validate_meta_prefix(prefix: str) -> None:
-    """Fail closed unless ``prefix`` is a legal, non-reserved third-party vendor prefix."""
+    """
+    intent: Refuse to emit a key that is malformed or reserved for MCP's own use
+    method: Match the label grammar, then reject any prefix whose second label is `mcp`
+            or `modelcontextprotocol`
+    effect: `com.mcp.tools/` is rejected; `com.example.mcp/` is not, since only the second
+            label carries the reservation
+    """
     if not _PREFIX_PATTERN.match(prefix):
         raise MetaKeyError(f"invalid _meta prefix: {prefix!r}")
     labels = prefix.rstrip("/").split(".")
@@ -54,7 +59,11 @@ def validate_meta_prefix(prefix: str) -> None:
 
 
 def meta_key(name: str, prefix: str = EXTENSION_PREFIX) -> str:
-    """Build a validated ``_meta`` key. Raises before an illegal key ever reaches the wire."""
+    """
+    intent: Build a validated _meta key
+    effect: An illegal key raises at import time rather than reaching the wire, since the
+            module's key constants are built through this function
+    """
     validate_meta_prefix(prefix)
     if not _NAME_PATTERN.match(name):
         raise MetaKeyError(f"invalid _meta key name: {name!r}")
@@ -73,6 +82,8 @@ KEY_POLICY_VERSION = meta_key("policyVersion")
 KEY_EXPIRES_AT = meta_key("expiresAt")
 KEY_MAC = meta_key("mac")
 
+# constraint: the MAC covers exactly these keys, in this order-independent set. Adding a
+# key here changes the wire format and requires an EXTENSION_VERSION bump.
 _SIGNED_KEYS = (
     KEY_VERSION,
     KEY_PROPOSAL_DIGEST,
@@ -102,12 +113,19 @@ class VerifiedAuthority:
 
 
 def call_digest(tool_name: str, arguments: Mapping[str, Any]) -> str:
-    """Digest of the call as the server sees it, so binding needs no shared proposal."""
+    """
+    intent: Give the server something it can recompute from what it received
+    method: Canonical JSON digest of the tool name and arguments
+    context: Both halves of the binding — the gateway commits to it, the server checks it
+    """
     return digest({"tool": tool_name, "arguments": dict(arguments)})
 
 
 def evidence_snapshot_hash(decision: Decision) -> str | None:
-    """Hash the evidence identity and version that justified this decision."""
+    """
+    intent: Identify the evidence that justified this decision without exposing its contents
+    effect: None when no evidence backed the decision, which is the human-approval path
+    """
     if decision.evidence_id is None:
         return None
     return digest({"evidence_id": decision.evidence_id, "version": decision.evidence_version})
@@ -127,10 +145,12 @@ def build_call_meta(
     token: AuthorizationToken,
     secret: bytes,
 ) -> dict[str, Any]:
-    """Emit signed authority metadata for one ``tools/call`` request.
-
-    The secret is mandatory: unsigned metadata would be an unverifiable assertion,
-    and a server that trusted it would grant authority on a model-reachable field.
+    """
+    intent: Emit signed authority metadata for one tools/call request
+    method: Assemble the signed field set, then MAC it under the shared secret
+    context: Called by the host gateway after issue(); the resulting block travels in _meta
+    tradeoff: The secret is mandatory rather than optional, because unsigned metadata is an
+              unverifiable claim on a model-reachable field — the exact hole the loop closes
     """
     if not secret:
         raise ValueError("a signing secret is required; unsigned authority metadata is not valid")
@@ -144,6 +164,8 @@ def build_call_meta(
         KEY_PROPOSAL_DIGEST: proposal.proposal_digest,
         KEY_EVIDENCE_SNAPSHOT: evidence_snapshot_hash(decision),
         KEY_AUDIT_COMMITTED: decision.route == Route.AUDIT,
+        # intent: keep human-approved runs distinguishable downstream, or an outcome
+        # reporter will feed them back as autonomous evidence and censor the estimator
         KEY_HUMAN_APPROVED: token.human_approved,
         KEY_CALL_DIGEST: call_digest(proposal.tool_name, proposal.parameters),
         KEY_DECISION_ID: decision.decision_id,
@@ -156,7 +178,11 @@ def build_call_meta(
 
 
 def attach_meta(params: Mapping[str, Any], meta: Mapping[str, Any]) -> dict[str, Any]:
-    """Merge authority metadata into ``tools/call`` params, preserving foreign ``_meta`` keys."""
+    """
+    intent: Merge authority metadata into tools/call params
+    constraint: MCP requires its own _meta keys on every request, so this preserves foreign
+                keys and refuses a collision rather than silently overwriting one
+    """
     merged = dict(params)
     existing = dict(merged.get("_meta", {}))
     collisions = set(existing) & set(meta)
@@ -171,6 +197,7 @@ def _parse_expiry(raw: Any) -> datetime:
     if not isinstance(raw, str):
         raise MetaVerificationError("expiry is missing or not a string")
     try:
+        # constraint: Python 3.10's fromisoformat does not accept a trailing Z
         parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
     except ValueError as exc:
         raise MetaVerificationError(f"unparseable expiry: {raw!r}") from exc
@@ -186,11 +213,13 @@ def verify_call_meta(
     secret: bytes,
     now: datetime | None = None,
 ) -> VerifiedAuthority:
-    """Verify that this exact call was authorized. Raises rather than returning a verdict.
-
-    Checks, in order: metadata present, all signed fields present, MAC authentic,
-    the call digest recomputed from the received tool name and arguments matches,
-    and the authorization has not expired. Any failure denies execution.
+    """
+    intent: Establish that this exact call was authorized, before any side effect runs
+    method: Presence, then MAC, then the call digest recomputed from the received tool name
+            and arguments, then expiry
+    effect: Edited arguments, a substituted tool, a forged or stripped MAC, and an expired
+            authorization each deny; the function raises rather than returning a verdict
+    future: Replay of a still-valid block to a different server is not detected here
     """
     meta = params.get("_meta")
     if not isinstance(meta, Mapping):

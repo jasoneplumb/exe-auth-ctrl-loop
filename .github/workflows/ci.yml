@@ -29,3 +29,5 @@ jobs:
         run: pytest -v
       - name: Offline example
         run: python examples/example.py
+      - name: Offline MCP demo
+        run: python examples/mcp_demo.py

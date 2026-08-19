@@ -1,3 +1,11 @@
+"""
+Intent: Hold the MCP binding to its two promises — legal key names, and no side effect on
+        a call that does not verify
+Context: Offline; exercises mcp.py against real Decision and AuthorizationToken objects
+        from authority.py rather than fixtures
+Pattern: One denial path per test, so a regression names the check that broke
+"""
+
 import random
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -32,7 +40,10 @@ SECRET = b"gateway-and-server-shared-secret"
 
 
 class MetaKeyRuleTests(unittest.TestCase):
-    """The MCP _meta naming rules, enforced before a key can reach the wire."""
+    """
+    intent: Pin the MCP _meta naming rules, including the reserved-prefix carve-out
+    context: The spec's own worked example — com.mcp.tools/ reserved, com.example.mcp/ not
+    """
 
     def test_vendor_prefix_is_accepted(self):
         validate_meta_prefix("com.jasoneplumb.exe-auth/")
@@ -114,7 +125,11 @@ class CallMetaTests(unittest.TestCase):
         self.assertTrue(meta[KEY_AUDIT_COMMITTED])
 
     def test_human_approval_is_distinguishable_at_the_server(self):
-        """The selection-bias firewall needs this: approved runs are not autonomous evidence."""
+        """
+        intent: The selection-bias firewall needs approved runs to stay distinguishable
+        effect: Without this field a downstream reporter would count them as autonomous
+                evidence, censoring the estimator exactly where it is least trustworthy
+        """
         params = self.signed_params(human_approved=True)
         verified = verify_call_meta(
             params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
