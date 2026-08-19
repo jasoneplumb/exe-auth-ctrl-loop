@@ -1,3 +1,13 @@
+"""
+Intent: Join the proposal and execution stages and record what happened at each step
+Context: The composition root -- the only place that knows about both providers.py and
+        executor.py, and the only writer to the ledger
+Pattern: Orchestration without authority. Nothing here decides anything; it sequences the
+        stages and appends the evidence of what they decided.
+Future: Ledger writes are best-effort in-process. A production loop needs the append to
+        succeed before the effect is considered recorded.
+"""
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -22,6 +32,11 @@ class CrossModelAuthorityLoop:
         intent: str,
         context: Mapping[str, Any] | None = None,
     ) -> ProposalBundle:
+        """
+        intent: Generate a bundle and record its digest before anything acts on it
+        effect: The bundle digest is in the ledger ahead of execution, so what was proposed
+                cannot be reconstructed differently after the fact
+        """
         bundle = self.proposer.generate(
             intent,
             execution_model=self.executor.model,
@@ -47,6 +62,12 @@ class CrossModelAuthorityLoop:
         bundle: ProposalBundle,
         approved_proposal_ids: Iterable[str] = (),
     ) -> ExecutionRun:
+        """
+        intent: Run the bundle and chain one ledger event per step, refused steps included
+        constraint: Refusals are recorded, not just successes. A history containing only the
+                    operations that ran would answer "what happened" but not "what was
+                    stopped", and the second question is the one an incident review asks.
+        """
         run = self.executor.run(
             bundle,
             approved_proposal_ids=approved_proposal_ids,

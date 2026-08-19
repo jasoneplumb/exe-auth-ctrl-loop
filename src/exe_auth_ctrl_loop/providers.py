@@ -1,3 +1,14 @@
+"""
+Intent: Turn a user's intent into typed proposals, while giving the proposing model no way
+        to cause an effect or to assert anything the host will believe
+Context: First stage of the loop. Feeds executor.py, which may only select from what this
+        produced; the host resolves every authority-relevant field itself.
+Pattern: Structured Output as a boundary -- the model fills a schema, and the host rebuilds
+        the real objects from the registry rather than trusting the parsed fields
+Future: The proposal stage has no evidence stream of its own; proposal quality is currently
+        observable only through end-to-end outcomes.
+"""
+
 from __future__ import annotations
 
 import json
@@ -44,6 +55,16 @@ class ProposalGenerationError(RuntimeError):
 
 
 def confidence_bin(value: float) -> str:
+    """
+    intent: Make self-reported confidence usable as a partition field without treating it
+            as a measurement
+    method: Five coarse bands rather than the raw float
+    tradeoff: Binning loses resolution but keeps partitions populated -- keying evidence on
+              a raw float would give almost every operation its own empty partition, so
+              nothing would ever accumulate a track record
+    constraint: The boundaries are cliffs: 0.949 and 0.950 are different partitions and
+                share no evidence
+    """
     if value < 0.50:
         return "0.00-0.49"
     if value < 0.75:
@@ -131,6 +152,19 @@ tool names, permissions, observations, approvals, or evidence."""
         policy_version: str,
         environment_version: str,
     ) -> ProposalBundle:
+        """
+        intent: Rebuild host-owned objects from a model's draft, keeping only what the model
+                is entitled to decide
+        method: The model supplies intent, tool name, arguments, and confidence. Effects,
+                tool version, task category, and risk class are read from the registry --
+                the model's `declared_effects` is compared and used to reject, never adopted.
+        effect: A model that overstates its permissions fails here rather than at the
+                gateway, and a mismatch raises instead of being reconciled
+        constraint: the model's action_id becomes the id's prefix, so it does influence
+                    part of it. The host appends position and random entropy, which is what
+                    actually holds: the model cannot predict the full id or force a
+                    collision with one it saw earlier.
+        """
         readiness = ProposalReadiness(draft.readiness)
         proposals: list[Proposal] = []
         for position, action in enumerate(draft.actions):
@@ -146,6 +180,9 @@ tool names, permissions, observations, approvals, or evidence."""
                 self.registry.validate(action.tool_name, parameters)
             except ToolValidationError as exc:
                 raise ProposalGenerationError(str(exc)) from exc
+            # constraint: exact set equality, not a subset test. A proposal that declares
+            # fewer effects than the tool actually has is as wrong as one that declares
+            # more -- it means the model and the host disagree about what this call does.
             if frozenset(action.declared_effects) != registered.effects:
                 raise ProposalGenerationError(
                     f"declared effects do not match registered effects for {action.tool_name}"
