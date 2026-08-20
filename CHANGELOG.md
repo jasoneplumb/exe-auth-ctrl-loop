@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.2.0] - 2026-08-20
+
+Additive. No behaviour in the authority core changed: `authority.py`,
+`executor.py`, `ledger.py`, `pipeline.py`, `providers.py` and `tools.py` are
+AST-identical to 0.1.0 once documentation is stripped, so `wilson_lower_bound`,
+its `z = 1.96` default, evidence adjudication and capability issuance all mean
+exactly what they meant in 0.1.0. Downstream pins may move without re-verifying
+policy.
+
+### Added
+
+- MCP protocol binding: signed authority metadata carried on `tools/call`
+  `_meta`, with digest binding, verification, and extension-prefix validation
+  (`mcp.py`, `docs/mcp-extension.md`, `examples/mcp_demo.py`)
+- Software archive DOIs and defensive-publication identifiers (`CITATION.cff`)
+- Repo-topic-aligned keywords, trove classifiers, and README badges
+
+### Documentation
+
+- `src/` inline documentation reformed to the intent template throughout
+
+### Note
+
+No Zenodo archive was minted for this version: it is tagged, not released.
+The v0.1.0 archive DOI in `CITATION.cff` continues to name v0.1.0, and the
+concept DOI continues to name all versions.
+
 ## [0.1.0] - 2026-08-17
 
 First public release.
