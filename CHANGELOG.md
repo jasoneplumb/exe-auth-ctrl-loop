@@ -23,9 +23,11 @@ policy.
 
 ### Note
 
-No Zenodo archive was minted for this version: it is tagged, not released.
-The v0.1.0 archive DOI in `CITATION.cff` continues to name v0.1.0, and the
-concept DOI continues to name all versions.
+Archived to Zenodo on release, which mints a version DOI for v0.2.0. The
+`doi:` in `CITATION.cff` is the concept DOI (10.5281/zenodo.21983061) and
+resolves to the latest version, so it needs no change per release; the v0.2.0
+version DOI is added to `identifiers` after the archive exists, since no
+release can contain the identifier minted from it.
 
 ## [0.1.0] - 2026-08-17
 
