@@ -1,7 +1,7 @@
 # Contributing
 
-Thanks for your interest. This repository is currently private and staged for a
-future public release; the workflow below applies either way.
+Thanks for your interest. This repository is public and released under the
+[Apache-2.0 license](LICENSE); issues and pull requests are welcome.
 
 ## Development setup
 
