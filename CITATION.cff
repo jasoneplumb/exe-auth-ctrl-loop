@@ -3,7 +3,7 @@ message: "If you use this software or design, please cite it as below."
 title: "Cross-Model Execution-Authority Control Loop"
 authors:
   - family-names: Plumb
-    given-names: Jason Edward
+    given-names: Jason E.
 version: 0.2.0
 license: Apache-2.0
 repository-code: "https://github.com/jasoneplumb/exe-auth-ctrl-loop"
@@ -32,7 +32,7 @@ preferred-citation:
     Audit Selection in a Cross-Model Execution-Authority Control Loop
   authors:
     - family-names: Plumb
-      given-names: Jason Edward
+      given-names: Jason E.
   year: 2026
   month: 8
   doi: 10.5281/zenodo.21894658
