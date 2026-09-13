@@ -30,6 +30,60 @@ Selection in a Cross-Model Execution-Authority Control Loop*
 [DOI 10.5281/zenodo.21894658](https://doi.org/10.5281/zenodo.21894658)).
 See [CITATION.cff](CITATION.cff) for citation metadata.
 
+## In one minute
+
+**The problem.** When an LLM agent can call a tool that moves money, deletes a
+record, or sends a message, the decision to allow that call usually lives in the
+same conversation that requested it. A plan approved once becomes a bearer
+credential: arguments drift, a second call reuses the first call's blessing, and
+the model that asked is also, effectively, the model that answered.
+
+**What this does.** Authority is moved out of the models entirely. A host-owned
+controller evaluates each operation immediately before it runs, against
+versioned evidence for that exact model/tool/policy partition, and mints a
+capability bound to one proposal digest, one tool, one effect set, one short
+expiry, one use. The gateway holding that capability is the only path to a
+registered handler. Every check is additive and failure-closed: one unmet
+condition withholds autonomy, and no weighing overrides it.
+
+**Contribution.** Design, implementation, tests, and disclosure are mine, with
+AI-assisted implementation under human review (see
+[CONTRIBUTING.md](CONTRIBUTING.md)). The proposal and execution stages call the
+OpenAI and Anthropic APIs; the authority controller, evidence partitioning,
+capability gateway, ledger, and MCP binding are this repository's own code.
+
+**See it refuse.** No API keys, no network:
+
+```bash
+python examples/denials.py
+```
+
+```text
+sparse evidence              route=human_approval reasons=('EVIDENCE_IMMATURE', 'BOUND_BELOW_POLICY')
+stale evidence               route=human_approval reasons=('EVIDENCE_STALE',)
+no exact evidence            route=human_approval reasons=('NO_EXACT_EVIDENCE',)
+unresolved question          route=clarification  reasons=('UNRESOLVED_QUESTIONS',)
+authorized (before edit)     route=autonomous     reasons=('AUTHORITY_SUFFICIENT',)
+arguments edited             gateway denied: proposal changed after authorization
+first use                    handler ran: ['op-mutated']
+replayed capability          gateway denied: missing, consumed, or revoked token
+```
+
+Six requests, one effect — the single request that was authorized and reached
+the gateway unmodified. `python examples/example.py` shows the authorized path
+on its own; `python examples/mcp_demo.py` shows the same authorization carried
+across an MCP `tools/call`.
+
+### Evidence
+
+| | |
+| --- | --- |
+| **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
+| **Status** | Research prototype. Not deployed, not hardened, no production users. |
+| **Evidence** | Output above, reproduced from `examples/denials.py` at `e15e056` on Python 3.14 (macOS). 41 tests pass offline against fake provider clients. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`. Offline; the live cross-model path needs API keys and is separate. |
+| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is not transactional across a network, the ledger is an in-memory hash chain, and evidence is not persisted. A partition suspended after issuance does not invalidate an outstanding token — only expiry or explicit revocation does. See [production trust boundary](#production-trust-boundary). |
+
 ## Architecture
 
 ```mermaid
@@ -215,6 +269,7 @@ The tests use fake provider clients and never call an external API:
 ```bash
 pytest
 python examples/example.py
+python examples/denials.py
 python examples/mcp_demo.py
 ```
 
