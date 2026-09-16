@@ -69,12 +69,12 @@ first use                    handler ran: ['op-mutated']
 replayed capability          gateway denied: missing, consumed, or revoked token
 ```
 
-Six requests, one effect — the single request that was authorized and reached
+Six requests, one effect: the single request that was authorized and reached
 the gateway unmodified. `python examples/example.py` shows the authorized path
 on its own; `python examples/mcp_demo.py` shows the same authorization carried
 across an MCP `tools/call`.
 
-### Evidence
+### Results
 
 | | |
 | --- | --- |
@@ -82,7 +82,7 @@ across an MCP `tools/call`.
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
 | **Evidence** | Output above, reproduced from `examples/denials.py` at `e15e056` on Python 3.14 (macOS). 41 tests pass offline against fake provider clients. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`. Offline; the live cross-model path needs API keys and is separate. |
-| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is not transactional across a network, the ledger is an in-memory hash chain, and evidence is not persisted. A partition suspended after issuance does not invalidate an outstanding token — only expiry or explicit revocation does. See [production trust boundary](#production-trust-boundary). |
+| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is not transactional across a network, the ledger is an in-memory hash chain, and evidence is not persisted. A partition suspended after issuance does not invalidate an outstanding token; only expiry or explicit revocation does. See [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
 
