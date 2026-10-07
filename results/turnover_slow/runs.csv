@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+turnover_slow,v2,1,400,True,54,False,1,29,3,367,360,7,0,0,0,1,367,193,5,2,1,1,1,0,0,,392,392,QUALIFYING,198,0.916751,0,0.09375,0.005449591280653951,False,
+turnover_slow,v2,2,400,True,54,True,1,132,9,257,254,3,1,0,0,2,257,194,4,2,4,0,1,0,0,,395,395,SUSPENDED,33,0.851108,0,0.06382978723404255,0.007782101167315175,False,
+turnover_slow,v2,3,400,True,54,False,1,32,2,363,352,11,0,0,0,3,363,189,9,2,3,1,1,0,0,,386,386,QUALIFYING,198,0.885537,0,0.058823529411764705,0.005509641873278237,False,
+turnover_slow,v2,4,400,True,127,True,1,96,1,299,291,8,0,0,0,2,299,159,5,0,2,0,0,0,0,,388,388,AUTONOMOUS,196,0.915961,0,0.010309278350515464,0.0,False,
+turnover_slow,v2,5,400,True,327,False,1,42,1,353,342,11,1,0,0,4,353,148,3,2,4,0,0,0,0,,385,385,QUALIFYING,194,0.89879,0,0.023255813953488372,0.0056657223796034,False,
+turnover_slow,v2,6,400,True,164,True,1,88,3,305,298,7,1,0,0,2,305,138,3,0,2,0,0,0,0,,389,389,AUTONOMOUS,195,0.915561,0,0.03296703296703297,0.0,False,
+turnover_slow,v2,7,400,True,164,True,1,118,5,273,267,6,1,0,0,2,273,107,2,0,2,0,0,0,0,,390,390,AUTONOMOUS,195,0.9242,0,0.04065040650406504,0.0,False,
+turnover_slow,v2,8,400,True,84,True,1,99,3,296,285,11,0,0,0,2,296,188,10,2,4,0,0,0,0,,387,387,QUALIFYING,198,0.878207,0,0.029411764705882353,0.006756756756756757,False,
+turnover_slow,v2,9,400,True,54,True,1,50,3,344,332,12,0,0,0,3,344,188,10,2,3,0,0,0,0,,385,385,QUALIFYING,198,0.878207,0,0.05660377358490566,0.005813953488372093,False,
+turnover_slow,v2,10,400,True,84,True,1,219,16,161,160,1,0,0,0,2,161,54,0,0,3,0,0,0,0,,395,395,AUTONOMOUS,196,0.968824,0,0.06808510638297872,0.0,False,

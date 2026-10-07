@@ -1,0 +1,22 @@
+{
+  "amount_high_rate": 0.15,
+  "amount_out_rate": 0.03,
+  "budget_limit": 6000.0,
+  "comparator": "v2",
+  "horizon": 400,
+  "mislabel_rate": 0.3,
+  "name": "risk_envelopes",
+  "p_good": 0.97,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}

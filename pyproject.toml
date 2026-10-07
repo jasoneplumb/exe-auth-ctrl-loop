@@ -73,3 +73,5 @@ strict_optional = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# experiments/ is a repo-root package (not shipped in the wheel); tests import it
+pythonpath = ["."]

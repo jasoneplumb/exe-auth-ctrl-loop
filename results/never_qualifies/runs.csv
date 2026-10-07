@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+never_qualifies,v2,1,400,False,,,0,0,0,400,320,80,7,0,0,0,400,312,86,2,0,0,1,0,0,,320,320,SUSPENDED,257,0.672138,0,,0.005,True,
+never_qualifies,v2,2,400,False,,,0,0,0,400,330,70,6,0,0,0,400,322,76,2,0,0,1,0,0,,330,330,SUSPENDED,222,0.720656,0,,0.005,True,
+never_qualifies,v2,3,400,False,,,0,0,0,400,325,75,7,0,0,0,400,316,82,2,0,0,0,0,0,,325,325,QUALIFYING,398,0.716854,0,,0.005,True,
+never_qualifies,v2,4,400,False,,,0,0,0,400,318,82,5,0,0,0,400,313,85,2,0,0,0,0,0,,318,318,QUALIFYING,398,0.708538,0,,0.005,True,
+never_qualifies,v2,5,400,False,,,0,0,0,400,324,76,8,0,0,0,400,314,84,2,0,0,1,0,0,,324,324,SUSPENDED,264,0.718383,0,,0.005,True,
+never_qualifies,v2,6,400,False,,,0,0,0,400,334,66,5,0,0,0,400,328,70,2,0,0,1,0,0,,334,334,SUSPENDED,234,0.738853,0,,0.005,True,
+never_qualifies,v2,7,400,False,,,0,0,0,400,331,69,6,0,0,0,400,323,75,2,0,0,0,0,0,,331,331,QUALIFYING,398,0.736407,0,,0.005,True,
+never_qualifies,v2,8,400,False,,,0,0,0,400,329,71,11,0,0,0,400,316,82,2,0,0,1,0,0,,329,329,SUSPENDED,183,0.716764,0,,0.005,True,
+never_qualifies,v2,9,400,False,,,0,0,0,400,320,80,7,0,0,0,400,312,86,2,0,0,1,0,0,,320,320,SUSPENDED,32,0.380618,0,,0.005,True,
+never_qualifies,v2,10,400,False,,,0,0,0,400,328,72,6,0,0,0,400,322,76,2,0,0,1,0,0,,328,328,SUSPENDED,15,0.349099,0,,0.005,True,

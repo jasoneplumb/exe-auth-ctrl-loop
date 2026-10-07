@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+distribution_shift,v2,1,400,True,54,,0,29,3,367,324,43,4,0,0,1,367,320,45,2,1,1,1,0,0,,356,356,SUSPENDED,83,0.932742,0,0.09375,0.005449591280653951,False,
+distribution_shift,v2,2,400,True,54,,0,199,10,189,168,21,3,0,0,2,189,163,24,2,8,1,1,0,0,16,377,377,SUSPENDED,263,0.92384,0,0.04784688995215311,0.010582010582010581,False,
+distribution_shift,v2,3,400,True,54,,0,179,13,205,182,23,5,0,0,3,205,176,27,2,14,0,1,0,0,32,374,374,SUSPENDED,333,0.871748,0,0.06770833333333333,0.00975609756097561,False,
+distribution_shift,v2,4,400,True,107,,0,140,4,255,211,44,8,0,0,1,255,201,52,2,3,1,1,0,0,0,355,355,SUSPENDED,248,0.93941,0,0.027777777777777776,0.00784313725490196,False,
+distribution_shift,v2,5,400,False,,,0,0,0,400,352,48,8,0,0,0,400,343,55,2,0,0,0,0,0,,352,352,QUALIFYING,398,0.793606,0,,0.005,True,
+distribution_shift,v2,6,400,True,127,,0,48,2,349,299,50,3,0,0,1,349,294,53,2,2,1,1,0,0,,349,349,SUSPENDED,174,0.915757,0,0.04,0.0057306590257879654,False,
+distribution_shift,v2,7,400,True,54,,0,172,6,221,194,27,3,0,0,1,221,189,30,2,4,1,1,0,0,,372,372,SUSPENDED,229,0.94257,0,0.033707865168539325,0.00904977375565611,False,
+distribution_shift,v2,8,400,True,84,,0,167,12,219,181,38,6,0,0,2,219,174,43,2,12,0,1,0,0,23,360,360,SUSPENDED,383,0.801194,0,0.0670391061452514,0.0091324200913242,False,
+distribution_shift,v2,9,400,True,54,,0,128,5,265,222,43,2,0,0,2,265,219,44,2,9,1,1,0,0,9,355,355,SUSPENDED,254,0.903501,0,0.03759398496240601,0.007547169811320755,False,
+distribution_shift,v2,10,400,True,84,,0,165,14,220,184,36,4,0,0,1,220,180,38,2,8,1,1,0,0,13,363,363,SUSPENDED,260,0.923016,0,0.0782122905027933,0.00909090909090909,False,

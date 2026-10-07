@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+stable,v2,1,400,True,54,,0,29,3,367,360,7,0,0,0,1,367,358,7,2,1,1,1,0,0,,392,392,SUSPENDED,83,0.932742,0,0.09375,0.005449591280653951,False,
+stable,v2,2,400,True,54,,0,326,14,57,57,0,0,0,0,1,57,57,0,0,8,0,0,0,0,,397,397,AUTONOMOUS,395,0.944117,0,0.041176470588235294,0.0,False,
+stable,v2,3,400,True,54,,0,32,2,363,352,11,0,0,0,3,363,350,11,2,3,1,1,0,0,,386,386,SUSPENDED,131,0.903816,0,0.058823529411764705,0.005509641873278237,False,
+stable,v2,4,400,True,127,,0,251,11,135,132,3,0,0,0,1,135,132,3,0,9,0,0,0,0,,394,394,AUTONOMOUS,395,0.928956,0,0.04198473282442748,0.0,False,
+stable,v2,5,400,True,261,,0,14,0,385,375,10,2,0,0,1,385,371,12,2,1,1,1,0,0,,389,389,SUSPENDED,272,0.904167,0,0.0,0.005194805194805195,False,
+stable,v2,6,400,True,164,,0,221,13,164,160,4,1,0,0,0,164,159,5,0,1,0,0,0,0,,394,394,AUTONOMOUS,396,0.952323,0,0.05555555555555555,0.0,False,
+stable,v2,7,400,True,164,,0,64,3,332,324,8,1,0,0,1,332,322,8,2,4,1,1,0,0,,391,391,SUSPENDED,228,0.906216,0,0.04477611940298507,0.006024096385542169,False,
+stable,v2,8,400,True,84,,0,221,15,162,157,5,0,0,0,2,162,155,5,2,9,1,1,0,0,,393,393,SUSPENDED,329,0.928921,0,0.0635593220338983,0.012345679012345678,False,
+stable,v2,9,400,True,54,,0,221,7,166,164,2,0,0,0,6,166,162,2,2,15,1,1,0,0,,392,392,SUSPENDED,375,0.91034,0,0.03070175438596491,0.012048192771084338,False,
+stable,v2,10,400,True,84,,0,130,13,255,248,7,0,0,0,2,255,246,7,2,6,1,1,0,0,,391,391,SUSPENDED,247,0.925635,0,0.09090909090909091,0.00784313725490196,False,

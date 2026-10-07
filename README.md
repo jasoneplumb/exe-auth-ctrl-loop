@@ -310,6 +310,21 @@ The live example gives both models real API roles but exposes only
 seeded evidence is explicitly illustrative and must not be treated as
 production evidence.
 
+## Simulated evaluation
+
+`experiments/` drives the real controller, lifecycle, shadow log, risk policy,
+and gateway with a synthetic proposal stream from an empty evidence store, and
+`results/` holds the seeded, hash-manifested outputs of fifteen scenarios
+(stable, never-qualifies, correlated failures, distribution shift, delayed
+defection, turnover, audit rates, risk envelopes, censoring, oracle noise, a
+suspension/release cycle, and two comparators). It is a simulation: read
+[experiments/README.md](experiments/README.md) for what is modelled, where the
+adjudication is unrealistically strong, and what the numbers do not show.
+
+```sh
+python -m experiments.run --all --output results
+```
+
 ## Human approval
 
 When a decision routes to `human_approval`, `ClaudeExecutionAgent.run()`

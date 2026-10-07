@@ -1,0 +1,65 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='720' height='360' viewBox='0 0 720 360'>
+<rect width='720' height='360' fill='white'/>
+<text x='360.0' y='22' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' font-size='14'>Human reviews, total over runs</text>
+<text x='360.0' y='352' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'></text>
+<text x='14' y='180.0' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(-90 14 180.0)'>count</text>
+<line x1='70' y1='40' x2='70' y2='290' stroke='black'/>
+<line x1='70' y1='290' x2='700' y2='290' stroke='black'/>
+<line x1='66' y1='290.0' x2='70' y2='290.0' stroke='black'/>
+<text x='62' y='294.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>0</text>
+<line x1='66' y1='240.0' x2='70' y2='240.0' stroke='black'/>
+<text x='62' y='244.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>920</text>
+<line x1='66' y1='190.0' x2='70' y2='190.0' stroke='black'/>
+<text x='62' y='194.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>1840</text>
+<line x1='66' y1='140.0' x2='70' y2='140.0' stroke='black'/>
+<text x='62' y='144.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>2760</text>
+<line x1='66' y1='90.0' x2='70' y2='90.0' stroke='black'/>
+<text x='62' y='94.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>3680</text>
+<line x1='66' y1='40.0' x2='70' y2='40.0' stroke='black'/>
+<text x='62' y='44.0' text-anchor='end' font-family='Helvetica, Arial, sans-serif' font-size='12'>4600</text>
+<rect x='76.30' y='99.89' width='29.40' height='190.11' fill='#4a6fa5'/>
+<text x='91.00' y='95.89' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3498</text>
+<text x='91.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 91.00 304)'>audit_rate_0</text>
+<rect x='118.30' y='99.89' width='29.40' height='190.11' fill='#4a6fa5'/>
+<text x='133.00' y='95.89' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3498</text>
+<text x='133.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 133.00 304)'>audit_rate_20</text>
+<rect x='160.30' y='72.61' width='29.40' height='217.39' fill='#4a6fa5'/>
+<text x='175.00' y='68.61' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>4000</text>
+<text x='175.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 175.00 304)'>censoring</text>
+<rect x='202.30' y='77.99' width='29.40' height='212.01' fill='#4a6fa5'/>
+<text x='217.00' y='73.99' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3901</text>
+<text x='217.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 217.00 304)'>correlated_failures</text>
+<rect x='244.30' y='83.37' width='29.40' height='206.63' fill='#4a6fa5'/>
+<text x='259.00' y='79.37' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3802</text>
+<text x='259.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 259.00 304)'>delayed_defection</text>
+<rect x='286.30' y='143.8' width='29.40' height='146.20' fill='#4a6fa5'/>
+<text x='301.00' y='139.8' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>2690</text>
+<text x='301.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 301.00 304)'>distribution_shift</text>
+<rect x='328.30' y='72.61' width='29.40' height='217.39' fill='#4a6fa5'/>
+<text x='343.00' y='68.61' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>4000</text>
+<text x='343.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 343.00 304)'>human_only</text>
+<rect x='370.30' y='247.17' width='29.40' height='42.83' fill='#4a6fa5'/>
+<text x='385.00' y='243.17' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>788</text>
+<text x='385.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 385.00 304)'>legacy_wilson_seeded</text>
+<rect x='412.30' y='72.61' width='29.40' height='217.39' fill='#4a6fa5'/>
+<text x='427.00' y='68.61' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>4000</text>
+<text x='427.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 427.00 304)'>never_qualifies</text>
+<rect x='454.30' y='80.92' width='29.40' height='209.08' fill='#4a6fa5'/>
+<text x='469.00' y='76.92' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3847</text>
+<text x='469.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 469.00 304)'>noisy_oracle</text>
+<rect x='496.30' y='178.37' width='29.40' height='111.63' fill='#4a6fa5'/>
+<text x='511.00' y='174.37' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>2054</text>
+<text x='511.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 511.00 304)'>risk_envelopes</text>
+<rect x='538.30' y='160.33' width='29.40' height='129.67' fill='#4a6fa5'/>
+<text x='553.00' y='156.33' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>2386</text>
+<text x='553.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 553.00 304)'>stable</text>
+<rect x='580.30' y='116.3' width='29.40' height='173.70' fill='#4a6fa5'/>
+<text x='595.00' y='112.3' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3196</text>
+<text x='595.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 595.00 304)'>suspension_cycle</text>
+<rect x='622.30' y='76.68' width='29.40' height='213.32' fill='#4a6fa5'/>
+<text x='637.00' y='72.68' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3925</text>
+<text x='637.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 637.00 304)'>turnover_fast</text>
+<rect x='664.30' y='125.98' width='29.40' height='164.02' fill='#4a6fa5'/>
+<text x='679.00' y='121.98' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12'>3018</text>
+<text x='679.00' y='304' text-anchor='middle' font-family='Helvetica, Arial, sans-serif' font-size='12' transform='rotate(25 679.00 304)'>turnover_slow</text>
+</svg>

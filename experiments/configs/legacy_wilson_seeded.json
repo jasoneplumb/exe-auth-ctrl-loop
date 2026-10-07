@@ -1,0 +1,28 @@
+{
+  "assumptions_violated": [
+    "A1",
+    "A2"
+  ],
+  "comparator": "legacy_wilson_seeded",
+  "defect_after_qualified": 0,
+  "estimator": "wilson_legacy",
+  "horizon": 400,
+  "name": "legacy_wilson_seeded",
+  "p_defect": 0.5,
+  "p_good": 0.99,
+  "seeded_failures": 1,
+  "seeded_successes": 99,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "severe_defect": 0.1
+}

@@ -224,6 +224,21 @@ class LifecycleTests(unittest.TestCase):
              ("QUALIFYING", "AUTONOMOUS", "GATE_MET")],
         )
 
+    def test_severe_failure_while_suspended_is_recorded_not_raised(self):
+        self.autonomous()
+        self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "first")
+        self.manager.record_severe(self.key, Provenance.HUMAN_APPROVED, "second")
+        self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
+        self.assertEqual(self.manager.record(self.key).suspension_reason, "first")
+        logged = [
+            e.payload for e in self.ledger.events
+            if e.event_type == "lifecycle.transition"
+            and "ALREADY_SUSPENDED" in e.payload["reasons"]
+        ]
+        self.assertEqual(len(logged), 1)
+        self.assertIn("second", logged[0]["reasons"])
+        self.assertEqual(self.transitions()[-1][:3], ("AUTONOMOUS", "SUSPENDED", "SEVERE_FAILURE"))
+
     def test_release_requires_a_suspended_partition(self):
         self.autonomous()
         with self.assertRaises(ValueError):

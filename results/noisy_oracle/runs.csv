@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+noisy_oracle,v2,1,400,False,,,0,0,0,400,394,6,2,0,0,0,400,376,22,2,0,0,0,0,0,,394,394,QUALIFYING,398,0.894987,0,,0.005,True,
+noisy_oracle,v2,2,400,False,,,0,0,0,400,393,7,2,0,0,0,400,374,24,2,0,0,1,0,0,,393,393,SUSPENDED,231,0.846994,0,,0.005,True,
+noisy_oracle,v2,3,400,False,,,0,0,0,400,388,12,0,0,0,0,400,360,38,2,0,0,0,0,0,,388,388,QUALIFYING,398,0.844322,0,,0.005,True,
+noisy_oracle,v2,4,400,False,,,0,0,0,400,385,15,1,0,0,0,400,365,33,2,0,0,0,0,0,,385,385,QUALIFYING,398,0.859763,0,,0.005,True,
+noisy_oracle,v2,5,400,False,,,0,0,0,400,389,11,1,0,0,0,400,368,30,2,0,0,0,0,0,,389,389,QUALIFYING,398,0.869178,0,,0.005,True,
+noisy_oracle,v2,6,400,False,,,0,0,0,400,393,7,1,0,0,0,400,365,33,2,0,0,0,0,0,,393,393,QUALIFYING,398,0.859763,0,,0.005,True,
+noisy_oracle,v2,7,400,False,,,0,0,0,400,388,12,1,0,0,0,400,361,37,2,0,0,0,0,0,,388,388,QUALIFYING,398,0.847387,0,,0.005,True,
+noisy_oracle,v2,8,400,True,146,,0,139,10,247,245,2,1,0,0,4,247,234,11,2,4,0,0,0,0,,394,394,QUALIFYING,394,0.893974,0,0.06711409395973154,0.008097165991902834,False,
+noisy_oracle,v2,9,400,False,,,0,0,0,400,388,12,0,0,0,0,400,372,26,2,0,0,0,0,0,,388,388,QUALIFYING,398,0.881939,0,,0.005,True,
+noisy_oracle,v2,10,400,False,,,0,0,0,400,389,11,0,0,0,0,400,376,22,2,0,0,0,0,0,,389,389,QUALIFYING,398,0.894987,0,,0.005,True,

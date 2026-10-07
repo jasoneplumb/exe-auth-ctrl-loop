@@ -188,10 +188,14 @@ class LifecycleManager:
         """
         self.refresh(key)
         record = self._records[key]
+        reasons = (reason, f"PROVENANCE_{provenance.value.upper()}")
+        if record.state == LifecycleState.SUSPENDED:
+            # effect: a second severe failure while suspended is recorded, not a crash,
+            # and does not restart the clock on the first one; the original reason stands
+            self._log(key, record, record.state, None, (*reasons, "ALREADY_SUSPENDED"))
+            return
         record.suspension_reason = reason
-        self._move(
-            key, record, E.SEVERE_FAILURE, (reason, f"PROVENANCE_{provenance.value.upper()}")
-        )
+        self._move(key, record, E.SEVERE_FAILURE, reasons)
         self._sync_store(key, record)
 
     def release(self, key: PartitionKey, actor: str, reason: str) -> None:

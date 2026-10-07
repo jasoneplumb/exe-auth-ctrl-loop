@@ -1,0 +1,48 @@
+{
+  "assumptions_violated": [],
+  "audit_executions_total": 46,
+  "audit_overhead_mean": 0.0478,
+  "autonomous_executions_total": 905,
+  "censored_fraction_mean": 0.0037,
+  "comparator": "v2",
+  "failures_after_autonomy_total": 28,
+  "failures_human_missed_total": 4,
+  "final_states": {
+    "AUTONOMOUS": 4,
+    "QUALIFYING": 5,
+    "SUSPENDED": 1
+  },
+  "horizon": 400,
+  "human_approved_executions_total": 2941,
+  "human_reviews_total": 3018,
+  "intervention_delay": {
+    "censored_runs": 0,
+    "max": null,
+    "mean": null,
+    "median": null,
+    "min": null
+  },
+  "issue_denials_total": 0,
+  "policy_denials_total": 0,
+  "qualified_before_turnover_fraction": 0.7,
+  "qualified_fraction": 1.0,
+  "qualified_runs": 10,
+  "releases_total": 0,
+  "requalifications_total": 0,
+  "runs": 10,
+  "scenario": "turnover_slow",
+  "severe_after_autonomy_total": 2,
+  "shadow_censored_total": 12,
+  "shadow_trials_total": 3018,
+  "stale_token_denials_total": 23,
+  "suspensions_total": 3,
+  "time_to_authority": {
+    "censored_runs": 0,
+    "max": 327,
+    "mean": 116.6,
+    "median": 84.0,
+    "min": 54
+  },
+  "turnovers_total": 10,
+  "unauthorized_side_effects_total": 0
+}

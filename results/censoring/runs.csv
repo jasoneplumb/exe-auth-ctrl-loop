@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+censoring,v2,1,400,False,,,0,0,0,400,393,7,2,0,0,0,400,240,5,155,0,0,0,0,0,,393,393,QUALIFYING,390,0.526843,0,,0.3875,True,
+censoring,v2,2,400,False,,,0,0,0,400,392,8,3,0,0,0,400,244,8,148,0,0,1,0,0,,392,392,SUSPENDED,243,0.52813,0,,0.37,True,
+censoring,v2,3,400,False,,,0,0,0,400,388,12,0,0,0,0,400,248,5,147,0,0,0,0,0,,388,388,QUALIFYING,389,0.549437,0,,0.3675,True,
+censoring,v2,4,400,False,,,0,0,0,400,382,18,0,0,0,0,400,237,9,154,0,0,0,0,0,,382,382,QUALIFYING,388,0.521981,0,,0.385,True,
+censoring,v2,5,400,False,,,0,0,0,400,392,8,1,0,0,0,400,247,9,144,0,0,0,0,0,,392,392,QUALIFYING,390,0.545224,0,,0.36,True,
+censoring,v2,6,400,False,,,0,0,0,400,389,11,0,0,0,0,400,249,4,147,0,0,0,0,0,,389,389,QUALIFYING,392,0.547358,0,,0.3675,True,
+censoring,v2,7,400,False,,,0,0,0,400,393,7,1,0,0,0,400,221,5,174,0,0,0,0,0,,393,393,QUALIFYING,392,0.474874,0,,0.435,True,
+censoring,v2,8,400,False,,,0,0,0,400,391,9,1,0,0,0,400,239,7,154,0,0,0,0,0,,391,391,QUALIFYING,391,0.522735,0,,0.385,True,
+censoring,v2,9,400,False,,,0,0,0,400,391,9,1,0,0,0,400,233,8,159,0,0,0,0,0,,391,391,QUALIFYING,390,0.508584,0,,0.3975,True,
+censoring,v2,10,400,False,,,0,0,0,400,393,7,1,0,0,0,400,269,4,127,0,0,0,0,0,,393,393,QUALIFYING,391,0.60209,0,,0.3175,True,
