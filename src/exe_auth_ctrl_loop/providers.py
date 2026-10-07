@@ -178,6 +178,7 @@ tool names, permissions, observations, approvals, or evidence."""
             try:
                 registered = self.registry.get(action.tool_name)
                 self.registry.validate(action.tool_name, parameters)
+                risk_class = self.registry.classify_risk(action.tool_name, parameters)
             except ToolValidationError as exc:
                 raise ProposalGenerationError(str(exc)) from exc
             # constraint: exact set equality, not a subset test. A proposal that declares
@@ -200,7 +201,7 @@ tool names, permissions, observations, approvals, or evidence."""
                 environment_version=environment_version,
                 task_category=registered.task_category,
                 confidence_bin=confidence_bin(action.declared_confidence),
-                risk_class=registered.classify_risk(parameters),
+                risk_class=risk_class,
             )
             proposals.append(Proposal(
                 proposal_id=f"{action.action_id}-{position}-{secrets.token_hex(4)}",

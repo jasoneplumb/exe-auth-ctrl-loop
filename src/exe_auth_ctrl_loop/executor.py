@@ -257,6 +257,7 @@ run; do not route around it."""
         try:
             registered = self.registry.get(tool_name)
             self.registry.validate(tool_name, tool_input)
+            risk_class = self.registry.classify_risk(tool_name, tool_input)
         except ToolValidationError as exc:
             return self._blocked(proposal_id, tool_name, str(exc))
         if registered.effects != proposal.requested_effects:
@@ -264,7 +265,7 @@ run; do not route around it."""
         # constraint: the partition's risk class is re-derived from the registry here, so
         # a proposal carrying a cheaper class than its arguments warrant never reaches the
         # evidence that class earned
-        if registered.classify_risk(tool_input) != proposal.partition.risk_class:
+        if risk_class != proposal.partition.risk_class:
             return self._blocked(proposal_id, tool_name, "risk class does not match registry")
 
         decision = self.authority.evaluate(proposal)

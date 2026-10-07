@@ -22,7 +22,7 @@ The partition key already carries `risk_class`, and evidence never pools across 
 - As a `ProposalGuard` on `AuthorityController`, `proposal_blockers()` runs at decision time. Any reason routes to `DENY` and is recorded in the decision's reason codes: `NO_RISK_ENVELOPE`, `RISK_CLASS_MISMATCH`, `EFFECT_OUTSIDE_ENVELOPE`, `BUDGET_EXCEEDED:<id>`, `OPERATION_LIMIT:<id>`, `CONFLICTING_ACTION:<tool>`.
 - As a `RedemptionGuard` on `ExecutionGateway`, `redemption_blockers()` runs the same checks again under the consume lock, against the policy that is current *then* and the charges committed *since*. `commit()` charges the budgets after the token is marked used and no guard objected. A denied redemption charges nothing.
 
-`ClaudeExecutionAgent` additionally refuses any request whose proposal names a different risk class than the registry's classifier derives for the same arguments, so the v1 path is covered even without a `RiskPolicy`.
+`ToolRegistry.classify_risk(name, parameters)` is the single place a class is derived. A registry constructed with `ToolRegistry(risk=policy)` delegates every tool to that policy's envelopes, and tools must register with `risk_class=None`; a registry without a policy uses each tool's own `risk_class`. Holding both is refused at `register()`, so there is never a second answer. `providers.py` builds the partition key from it, and `ClaudeExecutionAgent` re-derives and compares before each call, refusing a request whose proposal names a different class than the registry derives for the same arguments. Arguments no envelope admits raise `ToolValidationError`, which the proposer turns into `ProposalGenerationError` and the executor into a blocked step.
 
 ## What is derived from what
 
@@ -57,4 +57,4 @@ The partition key already carries `risk_class`, and evidence never pools across 
 - No time windows on budgets; no cross-run persistence; no cross-process sharing.
 - Envelope rules are numeric bounds and allow-lists. Richer predicates (for example, rate per recipient per hour, or relationships between arguments) are not expressed.
 - `conflicts` is ordered-pair-within-partition only.
-- The registry's `ToolDefinition.risk_class` classifier and `RiskPolicy` are two places a class can be derived. The executor checks the registry; the controller and gateway check the policy. A deployment should make the registry classifier delegate to the policy so there is one source.
+- The same `RiskPolicy` object must be the one attached to the registry, the controller, and the gateway. Nothing checks that three different instances were not supplied; a deployment constructs one and passes it to all three.

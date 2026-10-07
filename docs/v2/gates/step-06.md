@@ -24,7 +24,7 @@
 
 **Limitations / deviations:**
 - The in-process guarantee is per `RiskPolicy` instance per process: committed charges never exceed a limit. No time windows, no persistence, no cross-process sharing; stated in `docs/v2/risk-envelopes.md`.
-- Two classifiers exist: `ToolDefinition.risk_class` (registry, checked by the executor) and `RiskPolicy` (checked by controller and gateway). They are not forced to agree; the doc says a deployment should make the registry delegate to the policy. Unifying them touches `providers.py` and `tools.py` and was left out to keep the diff reviewable.
+- ~~Two classifiers exist: `ToolDefinition.risk_class` (registry, checked by the executor) and `RiskPolicy` (checked by controller and gateway).~~ **Resolved after the gate, on the owner's instruction (2026-10-07):** `ToolRegistry(risk=policy)` delegates classification to the policy and refuses tools that carry their own class; `ToolRegistry.classify_risk` is the single source used by `providers.py` and `executor.py`. See the follow-up commit and `RegistryUnificationTests` in `tests/test_risk_envelopes.py`.
 - `RedemptionGuard` grew a `commit()` method and `redemption_blockers()` now takes the proposal. `LifecycleManager` was updated; any external guard must be too.
 - 9 files touched (new: `risk.py`, `test_risk_envelopes.py`, `risk-envelopes.md`, this report; modified: `authority.py`, `lifecycle.py`, `executor.py`, `__init__.py`). Over the 5-file guideline by the required doc and report.
 - Python 3.10/3.13 not run locally.

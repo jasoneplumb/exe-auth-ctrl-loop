@@ -7,10 +7,12 @@ import random
 import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
     Bound,
+    ClaudeExecutionAgent,
     EventLedger,
     EvidenceSnapshot,
     EvidenceStore,
@@ -22,12 +24,17 @@ from exe_auth_ctrl_loop import (
     PartitionKey,
     Policy,
     Proposal,
+    ProposalBundle,
+    ProposalReadiness,
     Provenance,
     RiskEnvelope,
     RiskPolicy,
     Route,
     SequenceBudget,
     ShadowEvidenceLog,
+    ToolDefinition,
+    ToolRegistry,
+    ToolValidationError,
     TrialLabel,
 )
 
@@ -354,6 +361,118 @@ class LifecycleInteractionTests(unittest.TestCase):
         self.assertEqual(decision.route, Route.AUTONOMOUS)
         decision = self.manager.evaluate(self.proposal(101, "low"))
         self.assertEqual(decision.route, Route.DENY)
+
+
+class _FakeMessages:
+    def __init__(self, responses):
+        self.responses = iter(responses)
+
+    def create(self, **kwargs):
+        return next(self.responses)
+
+
+class _FakeClaude:
+    def __init__(self, responses):
+        self.messages = _FakeMessages(responses)
+
+
+def _tool_use(name, proposal_id, **parameters):
+    return SimpleNamespace(content=[SimpleNamespace(
+        type="tool_use", id="toolu-1", name=name,
+        input={"proposal_id": proposal_id, **parameters},
+    )])
+
+
+class RegistryUnificationTests(unittest.TestCase):
+    """One classifier per registry: the RiskPolicy when attached, the tool's own otherwise."""
+
+    SCHEMA = {
+        "type": "object",
+        "properties": {
+            "order_id": {"type": "integer"}, "usd": {"type": "number"}, "payee": {"type": "string"},
+        },
+        "required": ["order_id", "usd", "payee"],
+        "additionalProperties": False,
+    }
+
+    def setUp(self):
+        self.risk = RiskPolicy("risk-v1", envelopes())
+        self.calls = []
+
+    def tool(self, risk_class):
+        return ToolDefinition(
+            name="create_refund", description="refund", input_schema=self.SCHEMA,
+            effects=frozenset({"refund:write"}), version="refund-api-v2",
+            task_category="refund", risk_class=risk_class,
+            handler=lambda args: self.calls.append(args) or {"ok": True},
+        )
+
+    def test_policy_registry_delegates_classification(self):
+        registry = ToolRegistry(risk=self.risk)
+        registry.register(self.tool(None))
+        low = {"order_id": 1, "usd": 100, "payee": "acct-100"}
+        self.assertEqual(registry.classify_risk("create_refund", low), "low")
+        self.assertEqual(registry.classify_risk("create_refund", {**low, "usd": 101}), "high")
+        with self.assertRaises(ToolValidationError):
+            registry.classify_risk("create_refund", {**low, "payee": "acct-999"})
+
+    def test_two_classifiers_are_refused_at_registration(self):
+        with self.assertRaises(ValueError):
+            ToolRegistry(risk=self.risk).register(self.tool("low"))
+        with self.assertRaises(ValueError):
+            ToolRegistry().register(self.tool(None))
+        with self.assertRaises(ToolValidationError):
+            self.tool(None).classify_risk({})
+
+    def test_plain_registry_keeps_the_tool_classifier(self):
+        registry = ToolRegistry()
+        registry.register(self.tool(lambda p: "high" if p["usd"] > 10 else "low"))
+        self.assertEqual(registry.classify_risk("create_refund", {"usd": 5}), "low")
+        self.assertEqual(registry.classify_risk("create_refund", {"usd": 50}), "high")
+
+    def agent(self, registry, proposal, store):
+        policy = Policy("pol1", {"low": .90, "high": .99}, 30, timedelta(days=30), 0.0)
+        controller = AuthorityController(
+            store, policy, random.Random(1), lambda: T0, guards=(self.risk,)
+        )
+        gateway = ExecutionGateway(lambda: T0, evidence=store, guards=(self.risk,))
+        client = _FakeClaude([
+            _tool_use("create_refund", proposal.proposal_id, **proposal.parameters),
+            SimpleNamespace(content=[SimpleNamespace(type="text", text="done")]),
+        ])
+        return ClaudeExecutionAgent("m2", "ep1", controller, gateway, registry, client)
+
+    def test_executor_refuses_a_proposal_whose_class_the_registry_rejects(self):
+        registry = ToolRegistry(risk=self.risk)
+        registry.register(self.tool(None))
+        key = PartitionKey(
+            "openai", "m1", "pp1", "anthropic", "m2", "ep1",
+            "refund-api-v2", "pol1", "prod1", "refund", "0.95-1.00", "low",
+        )
+        store = EvidenceStore()
+        store.put(EvidenceSnapshot("e", 1, key, 99, 1, T0 - timedelta(days=2), T0))
+        mislabeled = Proposal(
+            "p-1", "refund", "create_refund", {"order_id": 1, "usd": 500, "payee": "acct-100"},
+            .96, frozenset({"refund:write"}), key, "openai",
+        )
+        bundle = ProposalBundle("b", "refund", ProposalReadiness.EXECUTABLE, (mislabeled,), "s")
+        run = self.agent(registry, mislabeled, store).run(bundle)
+        self.assertEqual(run.steps[0].error, "risk class does not match registry")
+        self.assertEqual(self.calls, [])
+
+        unknown_payee = replace(
+            mislabeled, parameters={"order_id": 1, "usd": 5, "payee": "acct-999"},
+        )
+        bundle = ProposalBundle("b", "refund", ProposalReadiness.EXECUTABLE, (unknown_payee,), "s")
+        run = self.agent(registry, unknown_payee, store).run(bundle)
+        self.assertIn("no risk envelope admits", run.steps[0].error)
+        self.assertEqual(self.calls, [])
+
+        honest = replace(mislabeled, parameters={"order_id": 1, "usd": 50, "payee": "acct-100"})
+        bundle = ProposalBundle("b", "refund", ProposalReadiness.EXECUTABLE, (honest,), "s")
+        run = self.agent(registry, honest, store).run(bundle)
+        self.assertTrue(run.steps[0].executed)
+        self.assertEqual(len(self.calls), 1)
 
 
 if __name__ == "__main__":
