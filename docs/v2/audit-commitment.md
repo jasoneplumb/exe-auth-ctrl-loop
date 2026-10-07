@@ -64,6 +64,18 @@ Inside this process the anchor proves nothing, because the same party holds both
 
 What external anchoring would require in production: a write-once store outside the controller's identity; an anchoring cadence (every event, or every N, which bounds how much tail can be lost undetected); a verifier that holds the anchors and is run by someone other than the controller's operator; and a policy for what happens when verification fails.
 
-## Open item carried forward (O-2)
+## What an audit is (O-2, decided 2026-10-07)
 
-v1 routes `AUDIT` to a pre-execution human review (`AWAITING_AUDIT`). The spec (§3) defines `AUDIT` evidence as the independent label of a frozen proposal, which would let an audited operation execute autonomously and be labelled afterwards. This step keeps v1 behaviour: an audit still requires a human before execution, and its decision is committed first like any other. Changing `AUDIT` to execute-then-label alters what runs unattended and is a decision for the owner, not something to slip into an ordering fix. See the gate report.
+An `AUDIT` route is an autonomous execution that the pre-outcome draw also selected for independent labelling. It is not a pre-execution review; v1's `AWAITING_AUDIT` is gone. The order for an audited operation is:
+
+```
+evaluate()      draw < audit_rate: route = AUDIT
+commit()        ledger.commit_decision, then shadow.freeze(decision_id, proposal, AUDIT)
+issue()         token issued without approval, as for AUTONOMOUS
+execute()       handler runs
+...later        shadow.adjudicate(decision_id, partition, digest, label, oracle)
+```
+
+The frozen form exists before the token, so the label is on exactly what ran, and a label for anything else is quarantined (`DIGEST_MISMATCH`). An audit that is never labelled expires to `INCONCLUSIVE` and counts against the partition: not auditing what was selected is a failure of the audit process, not a free pass. Only `AUDIT` routes are frozen by the loop; labelling an ordinary `AUTONOMOUS` execution is optional and is done by whoever observes the outcome, because an optional slot that expired to a failure would punish the operator for not labelling what the draw did not select.
+
+A loop without a shadow log still commits the decision and executes the audit; nothing is frozen, and the audit evidence is simply never collected. That is permitted for the offline examples and stated here.

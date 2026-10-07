@@ -13,10 +13,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Iterable, Mapping
 
-from .authority import ProposalBundle
+from .authority import Decision, Proposal, ProposalBundle, Route
 from .executor import ClaudeExecutionAgent, ExecutionRun
 from .ledger import EventLedger
 from .providers import OpenAIProposalGenerator
+from .shadow import Provenance, ShadowEvidenceLog
 
 
 @dataclass
@@ -26,6 +27,7 @@ class CrossModelAuthorityLoop:
     ledger: EventLedger
     policy_version: str
     environment_version: str
+    shadow: ShadowEvidenceLog | None = None
 
     def __post_init__(self) -> None:
         """
@@ -36,7 +38,25 @@ class CrossModelAuthorityLoop:
                     takes responsibility for the ordering contract.
         """
         if self.executor.commit is None:
-            self.executor.commit = self.ledger.commit_decision
+            self.executor.commit = self.commit
+
+    def commit(self, decision: Decision, proposal: Proposal) -> None:
+        """
+        intent: Put the decision on the record and, for an audit, freeze what will be judged
+        effect: An AUDIT-routed proposal is frozen into the shadow log as AUDIT provenance
+                under its decision id, before the token exists. The independent label
+                arrives later through shadow.adjudicate(decision_id, ...); an audit that
+                is never labelled expires to INCONCLUSIVE and counts against the record.
+                AUTONOMOUS executions are not frozen here: their labels are optional, and
+                an optional slot that expires to a failure would punish not auditing.
+        constraint: A freeze the log refuses raises, so the executor refuses the step --
+                    an audit without a frozen target is not an audit.
+        """
+        self.ledger.commit_decision(decision, proposal)
+        if self.shadow is not None and decision.route == Route.AUDIT:
+            result = self.shadow.freeze(decision.decision_id, proposal, Provenance.AUDIT)
+            if not result.accepted:
+                raise RuntimeError(f"audit trial not frozen: {result.reason}")
 
     def propose(
         self,

@@ -23,7 +23,7 @@ Every evidence record carries a persistent `provenance` and these fields: `parti
 |---|---|---|---|---|
 | `SHADOW` | An autonomous-path proposal frozen (§4) before any human review, labeled by the oracle (§5), never executed because of its label | Yes | `POSITIVE` only | Counts in `n` and in `censored`; never a success |
 | `AUTONOMOUS` | A real execution authorized with route `AUTONOMOUS` and no human gate | Yes | `POSITIVE` only | As `SHADOW` |
-| `AUDIT` | A proposal selected by the pre-outcome audit draw whose frozen form (§4) is labeled by an independent reviewer *before* the reviewer may approve, edit, or block it | Yes, labeled on the frozen form | `POSITIVE` only | As `SHADOW` |
+| `AUDIT` | An autonomous execution that the pre-outcome audit draw also selected for independent labelling. Its frozen form (§4) is recorded before the token is issued and labelled by the oracle afterwards; no human gates it | Yes, labeled on the frozen form | `POSITIVE` only | As `SHADOW`; an audit never labelled expires to `INCONCLUSIVE` |
 | `HUMAN_APPROVED` | Any execution that occurred because a human approved it, or whose proposal a human edited | **No** | **No** | Dropped |
 
 Rules:
@@ -126,6 +126,6 @@ Transitions (full table in the fixture; IDs are stable):
 ## 11. Decisions deferred to later steps (open)
 
 - **O-1** Step 04: the specific time-uniform bound and its tuning of $\alpha$, spending across partitions, and `n_min` interplay.
-- **O-2** Step 03/07: v1 routes `AUDIT` to a *pre-execution* human approval (`AWAITING_AUDIT`). v2 defines `AUDIT` evidence as the independent label of the frozen proposal. The code change that separates the audit label from the approval is Step 07.
+- **O-2** (closed 2026-10-07, owner's decision): `AUDIT` executes unattended and is labelled afterwards. The gateway issues for `AUDIT` without approval; `CrossModelAuthorityLoop.commit` freezes the proposal as `AUDIT` provenance under its decision id before the token exists. v1's `AWAITING_AUDIT` status is removed.
 - **O-3** Step 02: oracle validation procedure for A5 and label deadline length.
 - **O-4** Step 05: revocation epoch representation and the exact consume linearization.

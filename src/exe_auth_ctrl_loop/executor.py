@@ -30,7 +30,6 @@ from .tools import ToolRegistry, ToolValidationError
 class ExecutionStatus(str, Enum):
     COMPLETED = "completed"
     AWAITING_APPROVAL = "awaiting_approval"
-    AWAITING_AUDIT = "awaiting_audit"
     NEEDS_CLARIFICATION = "needs_clarification"
     NEEDS_REVISION = "needs_revision"
     DENIED = "denied"
@@ -336,7 +335,8 @@ run; do not route around it."""
     def _status_for_route(route: Route) -> ExecutionStatus:
         return {
             Route.HUMAN_APPROVAL: ExecutionStatus.AWAITING_APPROVAL,
-            Route.AUDIT: ExecutionStatus.AWAITING_AUDIT,
+            # AUDIT executes unattended; reaching here means the gateway refused it
+            Route.AUDIT: ExecutionStatus.DENIED,
             Route.CLARIFICATION: ExecutionStatus.NEEDS_CLARIFICATION,
             Route.REVISION: ExecutionStatus.NEEDS_REVISION,
             Route.DENY: ExecutionStatus.DENIED,

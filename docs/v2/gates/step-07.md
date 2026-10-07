@@ -25,7 +25,7 @@
 - An executor constructed without the loop and without a `commit` hook records nothing (`test_agent_without_a_commit_hook_records_nothing`). Allowed for unit tests and offline demos; the loop is the enforcement point. `examples/*.py` call the gateway directly and never had a ledger; unchanged.
 - The gateway itself does not append to the ledger; denials raised by the gateway are recorded by the loop after the step. The *decision* is what is committed before action; outcome records remain post hoc by nature.
 - Anchoring is in-process only and proves nothing by itself; stated in three places.
-- **O-2 remains open.** `AUDIT` still means a pre-execution human review, as in v1. Switching to execute-then-label (spec §3) changes what runs unattended; left for the owner to decide, not folded into an ordering change.
+- ~~**O-2 remains open.**~~ **Resolved after the gate, on the owner's decision (2026-10-07):** `AUDIT` executes unattended and is labelled afterwards. Gateway issues for `AUDIT` without approval; `CrossModelAuthorityLoop.commit` freezes the proposal as `AUDIT` provenance under the decision id before the token exists; `AWAITING_AUDIT` removed. Tests: `test_audit_executes_unattended_after_the_commit`, `test_audit_is_frozen_before_execution_and_labelled_afterwards`, `test_autonomous_route_is_not_frozen_by_the_loop`. See the follow-up commit.
 - 8 files touched (modified: `authority.py`, `executor.py`, `ledger.py`, `pipeline.py`, `README.md`; new: test, doc, this report).
 - Python 3.10/3.13 not run locally.
 

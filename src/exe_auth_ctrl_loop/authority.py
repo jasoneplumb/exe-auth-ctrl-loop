@@ -554,9 +554,12 @@ class ExecutionGateway:
     ) -> AuthorizationToken:
         """
         intent: Mint a capability scoped to exactly the decision that justified it
-        constraint: Only AUTONOMOUS issues unattended. HUMAN_APPROVAL and AUDIT need a real
-                    approval; DENY, REVISION, and CLARIFICATION cannot be overridden at all
-                    -- they require a corrected proposal or a policy change, not a signature.
+        constraint: AUTONOMOUS and AUDIT issue unattended -- an audit is an autonomous
+                    execution that was also selected, before the outcome, for independent
+                    labelling afterwards (docs/v2/audit-commitment.md). HUMAN_APPROVAL
+                    needs a real approval; DENY, REVISION, and CLARIFICATION cannot be
+                    overridden at all -- they require a corrected proposal or a policy
+                    change, not a signature.
         constraint: A human signature overrides a route, never a prohibition: prohibited
                     effects are refused here even with human_approved=True, and if a live
                     policy provider is attached the policy passed in must be the current one
@@ -564,9 +567,8 @@ class ExecutionGateway:
                 judged on. execute() re-reads the live state against them, so a grant
                 is only as good as its justification still is at the moment of use.
         """
-        human_overridable = decision.route in {Route.HUMAN_APPROVAL, Route.AUDIT}
-        allowed = decision.route == Route.AUTONOMOUS or (
-            human_approved and human_overridable
+        allowed = decision.route in {Route.AUTONOMOUS, Route.AUDIT} or (
+            human_approved and decision.route == Route.HUMAN_APPROVAL
         )
         if not allowed:
             raise PermissionError("decision does not authorize execution")

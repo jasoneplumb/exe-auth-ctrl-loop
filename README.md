@@ -93,8 +93,9 @@ flowchart TD
     C --> D["Claude execution planner"]
     D --> E["Exact client-tool request"]
     E --> F["Authority controller"]
-    F -->|authorized capability| G["Execution gateway"]
-    F -->|audit / approval / revise| H["Human control path"]
+    F -->|authorized capability, audited or not| G["Execution gateway"]
+    F -->|approval / revise / clarify| H["Human control path"]
+    G -.->|audit-selected: frozen form labelled afterwards| K["Independent oracle"]
     G --> I["Registered handler"]
     I --> J["Receipt and outcome"]
     J --> F
@@ -311,11 +312,17 @@ production evidence.
 
 ## Human approval
 
-When a decision routes to `human_approval` or `audit`,
-`ClaudeExecutionAgent.run()` returns without invoking the handler. A reviewed
-caller can restart with the exact proposal ID in `approved_proposal_ids`.
-Denials, draft states, and clarification requests cannot be overridden by that
-mechanism; they require a corrected proposal or policy change.
+When a decision routes to `human_approval`, `ClaudeExecutionAgent.run()`
+returns without invoking the handler. A reviewed caller can restart with the
+exact proposal ID in `approved_proposal_ids`. Denials, draft states, and
+clarification requests cannot be overridden by that mechanism; they require a
+corrected proposal or policy change.
+
+An `audit` route is not a human gate. It executes unattended like
+`autonomous`; what the pre-outcome draw selects is which executions get an
+independent label afterwards. With a shadow log attached to the loop, the
+proposal is frozen before the token is issued and the label is bound to that
+frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 
 ## Production trust boundary
 

@@ -146,7 +146,7 @@ class EventOrderTests(unittest.TestCase):
 
     def test_loop_wires_the_commit_hook(self):
         h = Harness()
-        self.assertEqual(h.agent.commit, h.ledger.commit_decision)
+        self.assertEqual(h.agent.commit, h.loop.commit)
 
     def test_existing_commit_hook_is_kept(self):
         calls = []
@@ -202,22 +202,63 @@ class AuditDrawTests(unittest.TestCase):
         }
         self.assertEqual(len(draws), 5)
 
-    def test_audit_route_is_committed_and_nothing_executes(self):
+    def test_audit_executes_unattended_after_the_commit(self):
         h = Harness(audit_rate=1.0)
-        run = h.run()
-        self.assertEqual(run.status, ExecutionStatus.AWAITING_AUDIT)
-        self.assertEqual(h.committed()[0].payload["route"], "audit")
-        self.assertEqual(h.handler_calls, [])
-        self.assertEqual(h.gateway.tokens, {})
-
-    def test_approved_audit_executes_only_after_the_commit(self):
-        h = Harness(audit_rate=1.0, approved=("p-1",))
         run = h.run()
         self.assertEqual(run.status, ExecutionStatus.COMPLETED)
         self.assertEqual(h.committed()[0].payload["route"], "audit")
         self.assertIn("authority.decision.committed", h.handler_calls[0])
         tokens = list(h.gateway.tokens.values())
-        self.assertTrue(tokens and all(t.human_approved for t in tokens))
+        self.assertTrue(tokens and not any(t.human_approved for t in tokens))
+
+    def test_audit_is_frozen_before_execution_and_labelled_afterwards(self):
+        from exe_auth_ctrl_loop import Oracle, OracleKind, Provenance, ShadowEvidenceLog, TrialLabel
+
+        h = Harness(audit_rate=1.0, commit="none")
+        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW)
+        seen = []
+        loop = CrossModelAuthorityLoop(
+            proposer=None, executor=h.agent, ledger=h.ledger,
+            policy_version="pol1", environment_version="prod1", shadow=shadow,
+        )
+        original = h.agent.commit
+
+        def observing_commit(decision, proposal):
+            original(decision, proposal)
+            seen.append(shadow.trial(decision.decision_id))
+
+        h.agent.commit = observing_commit
+        run = loop.execute(h.bundle)
+        decision = run.steps[0].decision
+        self.assertEqual(decision.route, Route.AUDIT)
+        self.assertTrue(run.steps[0].executed)
+        # frozen at commit time, i.e. before the token and the handler
+        self.assertEqual(seen[0].provenance, Provenance.AUDIT)
+        self.assertEqual(seen[0].proposal_digest, h.proposal.proposal_digest)
+        frozen = next(e for e in h.ledger.events if e.event_type == "shadow.frozen")
+        self.assertLess(frozen.sequence, next(
+            e.sequence for e in h.ledger.events if e.event_type == "execution.step.recorded"
+        ))
+        # the label lands on the frozen form, under the decision id, as AUDIT provenance
+        oracle = Oracle("reviewer", "1", OracleKind.INDEPENDENT_REVIEW, "post-hoc")
+        result = shadow.adjudicate(
+            decision.decision_id, h.key, h.proposal.proposal_digest, TrialLabel.POSITIVE,
+            oracle, NOW + timedelta(minutes=5),
+        )
+        self.assertTrue(result.accepted)
+        self.assertEqual(shadow.counts(h.key, Provenance.AUDIT).positive, 1)
+        self.assertEqual(shadow.counts(h.key, Provenance.AUTONOMOUS).frozen, 0)
+
+    def test_autonomous_route_is_not_frozen_by_the_loop(self):
+        from exe_auth_ctrl_loop import ShadowEvidenceLog
+
+        h = Harness(audit_rate=0.0, commit="none")
+        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW)
+        CrossModelAuthorityLoop(
+            proposer=None, executor=h.agent, ledger=h.ledger,
+            policy_version="pol1", environment_version="prod1", shadow=shadow,
+        ).execute(h.bundle)
+        self.assertEqual([e for e in h.ledger.events if e.event_type == "shadow.frozen"], [])
 
     def test_tampering_with_the_committed_draw_breaks_the_chain(self):
         h = Harness(audit_rate=0.5)
