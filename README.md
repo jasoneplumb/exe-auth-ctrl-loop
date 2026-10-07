@@ -171,10 +171,10 @@ verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 6. **Sparse or stale evidence fails closed.** Missing, immature, invalid, suspended, mismatched, or expired evidence requires approval.
 7. **Early proposals cannot execute.** Draft and clarification-needed states never reach Claude.
 8. **Severe failures contract immediately.** The exact cross-model partition is suspended before ordinary updating.
-9. **Audit selection precedes outcomes.** Audit probability and draw are retained in the decision.
+9. **Audit selection precedes outcomes.** The audit draw is realized in the decision and committed to the ledger before a token is issued; if the commit fails, the step is refused. Independence from results holds given a trusted RNG and controller; it is an ordering guarantee, not a proof against a malicious host (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence.
 11. **Provider diversity is not independence.** End-to-end evidence is collected for the combined pipeline.
-12. **Authorization provenance is tamper-evident.** `EventLedger` provides a prototype hash chain.
+12. **Authorization provenance is tamper-evident within the chain.** `EventLedger` is an in-memory hash chain: `verify()` detects edits to retained events, and does not detect truncation of the tail or wholesale replacement by whoever holds the chain. External anchoring would close that gap and is demonstrated, not provided.
 
 ## Evidence partition
 
@@ -325,7 +325,8 @@ This remains an in-process prototype. A production deployment should:
 - prevent both model runtimes from accessing handlers or credentials directly;
 - sign capabilities or store opaque capability references server-side;
 - consume capabilities transactionally before performing side effects;
-- use durable append-only storage and cryptographic tool receipts;
+- use durable append-only storage and cryptographic tool receipts, and anchor
+  the ledger head somewhere the controller cannot write;
 - authenticate human approvals with role and scope checks;
 - enforce idempotency and replay protection at each external service;
 - isolate Claude code or shell execution in an OS sandbox;

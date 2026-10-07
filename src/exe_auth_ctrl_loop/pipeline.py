@@ -27,6 +27,17 @@ class CrossModelAuthorityLoop:
     policy_version: str
     environment_version: str
 
+    def __post_init__(self) -> None:
+        """
+        intent: Guarantee that every decision this loop acts on is committed to its ledger
+                first, by wiring the executor's commit hook to it
+        constraint: An executor that already has a commit hook keeps it; the loop cannot
+                    tell whether that hook writes to this ledger, so a caller who sets one
+                    takes responsibility for the ordering contract.
+        """
+        if self.executor.commit is None:
+            self.executor.commit = self.ledger.commit_decision
+
     def propose(
         self,
         intent: str,

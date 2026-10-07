@@ -485,7 +485,8 @@ class AuthorityController:
             # and carry the draw into the Decision the ledger chains. Selecting audits
             # afterwards -- or being able to revise the selection -- would let an operator
             # or a strategic agent steer scrutiny away from the failures. Committing first
-            # makes audit selection provably independent of results.
+            # keeps audit selection independent of results -- given a trusted RNG and a
+            # controller that commits the draw before acting (docs/v2/audit-commitment.md).
             audit_draw = self.rng.random()
             route = Route.AUDIT if audit_draw < audit_probability else Route.AUTONOMOUS
             reasons.append(

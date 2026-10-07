@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .authority import (
     AuthorityController,
@@ -75,7 +75,16 @@ run; do not route around it."""
         registry: ToolRegistry,
         client: Any | None = None,
         max_turns: int = 12,
+        commit: Callable[[Decision, Proposal], Any] | None = None,
     ) -> None:
+        """
+        intent: Hold the host-side pieces the loop needs, and the commit hook that records
+                a decision before it is acted on
+        constraint: `commit` is called after evaluate() and before issue(); if it raises,
+                    the step is refused. CrossModelAuthorityLoop sets it to its ledger's
+                    commit_decision. An agent run without one records nothing, which is
+                    allowed for tests and offline demos and documented as such.
+        """
         if not model or not prompt_version:
             raise ValueError("pin an execution model and prompt version")
         if client is None:
@@ -92,6 +101,7 @@ run; do not route around it."""
         self.gateway = gateway
         self.registry = registry
         self.max_turns = max_turns
+        self.commit = commit
 
     def run(
         self,
@@ -258,6 +268,22 @@ run; do not route around it."""
             return self._blocked(proposal_id, tool_name, "risk class does not match registry")
 
         decision = self.authority.evaluate(proposal)
+        # constraint: the decision -- audit draw included -- goes on the record before a
+        # token exists. A commit that fails refuses the step: an unrecorded decision never
+        # reaches issue(), so no effect can happen off the record.
+        if self.commit is not None:
+            try:
+                self.commit(decision, proposal)
+            except Exception as exc:
+                return ExecutionStep(
+                    proposal_id=proposal_id,
+                    tool_name=tool_name,
+                    route=Route.DENY,
+                    decision=decision,
+                    executed=False,
+                    receipt=None,
+                    error=f"decision not committed to ledger: {exc}",
+                )
         human_approved = proposal_id in approved
         try:
             token = self.gateway.issue(
