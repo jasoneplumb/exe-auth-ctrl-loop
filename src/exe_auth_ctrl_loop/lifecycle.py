@@ -238,7 +238,12 @@ class LifecycleManager:
             successor.lineage_suspended = True
             self._log(new, successor, successor.state, None, ("LINEAGE_SUSPENDED",))
 
-    def redemption_blockers(self, token: AuthorizationToken) -> tuple[str, ...]:
+    def commit(self, token: AuthorizationToken, proposal: Proposal) -> None:
+        """RedemptionGuard: the lifecycle charges nothing at redemption."""
+
+    def redemption_blockers(
+        self, token: AuthorizationToken, proposal: Proposal
+    ) -> tuple[str, ...]:
         """
         intent: Veto a token whose partition has lost authority since it was issued
         method: Read-only view of the current record (RedemptionGuard). No refresh: a

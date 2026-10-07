@@ -17,6 +17,7 @@ Module map:
   pipeline.py   composition and ledger recording
   ledger.py     tamper-evident hash chain
   lifecycle.py  explicit UNESTABLISHED/QUALIFYING/AUTONOMOUS/SUSPENDED state machine
+  risk.py       host-owned risk envelopes, sequence budgets, decision- and redemption-time guards
   sequential.py anytime-valid Beta-mixture lower bound for the evidence gate
   shadow.py     frozen shadow trials, oracle labels, provenance-separated counts
   mcp.py        signed authority metadata for MCP tools/call
@@ -37,6 +38,7 @@ from .authority import (
     Policy,
     Proposal,
     ProposalBundle,
+    ProposalGuard,
     ProposalReadiness,
     RedemptionGuard,
     Route,
@@ -69,6 +71,7 @@ from .providers import (
     ProposedActionModel,
     confidence_bin,
 )
+from .risk import Bound, OneOf, RiskEnvelope, RiskPolicy, SequenceBudget
 from .sequential import beta_mixture_lower_bound, crosses, log_mixture_martingale
 from .shadow import (
     COUNTING_PROVENANCE,
@@ -94,6 +97,7 @@ __all__ = [
     "EXTENSION_VERSION",
     "AuthorityController",
     "AuthorizationToken",
+    "Bound",
     "ClaudeExecutionAgent",
     "Counts",
     "CrossModelAuthorityLoop",
@@ -111,6 +115,7 @@ __all__ = [
     "LifecycleEvent",
     "MetaKeyError",
     "MetaVerificationError",
+    "OneOf",
     "OpenAIProposalGenerator",
     "Oracle",
     "OracleKind",
@@ -122,6 +127,7 @@ __all__ = [
     "Proposal",
     "ProposalBundle",
     "ProposalDraftModel",
+    "ProposalGuard",
     "ProposalGenerationError",
     "ProposalReadiness",
     "ProposedActionModel",
@@ -129,8 +135,11 @@ __all__ = [
     "Reason",
     "RedemptionGuard",
     "Result",
+    "RiskEnvelope",
+    "RiskPolicy",
     "ReviewAction",
     "Route",
+    "SequenceBudget",
     "ShadowEvidenceLog",
     "ShadowTrial",
     "ToolDefinition",

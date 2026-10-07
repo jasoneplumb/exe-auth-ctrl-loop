@@ -249,15 +249,33 @@ class AuthorizationToken:
     revocation_reason: str | None = None
 
 
-class RedemptionGuard(Protocol):
+class ProposalGuard(Protocol):
     """
-    intent: Let shared authority state veto a token at the moment it is spent
-    context: The lifecycle manager implements this; the gateway asks every guard inside
-             its consume lock, so a veto and a consume cannot interleave
-    constraint: Must be read-only and must not call back into the gateway
+    intent: Let host-owned policy that is not about evidence veto a proposal at decision
+            time -- risk envelopes, budgets, sequence rules (risk.py)
+    effect: Any reason a guard returns routes the proposal to DENY, which no signature
+            can override
     """
 
-    def redemption_blockers(self, token: AuthorizationToken) -> tuple[str, ...]: ...
+    def proposal_blockers(self, proposal: Proposal) -> tuple[str, ...]: ...
+
+
+class RedemptionGuard(Protocol):
+    """
+    intent: Let shared authority state veto a token at the moment it is spent, and learn
+            when it was spent
+    context: The lifecycle manager and the risk policy implement this; the gateway asks
+             every guard inside its consume lock, so a veto and a consume cannot
+             interleave, and calls commit() only once the token is consumed
+    constraint: Must not call back into the gateway. redemption_blockers() is read-only;
+                commit() is the one place a guard may record that an effect happened.
+    """
+
+    def redemption_blockers(
+        self, token: AuthorizationToken, proposal: Proposal
+    ) -> tuple[str, ...]: ...
+
+    def commit(self, token: AuthorizationToken, proposal: Proposal) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -389,11 +407,13 @@ class AuthorityController:
         policy: Policy,
         rng: random.Random | None = None,
         clock: Callable[[], datetime] = utcnow,
+        guards: Sequence[ProposalGuard] = (),
     ) -> None:
         self.evidence = evidence
         self.policy = policy
         self.rng = rng or random.SystemRandom()
         self.clock = clock
+        self.guards = tuple(guards)
 
     def evaluate(self, proposal: Proposal) -> Decision:
         """
@@ -428,6 +448,13 @@ class AuthorityController:
         if proposal.requested_effects & self.policy.prohibited_effects:
             route = Route.DENY
             reasons.append("PROHIBITED_EFFECT")
+        # constraint: scope and budget are host policy, like prohibited effects, so a
+        # guard veto is a DENY -- not a request for a human, who cannot widen an envelope
+        for guard in self.guards:
+            vetoes = guard.proposal_blockers(proposal)
+            if vetoes:
+                route = Route.DENY
+                reasons.extend(v for v in vetoes if v not in reasons)
 
         if snapshot is None:
             reasons.append("NO_EXACT_EVIDENCE")
@@ -598,6 +625,10 @@ class ExecutionGateway:
             if blockers:
                 raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
             token.used = True
+            # effect: budgets are charged here, still under the lock and only for a token
+            # that was actually consumed, so a charge and a consume are one event
+            for guard in self.guards:
+                guard.commit(token, proposal)
         return adapter(proposal)
 
     def redemption_blockers(
@@ -637,7 +668,7 @@ class ExecutionGateway:
                 if snapshot is None or snapshot.evidence_id != token.evidence_id:
                     reasons.append("EVIDENCE_WITHDRAWN")
         for guard in self.guards:
-            reasons.extend(guard.redemption_blockers(token))
+            reasons.extend(guard.redemption_blockers(token, proposal))
         return tuple(dict.fromkeys(reasons))
 
     def revoke(self, token_id: str, reason: str = "revoked") -> None:
