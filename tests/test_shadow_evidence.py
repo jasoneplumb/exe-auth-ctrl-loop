@@ -76,7 +76,7 @@ class ShadowEvidenceTests(unittest.TestCase):
         controller = AuthorityController(store, policy, random.Random(1), self.clock)
         proposal = self.proposal(0)
         self.assertEqual(controller.evaluate(proposal).route, Route.HUMAN_APPROVAL)
-        for n in range(40):
+        for n in range(60):
             self.trial(n)
         self.assertTrue(self.log.publish(store, self.key, T0))
         self.assertEqual(controller.evaluate(proposal).route, Route.AUTONOMOUS)

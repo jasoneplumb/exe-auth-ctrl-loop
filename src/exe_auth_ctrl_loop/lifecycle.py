@@ -6,9 +6,8 @@ Context: Implements the transition contract in docs/v2/spec.md section 9 over th
         this layer decides whether the partition may be autonomous at all.
 Pattern: A table of legal (state, event) pairs. Anything not in the table raises, so no
         code path can move a partition to AUTONOMOUS except QUALIFYING on GATE_MET.
-Future: In-memory. Statistics are still the v1 Wilson bound until Step 04, and token
-        invalidation on suspension is Step 05, so an already-issued token still outlives
-        a suspension here.
+Future: In-memory. Token invalidation on suspension is Step 05, so an already-issued
+        token still outlives a suspension here.
 """
 
 from __future__ import annotations
@@ -29,7 +28,6 @@ from .authority import (
     Route,
     digest,
     utcnow,
-    wilson_lower_bound,
 )
 from .shadow import Provenance, ShadowEvidenceLog
 
@@ -249,7 +247,7 @@ class LifecycleManager:
             if self.clock() - snapshot.collected_until > self.policy.max_evidence_age:
                 reasons.append("EVIDENCE_STALE")
             required = self.policy.minimum_success_by_risk.get(key.risk_class, 1.0)
-            lower = wilson_lower_bound(snapshot.successes, snapshot.n, self.policy.bound_z)
+            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures)
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
         reasons.extend(self._blockers(key, record))

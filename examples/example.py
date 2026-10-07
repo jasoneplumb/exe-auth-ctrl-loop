@@ -28,7 +28,7 @@ proposal = Proposal(
 )
 evidence = EvidenceStore()
 evidence.put(EvidenceSnapshot(
-    "ev-88", 4, key, 198, 2, now - timedelta(days=14), now,
+    "ev-88", 4, key, 297, 3, now - timedelta(days=14), now,
 ))
 policy = Policy(
     "policy-v5", {"financial-low": .95}, n_min=100,

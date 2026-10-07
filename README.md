@@ -210,11 +210,23 @@ The prototype gates on the exact end-to-end partition.
 
 ## Conservative bound and policy
 
-The reference estimator is a one-sided Wilson lower bound:
+The reference estimator is the lower endpoint of a Beta-mixture confidence
+sequence (`Policy.estimator = "beta_mixture"`, `Policy.alpha`), which remains
+valid when the evidence is re-read before every operation:
 
 ```text
-lower_bound = Wilson(successes, successes + failures, z)
+lower_bound = BetaMixtureCS(successes, failures, alpha)
 ```
+
+See [docs/v2/statistical-method.md](docs/v2/statistical-method.md) for the
+proposition, its assumptions (i.i.d. labels within an epoch, no selection of
+trials, conservative censoring, oracle validity), and reference vectors. The
+v0.2.0 one-sided Wilson bound is retained as `estimator = "wilson_legacy"` for
+comparison only; it is a fixed-sample interval and exceeds its nominal error
+rate when read repeatedly. Neither bound protects against an agent that behaves
+until it qualifies and then defects; that is the job of the deterministic
+controls (per-operation checks, single-use tokens, suspension), not the
+statistics.
 
 Autonomous execution requires:
 

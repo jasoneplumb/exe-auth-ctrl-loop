@@ -17,6 +17,7 @@ Module map:
   pipeline.py   composition and ledger recording
   ledger.py     tamper-evident hash chain
   lifecycle.py  explicit UNESTABLISHED/QUALIFYING/AUTONOMOUS/SUSPENDED state machine
+  sequential.py anytime-valid Beta-mixture lower bound for the evidence gate
   shadow.py     frozen shadow trials, oracle labels, provenance-separated counts
   mcp.py        signed authority metadata for MCP tools/call
 """
@@ -67,6 +68,7 @@ from .providers import (
     ProposedActionModel,
     confidence_bin,
 )
+from .sequential import beta_mixture_lower_bound, crosses, log_mixture_martingale
 from .shadow import (
     COUNTING_PROVENANCE,
     Counts,
@@ -136,11 +138,14 @@ __all__ = [
     "TrialStatus",
     "VerifiedAuthority",
     "attach_meta",
+    "beta_mixture_lower_bound",
     "build_call_meta",
     "call_digest",
     "confidence_bin",
+    "crosses",
     "digest",
     "evidence_snapshot_hash",
+    "log_mixture_martingale",
     "meta_key",
     "utcnow",
     "validate_meta_prefix",

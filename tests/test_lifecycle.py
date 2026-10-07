@@ -85,7 +85,7 @@ class LifecycleTests(unittest.TestCase):
         return self.manager.evaluate(self.proposal(key))
 
     def autonomous(self, key=None):
-        self.add(40, key=key)
+        self.add(60, key=key)
         decision = self.decide(key)
         self.assertEqual(decision.route, Route.AUTONOMOUS)
         return decision
@@ -110,7 +110,7 @@ class LifecycleTests(unittest.TestCase):
                          (S.QUALIFYING, Route.HUMAN_APPROVAL))
         self.assertIn("EVIDENCE_IMMATURE", thin.reason_codes)
 
-        self.add(11)
+        self.add(31)
         decision = self.decide()
         self.assertEqual((self.manager.state(self.key), decision.route),
                          (S.AUTONOMOUS, Route.AUTONOMOUS))
@@ -171,7 +171,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.transitions()[-1][2], "EVIDENCE_EXPIRED")
 
     def test_republishing_does_not_freshen_old_evidence(self):
-        self.add(40)
+        self.add(60)
         self.clock.now = T0 + timedelta(days=31)
         self.assertNotEqual(self.decide().route, Route.AUTONOMOUS)
         self.assertEqual(self.store.get(self.key).collected_until, T0)
@@ -215,7 +215,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("EVIDENCE_IMMATURE", decision.reason_codes)
         self.assertEqual(self.store.get(self.key).n, 0)
         self.assertFalse(self.store.get(self.key).suspended)
-        self.add(40)
+        self.add(60)
         self.assertEqual(self.decide().route, Route.AUTONOMOUS)
         self.assertEqual(
             [t[:3] for t in self.transitions()][-3:],
@@ -233,7 +233,7 @@ class LifecycleTests(unittest.TestCase):
         self.autonomous()
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "bad")
         for _ in range(3):
-            self.add(40)
+            self.add(60)
             self.assertEqual(self.decide().route, Route.HUMAN_APPROVAL)
         self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
 
@@ -268,14 +268,14 @@ class LifecycleTests(unittest.TestCase):
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "bad")
         new = self.make_key(tool="refund-api-v3")
         self.manager.on_churn(self.key, new)
-        self.add(40, key=new)
+        self.add(60, key=new)
         decision = self.decide(new)
         self.assertEqual(self.manager.state(new), S.QUALIFYING)
         self.assertNotEqual(decision.route, Route.AUTONOMOUS)
         self.assertIn("LINEAGE_SUSPENDED", decision.reason_codes)
         self.manager.release(new, "alice", "lineage reviewed")
         self.assertNotEqual(self.decide(new).route, Route.AUTONOMOUS)  # pre-release trials excluded
-        self.add(40, key=new)
+        self.add(60, key=new)
         self.assertEqual(self.decide(new).route, Route.AUTONOMOUS)
 
     def test_hand_seeded_snapshot_cannot_bypass_the_lifecycle(self):

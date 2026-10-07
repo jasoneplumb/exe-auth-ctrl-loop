@@ -21,6 +21,8 @@ from enum import Enum
 from hashlib import sha256
 from typing import Any, Callable, Mapping
 
+from .sequential import beta_mixture_lower_bound
+
 
 def utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -181,12 +183,35 @@ class Policy:
     prohibited_effects: frozenset[str] = frozenset()
     token_ttl: timedelta = timedelta(minutes=2)
     bound_z: float = 1.96
+    alpha: float = 0.05
+    estimator: str = "beta_mixture"
 
     def __post_init__(self) -> None:
         if self.n_min < 1:
             raise ValueError("n_min must be positive")
         if not 0.0 <= self.audit_rate <= 1.0:
             raise ValueError("audit_rate must be in [0, 1]")
+        if not 0.0 < self.alpha < 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        if self.estimator not in ESTIMATORS:
+            raise ValueError(f"estimator must be one of {sorted(ESTIMATORS)}")
+
+    def lower_bound(self, successes: int, failures: int) -> float:
+        """
+        intent: The one place that turns counts into the bound the gate compares
+        constraint: `estimator` and `alpha` are part of the policy, so changing either is
+                    a policy change and must come with a new policy version; evidence
+                    judged under one method is not silently re-read under another.
+        effect: `beta_mixture` is valid at every look (docs/v2/statistical-method.md).
+                `wilson_legacy` is the v1 fixed-sample bound, kept for comparison only;
+                read repeatedly it exceeds its nominal error rate.
+        """
+        if self.estimator == "wilson_legacy":
+            return wilson_lower_bound(successes, successes + failures, self.bound_z)
+        return beta_mixture_lower_bound(successes, failures, self.alpha)
+
+
+ESTIMATORS = frozenset({"beta_mixture", "wilson_legacy"})
 
 
 @dataclass(frozen=True)
@@ -309,6 +334,9 @@ def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
             rather than the only defence.
     tradeoff: Returns 0.0 for an empty record rather than raising, so an unknown partition
               flows into the same "below threshold" path as a bad one
+    constraint: Fixed-sample. Legacy since v2 (`Policy.estimator = "wilson_legacy"`): read
+                after every trial it exceeds its nominal error rate, so it no longer gates
+                new autonomy by default. See docs/v2/statistical-method.md.
     """
     if total <= 0:
         return 0.0
@@ -387,7 +415,7 @@ class AuthorityController:
                 reasons.append("EVIDENCE_IMMATURE")
             if snapshot.key != proposal.partition:
                 reasons.append("PARTITION_MISMATCH")
-            lower = wilson_lower_bound(snapshot.successes, snapshot.n, self.policy.bound_z)
+            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures)
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
 
