@@ -10,7 +10,8 @@ human approvals.
 ## Supported versions
 
 Only the latest commit on `mainline` is supported. There are no maintenance
-branches.
+branches. `research/v2` is an integration branch for the next release and is
+supported once merged.
 
 ## Reporting a vulnerability
 
@@ -34,6 +35,13 @@ single-use capability issued by the host-owned controller are always in scope.
 Prompt-injection findings against the models themselves are in scope only when
 they defeat a host-side invariant; the design assumes model outputs are
 untrusted requests.
+
+Also in scope: any way for a human review to create, alter, discard, or relabel
+a frozen shadow trial; any path to `AUTONOMOUS` other than `QUALIFYING` on a
+met gate; any way to clear a suspension without a recorded human release; any
+way for a model-supplied risk label, confidence, or argument to obtain a
+cheaper risk class than the host's envelopes derive; and any way to run a
+handler before the decision is committed to the ledger.
 
 Also in scope: any way to redeem a token after its partition was suspended,
 its evidence invalidated, its policy version replaced, or its lifecycle state

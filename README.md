@@ -80,8 +80,8 @@ across an MCP `tools/call`.
 | --- | --- |
 | **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
-| **Evidence** | Output above, reproduced from `examples/denials.py` at `e15e056` on Python 3.14 (macOS). 41 tests pass offline against fake provider clients. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
-| **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`. Offline; the live cross-model path needs API keys and is separate. |
+| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 192 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
 | **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. When the gateway is given the live evidence store, policy, and lifecycle, a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy is refused at redemption; see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md) and the [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
@@ -252,18 +252,25 @@ alternatives and outcome-dependent costs.
 
 | Path | Purpose |
 | --- | --- |
-| `src/exe_auth_ctrl_loop/authority.py` | Domain records, evidence store, Wilson bound, policy evaluation, capability issuance, gateway |
-| `src/exe_auth_ctrl_loop/tools.py` | Host-owned tool registry, JSON Schema validation, Anthropic tool definitions |
+| `src/exe_auth_ctrl_loop/authority.py` | Domain records, evidence store, policy evaluation with the sequential bound, capability issuance, gateway with redemption-time checks |
+| `src/exe_auth_ctrl_loop/shadow.py` | Frozen shadow trials, oracle labels, provenance-separated counts, epochs |
+| `src/exe_auth_ctrl_loop/lifecycle.py` | `UNESTABLISHED / QUALIFYING / AUTONOMOUS / SUSPENDED` state machine over shadow evidence |
+| `src/exe_auth_ctrl_loop/sequential.py` | Beta-mixture confidence sequence (anytime-valid lower bound); Wilson kept as legacy |
+| `src/exe_auth_ctrl_loop/risk.py` | Host-owned risk envelopes, sequence budgets, decision- and redemption-time guards |
+| `src/exe_auth_ctrl_loop/tools.py` | Host-owned tool registry, JSON Schema validation, risk classification, Anthropic tool definitions |
 | `src/exe_auth_ctrl_loop/providers.py` | OpenAI Structured Output models and proposal generator |
-| `src/exe_auth_ctrl_loop/executor.py` | Claude client-tool loop with per-operation authorization |
-| `src/exe_auth_ctrl_loop/pipeline.py` | OpenAI-to-Claude orchestration with event recording |
-| `src/exe_auth_ctrl_loop/ledger.py` | In-memory tamper-evident event hash chain |
+| `src/exe_auth_ctrl_loop/executor.py` | Claude client-tool loop with per-operation authorization and commit-before-act |
+| `src/exe_auth_ctrl_loop/pipeline.py` | OpenAI-to-Claude orchestration, ledger commit, audit freezing |
+| `src/exe_auth_ctrl_loop/ledger.py` | In-memory hash chain with decision commit and an anchoring demonstration |
 | `src/exe_auth_ctrl_loop/mcp.py` | MCP binding: signed authority metadata on `tools/call` |
+| `docs/v2/` | v2 specification, threat model, method note, per-mechanism contracts, gate reports |
+| `docs/paper-v2/` | Claims matrix, worked example from `n=0`, manuscript plan, reproducibility, release plan |
 | `docs/mcp-extension.md` | Key specification for the MCP extension |
+| `experiments/`, `results/` | Simulated evaluation harness, configs, and hash-manifested outputs |
 | `examples/example.py` | Offline deterministic example |
 | `examples/mcp_demo.py` | Offline MCP round trip, including the denial paths |
 | `examples/live_example.py` | Live OpenAI and Anthropic API example using a harmless mock handler |
-| `tests/` | Authority, provider, execution, mutation, approval, ledger, and MCP binding acceptance tests |
+| `tests/` | Offline acceptance tests for every mechanism above, including adversarial and concurrency cases |
 
 ## Getting started
 
@@ -338,6 +345,30 @@ An `audit` route is not a human gate. It executes unattended like
 independent label afterwards. With a shadow log attached to the loop, the
 proposal is frozen before the token is issued and the label is bound to that
 frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
+
+## Versions and lineage
+
+| Artifact | Identifier | Status |
+|---|---|---|
+| Software v0.1.0 | commit `f070e01`, DOI 10.5281/zenodo.21983062 | released 2026-08-17 |
+| Software v0.2.0 | commit `b266eb7`, DOI 10.5281/zenodo.22730700 | released 2026-09-12 |
+| Concept DOI (all versions) | 10.5281/zenodo.21983061 | resolves to the latest release |
+| Design disclosure | DOI 10.5281/zenodo.21894658; TDCommons dpubs 11356 | published 2026-08 |
+| Paper v1 | manuscript on the v0.2.0 design, August 2026 | not published; retained as written |
+| Software v2 (`research/v2`) | proposed 0.3.0; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | not released, not tagged, no DOI |
+| Paper v2 | plan in [docs/paper-v2/manuscript-plan.md](docs/paper-v2/manuscript-plan.md) | not written as prose, not submitted |
+
+What v2 changes relative to the v1 design and paper, in one paragraph: a
+partition can now earn autonomy from an empty evidence store, through shadow
+trials frozen before human review and labelled by an independent oracle; the
+evidence gate is an anytime-valid confidence sequence instead of a fixed-sample
+bound read at every decision; an issued token is refused at redemption once
+its justification is withdrawn; risk class is derived by the host from the
+arguments; decisions are committed to the ledger before any token exists;
+audited operations execute unattended and are labelled afterwards; and the
+design is evaluated in a seeded simulation that reports where it fails. The
+claims-to-evidence map is
+[docs/paper-v2/claims-matrix.md](docs/paper-v2/claims-matrix.md).
 
 ## Production trust boundary
 
