@@ -16,6 +16,7 @@ Module map:
   executor.py   Claude execution requests, verified per operation
   pipeline.py   composition and ledger recording
   ledger.py     tamper-evident hash chain
+  shadow.py     frozen shadow trials, oracle labels, provenance-separated counts
   mcp.py        signed authority metadata for MCP tools/call
 """
 
@@ -64,16 +65,32 @@ from .providers import (
     ProposedActionModel,
     confidence_bin,
 )
+from .shadow import (
+    COUNTING_PROVENANCE,
+    Counts,
+    Oracle,
+    OracleKind,
+    Provenance,
+    Reason,
+    Result,
+    ReviewAction,
+    ShadowEvidenceLog,
+    ShadowTrial,
+    TrialLabel,
+    TrialStatus,
+)
 from .tools import ToolDefinition, ToolRegistry, ToolValidationError
 
 __version__ = "0.2.0"
 
 __all__ = [
+    "COUNTING_PROVENANCE",
     "EXTENSION_PREFIX",
     "EXTENSION_VERSION",
     "AuthorityController",
     "AuthorizationToken",
     "ClaudeExecutionAgent",
+    "Counts",
     "CrossModelAuthorityLoop",
     "Decision",
     "EventLedger",
@@ -87,6 +104,8 @@ __all__ = [
     "MetaKeyError",
     "MetaVerificationError",
     "OpenAIProposalGenerator",
+    "Oracle",
+    "OracleKind",
     "Outcome",
     "OutcomeStatus",
     "PartitionKey",
@@ -97,10 +116,18 @@ __all__ = [
     "ProposalGenerationError",
     "ProposalReadiness",
     "ProposedActionModel",
+    "Provenance",
+    "Reason",
+    "Result",
+    "ReviewAction",
     "Route",
+    "ShadowEvidenceLog",
+    "ShadowTrial",
     "ToolDefinition",
     "ToolRegistry",
     "ToolValidationError",
+    "TrialLabel",
+    "TrialStatus",
     "VerifiedAuthority",
     "attach_meta",
     "build_call_meta",
