@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "states": ["UNESTABLISHED", "QUALIFYING", "AUTONOMOUS", "SUSPENDED"],
+  "provenance": ["SHADOW", "AUTONOMOUS", "HUMAN_APPROVED", "AUDIT"],
+  "evidence_rules": {
+    "SHADOW": {"counts": true, "inconclusive": "censored"},
+    "AUTONOMOUS": {"counts": true, "inconclusive": "censored"},
+    "AUDIT": {"counts": true, "inconclusive": "censored"},
+    "HUMAN_APPROVED": {"counts": false, "inconclusive": "dropped"}
+  },
+  "events": [
+    "FIRST_PROPOSAL", "TRIAL_ADMITTED", "TRIAL_INCONCLUSIVE", "GATE_MET",
+    "GATE_LOST_OUTCOME", "AUTONOMOUS_OUTCOME", "HUMAN_APPROVED_OUTCOME",
+    "EVIDENCE_EXPIRED", "SEVERE_FAILURE", "HUMAN_RELEASE", "POLICY_CHANGE",
+    "KEY_FIELD_CHURN"
+  ],
+  "transitions": [
+    {"id": "T-01", "from": null, "event": "FIRST_PROPOSAL", "guard": "none", "to": "UNESTABLISHED", "blocked": false, "reason": "NO_EXACT_EVIDENCE"},
+    {"id": "T-02", "from": "UNESTABLISHED", "event": "TRIAL_ADMITTED", "guard": "admissible", "to": "QUALIFYING", "blocked": false},
+    {"id": "T-03", "from": "UNESTABLISHED", "event": "TRIAL_INCONCLUSIVE", "guard": "admissible", "to": "QUALIFYING", "blocked": false},
+    {"id": "T-04", "from": "UNESTABLISHED", "event": "GATE_MET", "guard": "n_below_n_min", "to": "UNESTABLISHED", "blocked": true, "reason": "EVIDENCE_IMMATURE"},
+    {"id": "T-05", "from": "UNESTABLISHED", "event": "HUMAN_APPROVED_OUTCOME", "guard": "none", "to": "UNESTABLISHED", "blocked": true, "reason": "NOT_ADMISSIBLE"},
+    {"id": "T-06", "from": "QUALIFYING", "event": "TRIAL_ADMITTED", "guard": "gate_not_met", "to": "QUALIFYING", "blocked": false},
+    {"id": "T-07", "from": "QUALIFYING", "event": "GATE_MET", "guard": "all_entry_guards", "to": "AUTONOMOUS", "blocked": false},
+    {"id": "T-08", "from": "QUALIFYING", "event": "GATE_MET", "guard": "any_entry_guard_fails", "to": "QUALIFYING", "blocked": true, "reason": "BOUND_BELOW_POLICY"},
+    {"id": "T-09", "from": "QUALIFYING", "event": "TRIAL_INCONCLUSIVE", "guard": "admissible", "to": "QUALIFYING", "blocked": false},
+    {"id": "T-10", "from": "QUALIFYING", "event": "EVIDENCE_EXPIRED", "guard": "age_over_max", "to": "QUALIFYING", "blocked": false, "reason": "EVIDENCE_STALE"},
+    {"id": "T-11", "from": "AUTONOMOUS", "event": "AUTONOMOUS_OUTCOME", "guard": "bound_holds", "to": "AUTONOMOUS", "blocked": false},
+    {"id": "T-12", "from": "AUTONOMOUS", "event": "GATE_LOST_OUTCOME", "guard": "bound_below_required", "to": "QUALIFYING", "blocked": false, "reason": "BOUND_BELOW_POLICY"},
+    {"id": "T-13", "from": "AUTONOMOUS", "event": "EVIDENCE_EXPIRED", "guard": "age_over_max", "to": "QUALIFYING", "blocked": false, "reason": "EVIDENCE_STALE"},
+    {"id": "T-14", "from": "AUTONOMOUS", "event": "HUMAN_APPROVED_OUTCOME", "guard": "none", "to": "AUTONOMOUS", "blocked": true, "reason": "NOT_ADMISSIBLE"},
+    {"id": "T-15a", "from": "UNESTABLISHED", "event": "SEVERE_FAILURE", "guard": "any_provenance", "to": "SUSPENDED", "blocked": false, "reason": "SEVERE_FAILURE"},
+    {"id": "T-15b", "from": "QUALIFYING", "event": "SEVERE_FAILURE", "guard": "any_provenance", "to": "SUSPENDED", "blocked": false, "reason": "SEVERE_FAILURE"},
+    {"id": "T-15c", "from": "AUTONOMOUS", "event": "SEVERE_FAILURE", "guard": "any_provenance", "to": "SUSPENDED", "blocked": false, "reason": "SEVERE_FAILURE"},
+    {"id": "T-16", "from": "SUSPENDED", "event": "TRIAL_ADMITTED", "guard": "admissible", "to": "SUSPENDED", "blocked": true, "reason": "PARTITION_SUSPENDED"},
+    {"id": "T-17", "from": "SUSPENDED", "event": "GATE_MET", "guard": "none", "to": "SUSPENDED", "blocked": true, "reason": "PARTITION_SUSPENDED"},
+    {"id": "T-18", "from": "SUSPENDED", "event": "HUMAN_RELEASE", "guard": "named_human_actor_and_reason", "to": "QUALIFYING", "blocked": false, "epoch_delta": 1, "reset_counters": true},
+    {"id": "T-19", "from": "AUTONOMOUS", "event": "POLICY_CHANGE", "guard": "key_field_differs", "to": "AUTONOMOUS", "blocked": false, "retired": true, "successor": "UNESTABLISHED"},
+    {"id": "T-20", "from": "SUSPENDED", "event": "KEY_FIELD_CHURN", "guard": "key_field_differs", "to": "SUSPENDED", "blocked": false, "retired": true, "successor": "UNESTABLISHED", "successor_lineage_suspended": true},
+    {"id": "T-21", "from": "UNESTABLISHED", "event": "AUTONOMOUS_OUTCOME", "guard": "none", "to": "UNESTABLISHED", "blocked": true, "reason": "NO_EXACT_EVIDENCE"}
+  ]
+}
