@@ -34,3 +34,24 @@ single-use capability issued by the host-owned controller are always in scope.
 Prompt-injection findings against the models themselves are in scope only when
 they defeat a host-side invariant; the design assumes model outputs are
 untrusted requests.
+
+Also in scope: any way to redeem a token after its partition was suspended,
+its evidence invalidated, its policy version replaced, or its lifecycle state
+left `AUTONOMOUS`, when the gateway was constructed with that live state; and
+any way for two redemptions of one token to reach a handler twice within a
+single process.
+
+## Known limitations of the prototype gateway
+
+- Check-and-consume is serialized by a `threading.Lock`. This is correct for
+  threads in one process and makes no claim across processes, machines, or a
+  restart. Production needs a transactional consume in a durable store before
+  the handler is reached.
+- The handler runs after the token is consumed and outside the lock. A handler
+  that fails does not refund the token; the operation needs a fresh decision.
+- Live checks at redemption cover only the state the gateway was given. A
+  gateway constructed without an evidence store, policy provider, or lifecycle
+  guard behaves as v0.2.0 did: expiry and explicit revocation only.
+- Ordinary evidence increments (a new label on the same evidence record, with
+  the partition still valid, unsuspended, and autonomous) do not invalidate an
+  outstanding token. See `docs/v2/gateway-redemption.md` for the exact rule.

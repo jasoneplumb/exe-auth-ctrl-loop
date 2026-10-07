@@ -82,7 +82,7 @@ across an MCP `tools/call`.
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
 | **Evidence** | Output above, reproduced from `examples/denials.py` at `e15e056` on Python 3.14 (macOS). 41 tests pass offline against fake provider clients. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`. Offline; the live cross-model path needs API keys and is separate. |
-| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is not transactional across a network, the ledger is an in-memory hash chain, and evidence is not persisted. A partition suspended after issuance does not invalidate an outstanding token; only expiry or explicit revocation does. See [production trust boundary](#production-trust-boundary). |
+| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. When the gateway is given the live evidence store, policy, and lifecycle, a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy is refused at redemption; see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md) and the [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
 

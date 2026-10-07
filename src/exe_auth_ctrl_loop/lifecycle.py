@@ -19,6 +19,7 @@ from typing import Callable
 
 from .authority import (
     AuthorityController,
+    AuthorizationToken,
     Decision,
     EvidenceSnapshot,
     EvidenceStore,
@@ -236,6 +237,23 @@ class LifecycleManager:
             successor = self._records[new]
             successor.lineage_suspended = True
             self._log(new, successor, successor.state, None, ("LINEAGE_SUSPENDED",))
+
+    def redemption_blockers(self, token: AuthorizationToken) -> tuple[str, ...]:
+        """
+        intent: Veto a token whose partition has lost authority since it was issued
+        method: Read-only view of the current record (RedemptionGuard). No refresh: a
+                state change caused by ordinary evidence shows up at the next evaluate(),
+                which is the documented boundary for what invalidates a token.
+        effect: An evidence-based token needs AUTONOMOUS; a human-approved one survives a
+                non-autonomous state but not retirement, lineage suspension, or suspension
+        """
+        record = self._records.get(token.partition)
+        if record is None:
+            return ()
+        reasons = list(self._blockers(token.partition, record))
+        if not token.human_approved and record.state != LifecycleState.AUTONOMOUS:
+            reasons.append(f"LIFECYCLE_{record.state.value}")
+        return tuple(dict.fromkeys(reasons))
 
     def _gate_reasons(
         self, key: PartitionKey, record: PartitionRecord, snapshot: EvidenceSnapshot | None
