@@ -151,6 +151,20 @@ class ShadowEvidenceLog:
         self._trials: dict[str, ShadowTrial] = {}
         self._labels: dict[str, TrialLabel] = {}
         self._censored: set[str] = set()
+        self._resolved_at: dict[str, datetime] = {}
+        self._epoch_floor: dict[PartitionKey, int] = {}
+
+    def open_epoch(self, key: PartitionKey) -> None:
+        """
+        intent: Start a partition's evidence over, e.g. after a human releases a suspension
+        effect: Trials frozen before this ledger event stop counting, so data gathered
+                around the incident cannot requalify the partition on the same day
+        """
+        event = self.ledger.append(
+            "shadow.epoch_opened", digest(_partition_payload(key))[:16], "controller",
+            {"partition": _partition_payload(key)},
+        )
+        self._epoch_floor[key] = event.sequence
 
     def freeze(
         self,
@@ -232,6 +246,7 @@ class ShadowEvidenceLog:
             when,
         )
         self._labels[trial_id] = label
+        self._resolved_at[trial_id] = when
         return Result(True)
 
     def record_human_review(
@@ -291,9 +306,7 @@ class ShadowEvidenceLog:
 
     def counts(self, key: PartitionKey, provenance: Provenance) -> Counts:
         counts = Counts()
-        for trial in self._trials.values():
-            if trial.partition != key or trial.provenance != provenance:
-                continue
+        for trial in self._counted_trials(key, provenance):
             counts = replace(counts, frozen=counts.frozen + 1)
             status = self.status(trial.trial_id)
             label = self._labels.get(trial.trial_id)
@@ -306,6 +319,13 @@ class ShadowEvidenceLog:
             else:
                 counts = replace(counts, inconclusive=counts.inconclusive + 1)
         return counts
+
+    def _counted_trials(self, key: PartitionKey, provenance: Provenance) -> list[ShadowTrial]:
+        floor = self._epoch_floor.get(key, -1)
+        return [
+            t for t in self._trials.values()
+            if t.partition == key and t.provenance == provenance and t.frozen_sequence > floor
+        ]
 
     def snapshot(
         self,
@@ -336,8 +356,17 @@ class ShadowEvidenceLog:
             successes=successes,
             failures=failures,
             collected_from=collected_from,
-            collected_until=self.clock(),
+            collected_until=self._evidence_time(key),
         )
+
+    def _evidence_time(self, key: PartitionKey) -> datetime:
+        """Latest label or censor time among counting trials, so re-publishing never freshens."""
+        times = [
+            self._resolved_at.get(t.trial_id, t.frozen_at)
+            for p in COUNTING_PROVENANCE
+            for t in self._counted_trials(key, p)
+        ]
+        return max(times)
 
     def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime) -> bool:
         """
@@ -383,13 +412,20 @@ class ShadowEvidenceLog:
                 )
             elif event.event_type == "shadow.labeled":
                 log._labels[event.aggregate_id] = TrialLabel(payload["label"])
+                log._resolved_at[event.aggregate_id] = datetime.fromisoformat(payload["labeled_at"])
             elif event.event_type == "shadow.censored":
                 log._censored.add(event.aggregate_id)
+                log._resolved_at[event.aggregate_id] = event.occurred_at
+            elif event.event_type == "shadow.epoch_opened":
+                log._epoch_floor[PartitionKey(**payload["partition"])] = event.sequence
         return log
 
     def _censor(self, trial_id: str, reason: Reason) -> None:
-        self.ledger.append("shadow.censored", trial_id, "controller", {"reason": reason.value})
+        event = self.ledger.append(
+            "shadow.censored", trial_id, "controller", {"reason": reason.value}, self.clock()
+        )
         self._censored.add(trial_id)
+        self._resolved_at[trial_id] = event.occurred_at
 
     def _quarantine(self, trial_id: str, reason: Reason) -> Result:
         self.ledger.append("shadow.quarantined", trial_id, "controller", {"reason": reason.value})

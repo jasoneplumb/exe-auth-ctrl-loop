@@ -16,6 +16,7 @@ Module map:
   executor.py   Claude execution requests, verified per operation
   pipeline.py   composition and ledger recording
   ledger.py     tamper-evident hash chain
+  lifecycle.py  explicit UNESTABLISHED/QUALIFYING/AUTONOMOUS/SUSPENDED state machine
   shadow.py     frozen shadow trials, oracle labels, provenance-separated counts
   mcp.py        signed authority metadata for MCP tools/call
 """
@@ -43,6 +44,7 @@ from .authority import (
 )
 from .executor import ClaudeExecutionAgent, ExecutionRun, ExecutionStatus, ExecutionStep
 from .ledger import EventLedger, LedgerEvent
+from .lifecycle import LifecycleEvent, LifecycleManager, LifecycleState, PartitionRecord
 from .mcp import (
     EXTENSION_PREFIX,
     EXTENSION_VERSION,
@@ -101,6 +103,9 @@ __all__ = [
     "ExecutionStatus",
     "ExecutionStep",
     "LedgerEvent",
+    "LifecycleState",
+    "LifecycleManager",
+    "LifecycleEvent",
     "MetaKeyError",
     "MetaVerificationError",
     "OpenAIProposalGenerator",
@@ -109,6 +114,7 @@ __all__ = [
     "Outcome",
     "OutcomeStatus",
     "PartitionKey",
+    "PartitionRecord",
     "Policy",
     "Proposal",
     "ProposalBundle",
