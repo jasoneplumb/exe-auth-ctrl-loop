@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+audit_rate_0,v2,1,400,False,,,0,0,0,400,380,20,3,0,0,0,400,375,23,2,0,0,0,0,0,,380,380,QUALIFYING,398,0.891695,0,,0.005,True,
+audit_rate_0,v2,2,400,False,,,0,0,0,400,384,16,2,0,0,0,400,380,18,2,0,0,1,0,0,,384,384,SUSPENDED,231,0.888292,0,,0.005,True,
+audit_rate_0,v2,3,400,False,,,0,0,0,400,377,23,2,0,0,0,400,374,24,2,0,0,0,0,0,,377,377,QUALIFYING,398,0.888424,0,,0.005,True,
+audit_rate_0,v2,4,400,True,164,,0,234,0,164,159,5,0,0,0,0,164,159,5,0,8,0,0,0,0,,393,393,AUTONOMOUS,396,0.925495,0,0.0,0.0,False,
+audit_rate_0,v2,5,400,True,261,,0,14,0,385,370,15,3,0,0,1,385,365,18,2,1,1,1,0,0,,384,384,SUSPENDED,272,0.904167,0,0.0,0.005194805194805195,False,
+audit_rate_0,v2,6,400,True,261,,0,98,0,301,289,12,1,0,0,1,301,286,13,2,4,1,1,0,0,,387,387,SUSPENDED,356,0.913605,0,0.0,0.006644518272425249,False,
+audit_rate_0,v2,7,400,False,,,0,0,0,400,379,21,2,0,0,0,400,375,23,2,0,0,0,0,0,,379,379,QUALIFYING,398,0.891695,0,,0.005,True,
+audit_rate_0,v2,8,400,True,198,,0,132,0,267,255,12,0,0,0,1,267,253,12,2,6,1,1,0,0,,387,387,SUSPENDED,327,0.915025,0,0.0,0.00749063670411985,False,
+audit_rate_0,v2,9,400,False,,,0,0,0,400,372,28,1,0,0,0,400,369,29,2,0,0,0,0,0,,372,372,QUALIFYING,398,0.872344,0,,0.005,True,
+audit_rate_0,v2,10,400,True,230,,0,18,0,381,365,16,1,0,0,1,381,362,17,2,1,1,1,0,0,,383,383,SUSPENDED,245,0.906188,0,0.0,0.005249343832020997,False,

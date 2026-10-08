@@ -92,7 +92,7 @@ show("sparse evidence", sparse)
 # A mature, high-success partition — collected 90 days ago against a 30-day
 # ceiling. Past performance expires.
 stale = controller_for(evidence_with(
-    EvidenceSnapshot("ev-02", 1, KEY, 198, 2, now - timedelta(days=120), now - timedelta(days=90))
+    EvidenceSnapshot("ev-02", 1, KEY, 297, 3, now - timedelta(days=120), now - timedelta(days=90))
 )).evaluate(proposal("op-stale"))
 show("stale evidence", stale)
 
@@ -107,7 +107,7 @@ show("no exact evidence", missing)
 # The proposing model said it was not sure. That answer is carried, not
 # averaged away by an otherwise strong record.
 questioning = controller_for(evidence_with(
-    EvidenceSnapshot("ev-04", 1, KEY, 198, 2, now - timedelta(days=14), now)
+    EvidenceSnapshot("ev-04", 1, KEY, 297, 3, now - timedelta(days=14), now)
 )).evaluate(proposal(
     "op-questions",
     readiness=ProposalReadiness.EXECUTABLE,
@@ -119,7 +119,7 @@ show("unresolved question", questioning)
 # This one is authorized. The token is real. Then the amount changes between
 # the decision and the call — the case a plan-level approval would wave through.
 authorized_store = evidence_with(
-    EvidenceSnapshot("ev-05", 1, KEY, 198, 2, now - timedelta(days=14), now)
+    EvidenceSnapshot("ev-05", 1, KEY, 297, 3, now - timedelta(days=14), now)
 )
 original = proposal("op-mutated")
 granted = controller_for(authorized_store).evaluate(original)

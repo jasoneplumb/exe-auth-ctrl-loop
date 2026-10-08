@@ -1,0 +1,19 @@
+{
+  "audit_rate": 0.0,
+  "comparator": "v2",
+  "horizon": 400,
+  "name": "audit_rate_0",
+  "p_good": 0.95,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}

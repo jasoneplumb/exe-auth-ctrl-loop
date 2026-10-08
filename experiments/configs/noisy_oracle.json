@@ -1,0 +1,22 @@
+{
+  "assumptions_violated": [
+    "A5"
+  ],
+  "comparator": "v2",
+  "horizon": 400,
+  "name": "noisy_oracle",
+  "oracle_flip": 0.05,
+  "p_good": 0.97,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ]
+}

@@ -1,14 +1,16 @@
 """
 Intent: Make the authorization record tamper-evident, so "why was this allowed?" has an
         answer that cannot be quietly rewritten afterwards
-Context: pipeline.py appends proposal, decision, and execution events; the committed audit
-        draw lands here before any outcome exists, which is what makes audit selection
-        independent of results
+Context: pipeline.py appends proposal and execution events, and wires the executor so that
+        every decision -- audit draw included -- is committed here before a token is issued
+        or a handler reached (docs/v2/audit-commitment.md). That ordering is what the
+        audit-selection claim rests on, together with a trusted RNG and controller.
 Pattern: Hash chain -- each event covers the previous event's hash, so altering any earlier
         entry invalidates every entry after it
-Future: In-memory and single-process. Production needs durable append-only storage, and
-        ideally external anchoring, since a chain an attacker can rewrite wholesale proves
-        only internal consistency.
+Future: In-memory and single-process. verify() proves internal consistency only: a party
+        who can rewrite the whole chain, or drop its tail, produces a chain that verifies.
+        anchor()/verify_anchor() show what an externally held head hash would add; they
+        are a demonstration, not part of this prototype's guarantee.
 """
 
 from __future__ import annotations
@@ -17,7 +19,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
-from .authority import digest, utcnow
+from .authority import Decision, Proposal, digest, utcnow
 
 
 @dataclass(frozen=True)
@@ -102,3 +104,57 @@ class EventLedger:
                 return False
             previous = event.event_hash
         return True
+
+    def commit_decision(self, decision: Decision, proposal: Proposal) -> LedgerEvent:
+        """
+        intent: Put the decision, with its audit draw, on the record before anything acts
+        context: Called by the executor between evaluate() and issue(). If this raises,
+                 the executor refuses the step, so no handler runs on an uncommitted
+                 decision (docs/v2/audit-commitment.md, event-order contract).
+        """
+        return self.append(
+            "authority.decision.committed",
+            decision.proposal_id,
+            "controller",
+            {
+                "decision_id": decision.decision_id,
+                "proposal_digest": proposal.proposal_digest,
+                "route": decision.route.value,
+                "reason_codes": list(decision.reason_codes),
+                "evidence_id": decision.evidence_id,
+                "evidence_version": decision.evidence_version,
+                "lower_bound": decision.lower_bound,
+                "required_bound": decision.required_bound,
+                "audit_probability": decision.audit_probability,
+                "audit_draw": decision.audit_draw,
+                "decided_at": decision.decided_at.isoformat(),
+            },
+            decision.decided_at,
+        )
+
+    def anchor(self) -> tuple[int, str]:
+        """
+        intent: Name the current head so it can be stored somewhere this process cannot write
+        effect: (sequence, event_hash) of the last event, or (-1, "GENESIS") when empty
+        constraint: Demonstration only. The value is meaningful if and only if it is held
+                    outside the controller's trust domain; in this process it proves nothing.
+        """
+        if not self.events:
+            return (-1, "GENESIS")
+        head = self.events[-1]
+        return (head.sequence, head.event_hash)
+
+    def verify_anchor(self, sequence: int, event_hash: str) -> bool:
+        """
+        intent: Check that an externally held head is still part of this chain
+        effect: Detects truncation below the anchor and any rewrite at or before it, which
+                verify() alone cannot. Events appended after the anchor are covered by
+                verify() only until the next anchor is taken.
+        """
+        if not self.verify():
+            return False
+        if sequence < 0:
+            return True
+        if sequence >= len(self.events):
+            return False
+        return self.events[sequence].event_hash == event_hash

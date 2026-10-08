@@ -1,0 +1,23 @@
+{
+  "assumptions_violated": [
+    "A2"
+  ],
+  "comparator": "v2",
+  "horizon": 400,
+  "name": "distribution_shift",
+  "p_after_shift": 0.7,
+  "p_good": 0.98,
+  "seeds": [
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10
+  ],
+  "shift_at": 250
+}

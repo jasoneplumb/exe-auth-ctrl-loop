@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+legacy_wilson_seeded,legacy_wilson_seeded,1,400,True,0,,0,377,21,0,0,0,0,0,0,0,0,0,0,0,6,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.052763819095477386,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,2,400,True,0,,0,380,18,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.04522613065326633,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,3,400,True,0,,0,141,9,250,249,1,1,0,0,0,0,0,0,0,2,1,0,0,0,,399,399,suspended,249,,0,0.06,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,4,400,True,0,,0,269,12,119,118,1,0,0,0,0,0,0,0,0,2,1,0,0,0,,399,399,suspended,380,,0,0.042704626334519574,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,5,400,True,0,,0,382,16,0,0,0,0,0,0,0,0,0,0,0,7,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.04020100502512563,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,6,400,True,0,,0,282,17,101,99,2,0,0,0,0,0,0,0,0,3,1,0,0,0,,398,398,suspended,398,,0,0.056856187290969896,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,7,400,True,0,,0,384,14,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.035175879396984924,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,8,400,True,0,,0,378,20,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.05025125628140704,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,9,400,True,0,,0,79,3,318,317,1,1,0,0,0,0,0,0,0,1,1,0,0,0,,399,399,suspended,181,,0,0.036585365853658534,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,10,400,True,0,,0,374,24,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,,398,398,seeded_autonomous,498,,0,0.06030150753768844,,False,

@@ -90,7 +90,7 @@ proposal = Proposal(
     frozenset({"refund:create"}), key, "openai",
 )
 evidence = EvidenceStore()
-evidence.put(EvidenceSnapshot("ev-88", 4, key, 198, 2, NOW - timedelta(days=14), NOW))
+evidence.put(EvidenceSnapshot("ev-88", 4, key, 297, 3, NOW - timedelta(days=14), NOW))
 policy = Policy(
     "policy-v5", {"financial-low": .95}, n_min=100,
     max_evidence_age=timedelta(days=30), audit_rate=.05,

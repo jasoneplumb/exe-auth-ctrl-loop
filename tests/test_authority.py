@@ -85,8 +85,9 @@ class AuthorityTests(unittest.TestCase):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
         self.assertEqual(decision.route, Route.AUDIT)
-        with self.assertRaises(PermissionError):
-            ExecutionGateway(lambda: NOW).issue(decision, self.proposal, self.policy)
+        # an audit executes unattended; the route marks it for labelling afterwards
+        token = ExecutionGateway(lambda: NOW).issue(decision, self.proposal, self.policy)
+        self.assertFalse(token.human_approved)
 
     def test_draft_requests_revision(self):
         draft = replace(self.proposal, readiness=ProposalReadiness.DRAFT)

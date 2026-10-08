@@ -1,4 +1,7 @@
 cff-version: 1.2.0
+# version, the version DOI, and any paper-v2 identifier change only when a release
+# or deposit actually exists; the proposed next release (0.3.0) is described in
+# docs/paper-v2/release-plan.md and is not yet issued.
 message: "If you use this software or design, please cite it as below."
 title: "Cross-Model Execution-Authority Control Loop"
 authors:

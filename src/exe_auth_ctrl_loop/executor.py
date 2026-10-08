@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Iterable, Mapping
+from typing import Any, Callable, Iterable, Mapping
 
 from .authority import (
     AuthorityController,
@@ -30,7 +30,6 @@ from .tools import ToolRegistry, ToolValidationError
 class ExecutionStatus(str, Enum):
     COMPLETED = "completed"
     AWAITING_APPROVAL = "awaiting_approval"
-    AWAITING_AUDIT = "awaiting_audit"
     NEEDS_CLARIFICATION = "needs_clarification"
     NEEDS_REVISION = "needs_revision"
     DENIED = "denied"
@@ -46,6 +45,8 @@ class ExecutionStep:
     executed: bool
     receipt: Any | None
     error: str | None
+    # the handler was reached and raised: the token is spent, the effect is unknown
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -75,7 +76,16 @@ run; do not route around it."""
         registry: ToolRegistry,
         client: Any | None = None,
         max_turns: int = 12,
+        commit: Callable[[Decision, Proposal], Any] | None = None,
     ) -> None:
+        """
+        intent: Hold the host-side pieces the loop needs, and the commit hook that records
+                a decision before it is acted on
+        constraint: `commit` is called after evaluate() and before issue(); if it raises,
+                    the step is refused. CrossModelAuthorityLoop sets it to its ledger's
+                    commit_decision. An agent run without one records nothing, which is
+                    allowed for tests and offline demos and documented as such.
+        """
         if not model or not prompt_version:
             raise ValueError("pin an execution model and prompt version")
         if client is None:
@@ -92,6 +102,7 @@ run; do not route around it."""
         self.gateway = gateway
         self.registry = registry
         self.max_turns = max_turns
+        self.commit = commit
 
     def run(
         self,
@@ -202,7 +213,8 @@ run; do not route around it."""
             if not outcome.executed:
                 return ExecutionRun(
                     bundle.bundle_id,
-                    self._status_for_route(outcome.route),
+                    ExecutionStatus.FAILED if outcome.failed
+                    else self._status_for_route(outcome.route),
                     text,
                     tuple(steps),
                 )
@@ -247,12 +259,34 @@ run; do not route around it."""
         try:
             registered = self.registry.get(tool_name)
             self.registry.validate(tool_name, tool_input)
+            risk_class = self.registry.classify_risk(tool_name, tool_input)
         except ToolValidationError as exc:
             return self._blocked(proposal_id, tool_name, str(exc))
         if registered.effects != proposal.requested_effects:
             return self._blocked(proposal_id, tool_name, "registered effects changed")
+        # constraint: the partition's risk class is re-derived from the registry here, so
+        # a proposal carrying a cheaper class than its arguments warrant never reaches the
+        # evidence that class earned
+        if risk_class != proposal.partition.risk_class:
+            return self._blocked(proposal_id, tool_name, "risk class does not match registry")
 
         decision = self.authority.evaluate(proposal)
+        # constraint: the decision -- audit draw included -- goes on the record before a
+        # token exists. A commit that fails refuses the step: an unrecorded decision never
+        # reaches issue(), so no effect can happen off the record.
+        if self.commit is not None:
+            try:
+                self.commit(decision, proposal)
+            except Exception as exc:
+                return ExecutionStep(
+                    proposal_id=proposal_id,
+                    tool_name=tool_name,
+                    route=Route.DENY,
+                    decision=decision,
+                    executed=False,
+                    receipt=None,
+                    error=f"decision not committed to ledger: {exc}",
+                )
         human_approved = proposal_id in approved
         try:
             token = self.gateway.issue(
@@ -272,11 +306,43 @@ run; do not route around it."""
                 error=f"authority route: {decision.route.value}",
             )
 
-        receipt = self.gateway.execute(
-            token.token_id,
-            proposal,
-            lambda p: self.registry.execute(p.tool_name, p.parameters),
-        )
+        try:
+            receipt = self.gateway.execute(
+                token.token_id,
+                proposal,
+                lambda p: self.registry.execute(p.tool_name, p.parameters),
+            )
+        except PermissionError:
+            # withdrawn between issue and redemption (suspension, policy, guard veto)
+            return ExecutionStep(
+                proposal_id=proposal_id,
+                tool_name=tool_name,
+                route=decision.route,
+                decision=decision,
+                executed=False,
+                receipt=None,
+                error="authorization withdrawn before redemption",
+            )
+        except Exception as exc:
+            # Three ways here. (1) The handler raised: the token was consumed first, the
+            # effect is unknown. (2) A guard's commit() raised, which its contract forbids:
+            # the token was consumed, the effect never ran. (3) A guard's
+            # redemption_blockers() raised unexpectedly, before the consume: the token is
+            # NOT spent. In every case the proposal is marked executed so it cannot be
+            # retried in this run, and the failure is a step rather than an exception out
+            # of run(); the step cannot tell (3) from (1), so it claims nothing about the
+            # token beyond that this run will not present it again.
+            executed.add(proposal_id)
+            return ExecutionStep(
+                proposal_id=proposal_id,
+                tool_name=tool_name,
+                route=decision.route,
+                decision=decision,
+                executed=False,
+                receipt=None,
+                error=f"handler failed: {exc}",
+                failed=True,
+            )
         executed.add(proposal_id)
         return ExecutionStep(
             proposal_id=proposal_id,
@@ -304,7 +370,8 @@ run; do not route around it."""
     def _status_for_route(route: Route) -> ExecutionStatus:
         return {
             Route.HUMAN_APPROVAL: ExecutionStatus.AWAITING_APPROVAL,
-            Route.AUDIT: ExecutionStatus.AWAITING_AUDIT,
+            # AUDIT executes unattended; reaching here means the gateway refused it
+            Route.AUDIT: ExecutionStatus.DENIED,
             Route.CLARIFICATION: ExecutionStatus.NEEDS_CLARIFICATION,
             Route.REVISION: ExecutionStatus.NEEDS_REVISION,
             Route.DENY: ExecutionStatus.DENIED,

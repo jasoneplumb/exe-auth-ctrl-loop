@@ -19,7 +19,10 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from typing import Any, Callable, Mapping
+from threading import Lock
+from typing import Any, Callable, Mapping, Protocol, Sequence
+
+from .sequential import beta_mixture_lower_bound
 
 
 def utcnow() -> datetime:
@@ -181,12 +184,35 @@ class Policy:
     prohibited_effects: frozenset[str] = frozenset()
     token_ttl: timedelta = timedelta(minutes=2)
     bound_z: float = 1.96
+    alpha: float = 0.05
+    estimator: str = "beta_mixture"
 
     def __post_init__(self) -> None:
         if self.n_min < 1:
             raise ValueError("n_min must be positive")
         if not 0.0 <= self.audit_rate <= 1.0:
             raise ValueError("audit_rate must be in [0, 1]")
+        if not 0.0 < self.alpha < 1.0:
+            raise ValueError("alpha must be in (0, 1)")
+        if self.estimator not in ESTIMATORS:
+            raise ValueError(f"estimator must be one of {sorted(ESTIMATORS)}")
+
+    def lower_bound(self, successes: int, failures: int) -> float:
+        """
+        intent: The one place that turns counts into the bound the gate compares
+        constraint: `estimator` and `alpha` are part of the policy, so changing either is
+                    a policy change and must come with a new policy version; evidence
+                    judged under one method is not silently re-read under another.
+        effect: `beta_mixture` is valid at every look (docs/v2/statistical-method.md).
+                `wilson_legacy` is the v1 fixed-sample bound, kept for comparison only;
+                read repeatedly it exceeds its nominal error rate.
+        """
+        if self.estimator == "wilson_legacy":
+            return wilson_lower_bound(successes, successes + failures, self.bound_z)
+        return beta_mixture_lower_bound(successes, failures, self.alpha)
+
+
+ESTIMATORS = frozenset({"beta_mixture", "wilson_legacy"})
 
 
 @dataclass(frozen=True)
@@ -212,6 +238,7 @@ class AuthorizationToken:
     proposal_digest: str
     allowed_tool: str
     allowed_effects: frozenset[str]
+    partition: PartitionKey
     policy_version: str
     evidence_id: str | None
     evidence_version: int | None
@@ -219,6 +246,38 @@ class AuthorizationToken:
     human_approved: bool
     used: bool = False
     revoked: bool = False
+    revocation_reason: str | None = None
+
+
+class ProposalGuard(Protocol):
+    """
+    intent: Let host-owned policy that is not about evidence veto a proposal at decision
+            time -- risk envelopes, budgets, sequence rules (risk.py)
+    effect: Any reason a guard returns routes the proposal to DENY, which no signature
+            can override
+    """
+
+    def proposal_blockers(self, proposal: Proposal) -> tuple[str, ...]: ...
+
+
+class RedemptionGuard(Protocol):
+    """
+    intent: Let shared authority state veto a token at the moment it is spent, and learn
+            when it was spent
+    context: The lifecycle manager and the risk policy implement this; the gateway asks
+             every guard inside its consume lock, so a veto and a consume cannot
+             interleave, and calls commit() only once the token is consumed
+    constraint: Must not call back into the gateway. redemption_blockers() is read-only;
+                commit() is the one place a guard may record that an effect happened, and
+                it must not raise -- it runs after the token is consumed, so anything that
+                could refuse the operation belongs in redemption_blockers().
+    """
+
+    def redemption_blockers(
+        self, token: AuthorizationToken, proposal: Proposal
+    ) -> tuple[str, ...]: ...
+
+    def commit(self, token: AuthorizationToken, proposal: Proposal) -> None: ...
 
 
 @dataclass(frozen=True)
@@ -256,6 +315,19 @@ class EvidenceStore:
 
     def get(self, key: PartitionKey) -> EvidenceSnapshot | None:
         return self._items.get(key)
+
+    def invalidate(self, key: PartitionKey, reason: str) -> None:
+        """
+        intent: Declare a partition's evidence unusable without deleting the record
+        effect: A new version with valid=False. The controller withholds autonomy, and a
+                gateway holding this store refuses tokens issued against earlier versions.
+        """
+        current = self._items.get(key)
+        if current is None:
+            raise KeyError("partition not found")
+        self.put(replace(
+            current, version=current.version + 1, valid=False, invalidation_reason=reason,
+        ))
 
     def adjudicate(self, key: PartitionKey, outcome: Outcome, autonomous: bool) -> None:
         """
@@ -309,6 +381,9 @@ def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:
             rather than the only defence.
     tradeoff: Returns 0.0 for an empty record rather than raising, so an unknown partition
               flows into the same "below threshold" path as a bad one
+    constraint: Fixed-sample. Legacy since v2 (`Policy.estimator = "wilson_legacy"`): read
+                after every trial it exceeds its nominal error rate, so it no longer gates
+                new autonomy by default. See docs/v2/statistical-method.md.
     """
     if total <= 0:
         return 0.0
@@ -334,11 +409,13 @@ class AuthorityController:
         policy: Policy,
         rng: random.Random | None = None,
         clock: Callable[[], datetime] = utcnow,
+        guards: Sequence[ProposalGuard] = (),
     ) -> None:
         self.evidence = evidence
         self.policy = policy
         self.rng = rng or random.SystemRandom()
         self.clock = clock
+        self.guards = tuple(guards)
 
     def evaluate(self, proposal: Proposal) -> Decision:
         """
@@ -373,6 +450,13 @@ class AuthorityController:
         if proposal.requested_effects & self.policy.prohibited_effects:
             route = Route.DENY
             reasons.append("PROHIBITED_EFFECT")
+        # constraint: scope and budget are host policy, like prohibited effects, so a
+        # guard veto is a DENY -- not a request for a human, who cannot widen an envelope
+        for guard in self.guards:
+            vetoes = guard.proposal_blockers(proposal)
+            if vetoes:
+                route = Route.DENY
+                reasons.extend(v for v in vetoes if v not in reasons)
 
         if snapshot is None:
             reasons.append("NO_EXACT_EVIDENCE")
@@ -387,7 +471,7 @@ class AuthorityController:
                 reasons.append("EVIDENCE_IMMATURE")
             if snapshot.key != proposal.partition:
                 reasons.append("PARTITION_MISMATCH")
-            lower = wilson_lower_bound(snapshot.successes, snapshot.n, self.policy.bound_z)
+            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures)
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
 
@@ -403,7 +487,8 @@ class AuthorityController:
             # and carry the draw into the Decision the ledger chains. Selecting audits
             # afterwards -- or being able to revise the selection -- would let an operator
             # or a strategic agent steer scrutiny away from the failures. Committing first
-            # makes audit selection provably independent of results.
+            # keeps audit selection independent of results -- given a trusted RNG and a
+            # controller that commits the draw before acting (docs/v2/audit-commitment.md).
             audit_draw = self.rng.random()
             route = Route.AUDIT if audit_draw < audit_probability else Route.AUTONOMOUS
             reasons.append(
@@ -434,12 +519,33 @@ class ExecutionGateway:
     Pattern: Capability, not permission check -- the token names one tool, one effect set,
             one proposal digest, one use, and a short expiry.
     Future: Tokens are in-process objects. Across a network they must be signed or held
-            server-side, and consumed transactionally rather than flagged.
+            server-side, and consumed transactionally rather than under a thread lock.
     """
 
-    def __init__(self, clock: Callable[[], datetime] = utcnow) -> None:
+    def __init__(
+        self,
+        clock: Callable[[], datetime] = utcnow,
+        evidence: EvidenceStore | None = None,
+        current_policy: Callable[[], Policy] | None = None,
+        guards: Sequence[RedemptionGuard] = (),
+    ) -> None:
+        """
+        intent: Optionally bind the gateway to the live authority state it should re-check
+        effect: With `evidence`, a token dies with its partition's suspension or evidence
+                invalidation. With `current_policy`, it dies with a policy version change
+                or a newly prohibited effect. Each guard (e.g. LifecycleManager) can veto
+                on its own grounds. Without any of them the gateway behaves as v0.2.0 did:
+                expiry and explicit revocation only.
+        """
         self.clock = clock
+        self.evidence = evidence
+        self.current_policy = current_policy
+        self.guards = tuple(guards)
         self.tokens: dict[str, AuthorizationToken] = {}
+        # constraint: one lock serializes every check-and-consume. Correct for threads in
+        # one process; it says nothing across processes or a restart. See
+        # docs/v2/gateway-redemption.md.
+        self._lock = Lock()
 
     def issue(
         self,
@@ -450,32 +556,37 @@ class ExecutionGateway:
     ) -> AuthorizationToken:
         """
         intent: Mint a capability scoped to exactly the decision that justified it
-        constraint: Only AUTONOMOUS issues unattended. HUMAN_APPROVAL and AUDIT need a real
-                    approval; DENY, REVISION, and CLARIFICATION cannot be overridden at all
-                    -- they require a corrected proposal or a policy change, not a signature.
-        effect: The token carries the evidence id and version as audit provenance, not as a
-                live constraint -- this gateway holds no reference to the EvidenceStore and
-                execute() never re-reads it
-        constraint: A partition suspended after issuance does NOT invalidate an outstanding
-                    token. Only expiry or an explicit revoke() does, and nothing calls
-                    revoke() automatically. The short TTL is what bounds that window, which
-                    is the reason it is short. Fresh evaluation governs the next request,
-                    not one already authorized.
+        constraint: AUTONOMOUS and AUDIT issue unattended -- an audit is an autonomous
+                    execution that was also selected, before the outcome, for independent
+                    labelling afterwards (docs/v2/audit-commitment.md). HUMAN_APPROVAL
+                    needs a real approval; DENY, REVISION, and CLARIFICATION cannot be
+                    overridden at all -- they require a corrected proposal or a policy
+                    change, not a signature.
+        constraint: A human signature overrides a route, never a prohibition: prohibited
+                    effects are refused here even with human_approved=True, and if a live
+                    policy provider is attached the policy passed in must be the current one
+        effect: The token names its partition and the evidence id and version it was
+                judged on. execute() re-reads the live state against them, so a grant
+                is only as good as its justification still is at the moment of use.
         """
-        human_overridable = decision.route in {Route.HUMAN_APPROVAL, Route.AUDIT}
-        allowed = decision.route == Route.AUTONOMOUS or (
-            human_approved and human_overridable
+        allowed = decision.route in {Route.AUTONOMOUS, Route.AUDIT} or (
+            human_approved and decision.route == Route.HUMAN_APPROVAL
         )
         if not allowed:
             raise PermissionError("decision does not authorize execution")
         if decision.proposal_digest != proposal.proposal_digest:
             raise PermissionError("decision is not bound to this proposal")
+        if proposal.requested_effects & policy.prohibited_effects:
+            raise PermissionError("human approval cannot override a prohibited effect")
+        if self.current_policy is not None and self.current_policy().version != policy.version:
+            raise PermissionError("policy is not the current policy")
         token = AuthorizationToken(
             token_id=secrets.token_hex(24),
             decision_id=decision.decision_id,
             proposal_digest=proposal.proposal_digest,
             allowed_tool=proposal.tool_name,
             allowed_effects=proposal.requested_effects,
+            partition=proposal.partition,
             policy_version=policy.version,
             evidence_id=decision.evidence_id,
             evidence_version=decision.evidence_version,
@@ -497,23 +608,93 @@ class ExecutionGateway:
                 trusting that issuance is still valid
         effect: Every mismatch raises PermissionError, so a caller cannot distinguish
                 "expired" from "wrong tool" by control flow and act on the difference
+        constraint: The linearization point is `token.used = True` inside the lock. Every
+                    check, including the live-state checks, happens before it under the
+                    same lock, so no state change can slip between a check and the consume
+                    and no second redeemer can observe used=False. The handler runs after
+                    the lock is released; a handler failure does not refund the token.
         """
-        token = self.tokens.get(token_id)
-        if token is None or token.used or token.revoked:
-            raise PermissionError("missing, consumed, or revoked token")
-        if self.clock() >= token.expires_at:
-            raise PermissionError("expired token")
-        if token.proposal_digest != proposal.proposal_digest:
-            raise PermissionError("proposal changed after authorization")
-        if token.allowed_tool != proposal.tool_name:
-            raise PermissionError("tool exceeds authorization")
-        if not proposal.requested_effects <= token.allowed_effects:
-            raise PermissionError("effect exceeds authorization")
-        # tradeoff: flag-then-invoke is safe in one process but not across a network --
-        # two concurrent redemptions could both observe used=False. Production must consume
-        # the token transactionally before the handler is reached.
-        token.used = True
+        with self._lock:
+            token = self.tokens.get(token_id)
+            if token is None or token.used or token.revoked:
+                raise PermissionError("missing, consumed, or revoked token")
+            if self.clock() >= token.expires_at:
+                raise PermissionError("expired token")
+            if token.proposal_digest != proposal.proposal_digest:
+                raise PermissionError("proposal changed after authorization")
+            if token.allowed_tool != proposal.tool_name:
+                raise PermissionError("tool exceeds authorization")
+            if not proposal.requested_effects <= token.allowed_effects:
+                raise PermissionError("effect exceeds authorization")
+            blockers = self.redemption_blockers(token, proposal)
+            if blockers:
+                raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
+            token.used = True
+            # effect: budgets are charged here, still under the lock and only for a token
+            # that was actually consumed, so a charge and a consume are one event
+            # constraint: guard.commit() must not raise. It is the settlement of an
+            # operation already consumed; a failure here would leave the token spent with
+            # the effect unapplied and no retry path. A guard must do its checking in
+            # redemption_blockers(), which runs before the consume -- RiskPolicy does:
+            # the same budget.amount() call that could raise in commit() has already run
+            # there for every limit-based budget.
+            for guard in self.guards:
+                guard.commit(token, proposal)
         return adapter(proposal)
 
-    def revoke(self, token_id: str) -> None:
-        self.tokens[token_id].revoked = True
+    def redemption_blockers(
+        self, token: AuthorizationToken, proposal: Proposal
+    ) -> tuple[str, ...]:
+        """
+        intent: Everything about the world, as opposed to the token, that can refuse it
+        method: Policy identity, then evidence identity and health, then each guard.
+                Collected rather than short-circuited so a denial names every reason.
+        constraint: Ordinary evidence increments do not appear here. A new label on the
+                    same evidence record, with the partition still valid, unsuspended, and
+                    (if a lifecycle guard is attached) still AUTONOMOUS, leaves the token
+                    good. What does withdraw it: suspension, declared invalidation, the
+                    evidence record being replaced or removed, a policy version change,
+                    a newly prohibited effect, and any guard veto.
+        effect: A human approval given in full view of a suspension or invalidation (the
+                decision saw the same snapshot version) is honored; one given before it
+                is not. Human approval is informed consent to the current state, not a
+                bearer right that survives a change of state.
+        """
+        reasons: list[str] = []
+        if self.current_policy is not None:
+            policy = self.current_policy()
+            if policy.version != token.policy_version:
+                reasons.append("POLICY_CHANGED")
+            if proposal.requested_effects & policy.prohibited_effects:
+                reasons.append("PROHIBITED_EFFECT")
+        if self.evidence is not None:
+            snapshot = self.evidence.get(token.partition)
+            if snapshot is not None and (snapshot.suspended or not snapshot.valid):
+                informed = token.human_approved and token.evidence_version == snapshot.version
+                if not informed:
+                    # both named when both hold: an incident review should see that the
+                    # evidence was independently invalid, not only that it was suspended
+                    if snapshot.suspended:
+                        reasons.append("PARTITION_SUSPENDED")
+                    if not snapshot.valid:
+                        reasons.append("EVIDENCE_INVALID")
+            # constraint: this catches a record removed or replaced from outside (a new
+            # evidence_id). Shadow-managed partitions keep one evidence_id for life, so
+            # for them the live signals are the suspended/valid flags above, which the
+            # lifecycle sets on suspension and on retirement.
+            if token.evidence_id is not None and not token.human_approved:
+                if snapshot is None or snapshot.evidence_id != token.evidence_id:
+                    reasons.append("EVIDENCE_WITHDRAWN")
+        for guard in self.guards:
+            reasons.extend(guard.redemption_blockers(token, proposal))
+        return tuple(dict.fromkeys(reasons))
+
+    def revoke(self, token_id: str, reason: str = "revoked") -> None:
+        """
+        intent: Withdraw one grant explicitly, e.g. when a human approval is rescinded
+        constraint: Taken under the consume lock so a revoke and a redeem cannot interleave
+        """
+        with self._lock:
+            token = self.tokens[token_id]
+            token.revoked = True
+            token.revocation_reason = reason

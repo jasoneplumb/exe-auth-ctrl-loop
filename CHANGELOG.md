@@ -1,5 +1,69 @@
 # Changelog
 
+## [Unreleased] - proposed 0.3.0 (`research/v2`)
+
+Not released, not tagged, no DOI. The version number is the owner's proposal
+(2026-10-07); `pyproject.toml`, `__version__`, and `CITATION.cff` are bumped
+by the release process, not here. Full plan: `docs/paper-v2/release-plan.md`.
+
+Behaviour in the authority core **changes**; see "Changed" before upgrading.
+
+### Added
+
+- Shadow evidence: proposals routed to a human are frozen first and labelled
+  by an independent oracle; `SHADOW`, `AUDIT`, and `AUTONOMOUS` provenance
+  count toward autonomy, `HUMAN_APPROVED` never does; inconclusive and
+  missing labels count as failures and censoring is reported (`shadow.py`,
+  `docs/v2/shadow-evidence.md`)
+- Lifecycle: `UNESTABLISHED / QUALIFYING / AUTONOMOUS / SUSPENDED` with a
+  single transition table, recorded transitions, named-human release into a
+  new epoch, retirement on churn, and lineage suspension (`lifecycle.py`,
+  `docs/v2/lifecycle.md`, `docs/v2/spec.md`)
+- Anytime-valid evidence gate: Beta(1/2,1/2)-mixture confidence sequence
+  (`sequential.py`, `docs/v2/statistical-method.md`)
+- Redemption-time invalidation: the gateway re-checks policy version,
+  prohibited effects, partition suspension and evidence identity, and any
+  `RedemptionGuard`; check-and-consume under a lock; informed human approval
+  (`docs/v2/gateway-redemption.md`)
+- Host-owned risk envelopes, sequence budgets, and conflict rules, enforced at
+  decision time and again at redemption; `ToolRegistry` delegates risk
+  classification to an attached `RiskPolicy` (`risk.py`,
+  `docs/v2/risk-envelopes.md`)
+- Decisions committed to the ledger, audit draw included, before any token is
+  issued; a failed commit refuses the step; `anchor()`/`verify_anchor()` as a
+  demonstration of external anchoring (`ledger.py`, `pipeline.py`,
+  `docs/v2/audit-commitment.md`)
+- Offline simulated evaluation: fifteen seeded scenarios, two comparators,
+  hash-manifested artifacts (`experiments/`, `results/`)
+- `docs/v2/threat-model.md`, per-step gate reports in `docs/v2/gates/`, and
+  the paper v2 plan in `docs/paper-v2/`
+
+### Changed
+
+- `Policy.estimator` defaults to `"beta_mixture"`; `"wilson_legacy"` restores
+  the 0.2.0 bound. The new bound is more conservative at every `n` (60 perfect
+  trials to clear 0.90 instead of 40). Treat the upgrade as a policy-version
+  change.
+- `Route.AUDIT` executes unattended and is labelled afterwards; it is no
+  longer a pre-execution human review. `ExecutionStatus.AWAITING_AUDIT` is
+  removed.
+- `AuthorizationToken` gains a required `partition` field and a
+  `revocation_reason`; `ExecutionGateway.revoke` takes a reason.
+- `ToolDefinition.risk_class` may be `None` (defer to the registry's
+  `RiskPolicy`); a registry with a policy refuses tools that carry their own.
+- `RedemptionGuard` takes `(token, proposal)` and has `commit()`.
+- `AuthorityController` and `ExecutionGateway` accept guards; `ClaudeExecutionAgent`
+  accepts a `commit` hook; `CrossModelAuthorityLoop` accepts a `shadow` log.
+- README, SECURITY.md: claims about audit independence and ledger tamper
+  evidence narrowed to what is shown.
+
+### Fixed
+
+- `LifecycleManager.record_severe` raised on a partition that was already
+  suspended (found by the simulation harness).
+- `ShadowEvidenceLog` republishing made old evidence look fresh (Step 02
+  defect, fixed in Step 03).
+
 ## [0.2.0] - 2026-08-20
 
 Additive. No behaviour in the authority core changed: `authority.py`,

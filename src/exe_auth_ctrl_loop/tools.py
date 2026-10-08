@@ -14,6 +14,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
+from .risk import RiskPolicy
+
 try:
     from jsonschema import Draft202012Validator
 except ImportError:  # pragma: no cover - exercised only without optional dependencies
@@ -39,7 +41,7 @@ class ToolDefinition:
     effects: frozenset[str]
     version: str
     task_category: str
-    risk_class: str | RiskClassifier
+    risk_class: str | RiskClassifier | None
     handler: ToolHandler
 
     def classify_risk(self, parameters: Mapping[str, Any]) -> str:
@@ -48,24 +50,60 @@ class ToolDefinition:
         effect: A $24 refund and a $24,000 refund can land in different partitions and face
                 different thresholds, so evidence earned on the cheap case does not
                 authorize the expensive one
+        constraint: Only for a registry without a RiskPolicy. With one attached, the
+                    policy classifies and this field must be None (ToolRegistry.register).
         """
+        if self.risk_class is None:
+            raise ToolValidationError(f"{self.name} defers risk classification to the registry")
         if callable(self.risk_class):
             return self.risk_class(parameters)
         return self.risk_class
 
 
 class ToolRegistry:
-    """Host-owned tool metadata and handlers; model-supplied metadata is not trusted."""
+    """
+    Host-owned tool metadata and handlers; model-supplied metadata is not trusted.
 
-    def __init__(self) -> None:
+    constraint: Risk has one classifier per registry. With `risk` attached, every tool
+                defers to it (risk envelopes in risk.py) and must register with
+                risk_class=None; without one, each tool carries its own. Both at once
+                is refused, so two answers to "what class is this operation" cannot exist.
+    """
+
+    def __init__(self, risk: RiskPolicy | None = None) -> None:
         self._tools: dict[str, ToolDefinition] = {}
+        self.risk = risk
 
     def register(self, tool: ToolDefinition) -> None:
         if tool.name in self._tools:
             raise ValueError(f"tool already registered: {tool.name}")
         if tool.input_schema.get("type") != "object":
             raise ValueError("tool input schema must describe an object")
+        if self.risk is not None and tool.risk_class is not None:
+            raise ValueError(
+                f"{tool.name}: this registry classifies risk through its RiskPolicy; "
+                "register with risk_class=None"
+            )
+        if self.risk is None and tool.risk_class is None:
+            raise ValueError(f"{tool.name}: no risk classifier (no RiskPolicy on the registry)")
         self._tools[tool.name] = tool
+
+    def classify_risk(self, name: str, parameters: Mapping[str, Any]) -> str:
+        """
+        intent: The single place a risk class is derived for an operation
+        effect: providers.py uses it to build the partition key; executor.py re-derives
+                and compares before each call; the controller and gateway check the same
+                policy's envelopes and budgets. One source, three checkpoints.
+        constraint: Arguments no envelope admits have no class and raise, which both
+                    callers turn into a refusal -- never a default class.
+        """
+        tool = self.get(name)
+        if self.risk is None:
+            return tool.classify_risk(parameters)
+        risk_class = self.risk.risk_class(name, parameters)
+        if risk_class is None:
+            raise ToolValidationError(f"no risk envelope admits these {name} arguments")
+        return risk_class
 
     def get(self, name: str) -> ToolDefinition:
         try:
