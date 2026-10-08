@@ -61,6 +61,16 @@ class ClaimsMatrixTests(unittest.TestCase):
         self.assertEqual(missing, [])
         self.assertGreater(len(referenced_tests()), 30)
 
+    def test_manuscript_cites_only_claims_the_matrix_defines(self):
+        manuscript = (ROOT / "docs" / "paper-v2" / "manuscript.md").read_text()
+        defined = set(re.findall(r"^\| (C\d+|L\d+) \|", MATRIX, re.MULTILINE))
+        cited = set(re.findall(r"\[((?:C|L)\d+)\]", manuscript))
+        self.assertGreater(len(cited), 20)
+        self.assertEqual(sorted(cited - defined), [])
+        # every experimental claim in the matrix is used somewhere in the manuscript
+        experimental = {c for c in defined if c.startswith("C") and int(c[1:]) >= 24}
+        self.assertEqual(sorted(experimental - cited), [])
+
     def test_canonical_hash_in_matrix_matches_manifest(self):
         import json
 

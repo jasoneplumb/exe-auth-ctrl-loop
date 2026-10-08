@@ -10,7 +10,7 @@ Written at Step 09 on `research/v2`; status updated at release. `research/v2` wa
 | Software tag / GitHub release | `v0.3.0` | created 2026-10-08 |
 | Zenodo version DOI for 0.3.0 | 10.5281/zenodo.23226913 | minted on release 2026-10-08; in `CITATION.cff` `identifiers` |
 | Concept DOI | 10.5281/zenodo.21983061 | unchanged; resolves to the latest version |
-| Paper v2 | manuscript per `manuscript-plan.md` | not written as prose, not submitted; venue undecided |
+| Paper v2 | `manuscript.md` (draft, 2026-10-08), per `manuscript-plan.md` | drafted; not submitted; venue undecided |
 | Paper v2 preprint DOI | — | none; added only when issued |
 | Paper v1 | August 2026 manuscript on v0.2.0, not published | retained as is; not rewritten |
 

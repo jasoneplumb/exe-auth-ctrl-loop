@@ -27,7 +27,7 @@ Source: `docs/v2/shadow-evidence.md`, C4, C6, C7. What a shadow trial is, when i
 
 ## 5. The statistical gate
 
-Source: `docs/v2/statistical-method.md`. Present §2–§5 of that note: the Beta-mixture martingale, Ville's inequality, the proposition with assumptions A1–A5, the per-partition-per-epoch budget and the Bonferroni statement for joint claims, `n_min` as a floor independent of validity. Include the §9 reference vectors (or a subset) and the §10 table showing Wilson's inflation under continuous looks against the mixture bound's behaviour; label the table illustrative. Related-work placement: the construction is Robbins (1970) / Kaufmann & Koolen (2021); the contribution is its use as the gate in this lifecycle, not the bound. **Citations must be verified against the papers before submission** (gate report Step 04 flags that they were written from memory).
+Source: `docs/v2/statistical-method.md`. Present §2–§5 of that note: the Beta-mixture martingale, Ville's inequality, the proposition with assumptions A1–A5, the per-partition-per-epoch budget and the Bonferroni statement for joint claims, `n_min` as a floor independent of validity. Include the §9 reference vectors (or a subset) and the §10 table showing Wilson's inflation under continuous looks against the mixture bound's behaviour; label the table illustrative. Related-work placement: the construction is Robbins (1970) / Kaufmann & Koolen (2021); the contribution is its use as the gate in this lifecycle, not the bound. Citations verified against the publications on 2026-10-08 (volume, issue, pages); the prose draft is `manuscript.md`.
 
 ## 6. Redemption-time invalidation and scope
 
