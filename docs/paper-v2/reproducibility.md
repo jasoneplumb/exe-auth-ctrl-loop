@@ -25,7 +25,7 @@ python -m pip install -e '.[dev]'
 
 ruff check .                             # expected: All checks passed!
 mypy src                                 # expected: no issues found in 12 source files
-pytest -q                                # expected: 201 passed
+pytest -q                                # expected: 203 passed
 python examples/example.py && python examples/denials.py && python examples/mcp_demo.py
 
 python -m experiments.run --all --output /tmp/repro      # ~4 minutes

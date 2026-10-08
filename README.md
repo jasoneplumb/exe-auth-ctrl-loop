@@ -80,7 +80,7 @@ across an MCP `tools/call`.
 | --- | --- |
 | **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
-| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 201 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 203 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
 | **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. When the gateway is given the live evidence store, policy, and lifecycle, a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy is refused at redemption; see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md) and the [production trust boundary](#production-trust-boundary). |
 
@@ -356,7 +356,7 @@ frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 | Design disclosure | DOI 10.5281/zenodo.21894658; TDCommons dpubs 11356 | published 2026-08 |
 | Paper v1 | manuscript on the v0.2.0 design, August 2026 | not published; retained as written |
 | Software v0.3.0 (the v2 design) | tag `v0.3.0` (commit `78bdf9d`, merged as #10), DOI 10.5281/zenodo.23226913; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | released 2026-10-08 |
-| Paper v2 | plan in [docs/paper-v2/manuscript-plan.md](docs/paper-v2/manuscript-plan.md) | not written as prose, not submitted |
+| Paper v2 | draft in [docs/paper-v2/manuscript.md](docs/paper-v2/manuscript.md), built on the v0.3.0 artifacts | draft; not submitted, no preprint |
 
 What v2 changes relative to the v1 design and paper, in one paragraph: a
 partition can now earn autonomy from an empty evidence store, through shadow
