@@ -89,7 +89,7 @@ from .shadow import (
 )
 from .tools import ToolDefinition, ToolRegistry, ToolValidationError
 
-__version__ = "0.2.0"
+__version__ = "0.3.0"
 
 __all__ = [
     "COUNTING_PROVENANCE",

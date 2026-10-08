@@ -1,13 +1,13 @@
 # Release plan (proposed 0.3.0) and checklist status
 
-Status as of Step 09 on `research/v2` at `18dae89` plus the Step 09 documentation commit. **Nothing has been pushed, merged, tagged, released, deposited, or submitted.** Every item below that writes to a remote waits for explicit authorization.
+Written at Step 09 on `research/v2`; status updated at release. `research/v2` was merged to `mainline` as #10 (squash `1924c9b`, 2026-10-08) after three review cycles, and `0.3.0` was tagged and released the same day by the owner's `/release`. Zenodo deposit of the paper and its submission remain separate authorizations.
 
-## Proposed identifiers
+## Identifiers
 
 | Item | Value | Status |
 |---|---|---|
-| Software version | `0.3.0` (owner's choice, 2026-10-07) | proposed; `pyproject.toml`, `__init__.__version__`, and `CITATION.cff` still say `0.2.0` and are bumped by the release process, not before |
-| Software tag / GitHub release | `v0.3.0` | not created |
+| Software version | `0.3.0` (owner's choice, 2026-10-07) | released 2026-10-08; `pyproject.toml`, `__init__.__version__`, and `CITATION.cff` bumped in the release commit |
+| Software tag / GitHub release | `v0.3.0` | created 2026-10-08 |
 | Zenodo version DOI for 0.3.0 | — | not minted; added to `CITATION.cff` `identifiers` only after it exists |
 | Concept DOI | 10.5281/zenodo.21983061 | unchanged; resolves to the latest version |
 | Paper v2 | manuscript per `manuscript-plan.md` | not written as prose, not submitted; venue undecided |

@@ -1,12 +1,14 @@
 # Changelog
 
-## [Unreleased] - proposed 0.3.0 (`research/v2`)
+## [0.3.0] - 2026-10-08
 
-Not released, not tagged, no DOI. The version number is the owner's proposal
-(2026-10-07); `pyproject.toml`, `__version__`, and `CITATION.cff` are bumped
-by the release process, not here. Full plan: `docs/paper-v2/release-plan.md`.
-
-Behaviour in the authority core **changes**; see "Changed" before upgrading.
+The v2 design: earn authority from zero, gate it with an anytime-valid bound,
+and withdraw it at redemption (#10, closing #9). Behaviour in the authority
+core **changes**; see "Changed" before upgrading. Developed as ten gated steps
+(`docs/v2/gates/`), reviewed over three cycles with every finding addressed,
+and evaluated in a seeded simulation whose artifacts reproduce bit-for-bit
+(`results/manifest.json`). Still a single-process research prototype: see
+`SECURITY.md` and `experiments/README.md` before relying on any of it.
 
 ### Added
 
@@ -63,6 +65,27 @@ Behaviour in the authority core **changes**; see "Changed" before upgrading.
   suspended (found by the simulation harness).
 - `ShadowEvidenceLog` republishing made old evidence look fresh (Step 02
   defect, fixed in Step 03).
+- From review of #10: a declared evidence invalidation could be overwritten by
+  a republish of fresh counts; a count-only budget with a metric could raise
+  inside the consume lock; `record_severe` on a retired partition created a
+  state no call could leave; retirement was enforced only through the
+  lifecycle guard (the store is now invalidated too); a parameter-scoped
+  budget pooled proposals lacking the parameter; a handler exception escaped
+  `ClaudeExecutionAgent.run()` instead of becoming a failed step.
+
+### Documentation
+
+- `examples/denials.py`: the six denial paths, offline (#6)
+- README voice and claims framing pass (#8); stale private-repo note removed
+  from `CONTRIBUTING.md`; v0.2.0 archive DOI added to `CITATION.cff`
+
+### Note
+
+Archived to Zenodo on release, which mints a version DOI for v0.3.0; it is
+added to `CITATION.cff` `identifiers` after the archive exists, as for v0.2.0.
+`results/manifest.json` names the branch commit the artifacts were generated
+at; it is regenerated at the release commit in a follow-up, with the same
+canonical hash.
 
 ## [0.2.0] - 2026-08-20
 

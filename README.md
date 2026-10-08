@@ -355,7 +355,7 @@ frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 | Concept DOI (all versions) | 10.5281/zenodo.21983061 | resolves to the latest release |
 | Design disclosure | DOI 10.5281/zenodo.21894658; TDCommons dpubs 11356 | published 2026-08 |
 | Paper v1 | manuscript on the v0.2.0 design, August 2026 | not published; retained as written |
-| Software v2 (`research/v2`) | proposed 0.3.0; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | not released, not tagged, no DOI |
+| Software v0.3.0 (the v2 design) | tag `v0.3.0`, merged as #10; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | released 2026-10-08; version DOI added to `CITATION.cff` once Zenodo mints it |
 | Paper v2 | plan in [docs/paper-v2/manuscript-plan.md](docs/paper-v2/manuscript-plan.md) | not written as prose, not submitted |
 
 What v2 changes relative to the v1 design and paper, in one paragraph: a

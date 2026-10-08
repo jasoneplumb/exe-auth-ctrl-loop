@@ -1,13 +1,12 @@
 cff-version: 1.2.0
-# version, the version DOI, and any paper-v2 identifier change only when a release
-# or deposit actually exists; the proposed next release (0.3.0) is described in
-# docs/paper-v2/release-plan.md and is not yet issued.
+# The version DOI for a release and any paper-v2 identifier are added only once
+# the archive or deposit actually exists (see docs/paper-v2/release-plan.md).
 message: "If you use this software or design, please cite it as below."
 title: "Cross-Model Execution-Authority Control Loop"
 authors:
   - family-names: Plumb
     given-names: Jason E.
-version: 0.2.0
+version: 0.3.0
 license: Apache-2.0
 repository-code: "https://github.com/jasoneplumb/exe-auth-ctrl-loop"
 doi: 10.5281/zenodo.21983061
