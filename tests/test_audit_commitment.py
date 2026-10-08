@@ -63,9 +63,11 @@ class RefusingLedger(EventLedger):
 
 
 class Harness:
-    def __init__(self, audit_rate=0.0, seed=7, ledger=None, approved=(), commit="loop"):
+    def __init__(self, audit_rate=0.0, seed=7, ledger=None, approved=(), commit="loop",
+                 handler=None):
         self.ledger = ledger if ledger is not None else EventLedger()
         self.handler_calls = []
+        self.custom_handler = handler
         self.registry = ToolRegistry()
         self.registry.register(ToolDefinition(
             name="create_refund",
@@ -114,6 +116,8 @@ class Harness:
     def _handle(self, args):
         # What the ledger looked like at the instant the side effect happened
         self.handler_calls.append([e.event_type for e in self.ledger.events])
+        if self.custom_handler is not None:
+            return self.custom_handler(args)
         return {"receipt": "refund-1"}
 
     def run(self):
@@ -176,6 +180,26 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(
             [e.event_type for e in h.ledger.events],
             ["execution.step.recorded", "execution.run.completed"],
+        )
+
+    def test_handler_exception_becomes_a_failed_step_not_an_exception(self):
+        def failing(args):
+            raise RuntimeError("downstream unavailable")
+
+        h = Harness(handler=failing)
+        run = h.run()
+        self.assertEqual(run.status, ExecutionStatus.FAILED)
+        step = run.steps[0]
+        self.assertFalse(step.executed)
+        self.assertTrue(step.failed)
+        self.assertEqual(step.error, "handler failed: downstream unavailable")
+        self.assertEqual(step.decision.route, Route.AUTONOMOUS)
+        # the token was consumed before the handler ran; nothing is refunded
+        self.assertTrue(all(t.used for t in h.gateway.tokens.values()))
+        # the failure is on the record after the committed decision
+        kinds = [e.event_type for e in h.ledger.events]
+        self.assertLess(
+            kinds.index("authority.decision.committed"), kinds.index("execution.step.recorded")
         )
 
     def test_agent_without_a_commit_hook_records_nothing(self):

@@ -45,6 +45,8 @@ class ExecutionStep:
     executed: bool
     receipt: Any | None
     error: str | None
+    # the handler was reached and raised: the token is spent, the effect is unknown
+    failed: bool = False
 
 
 @dataclass(frozen=True)
@@ -211,7 +213,8 @@ run; do not route around it."""
             if not outcome.executed:
                 return ExecutionRun(
                     bundle.bundle_id,
-                    self._status_for_route(outcome.route),
+                    ExecutionStatus.FAILED if outcome.failed
+                    else self._status_for_route(outcome.route),
                     text,
                     tuple(steps),
                 )
@@ -303,11 +306,39 @@ run; do not route around it."""
                 error=f"authority route: {decision.route.value}",
             )
 
-        receipt = self.gateway.execute(
-            token.token_id,
-            proposal,
-            lambda p: self.registry.execute(p.tool_name, p.parameters),
-        )
+        try:
+            receipt = self.gateway.execute(
+                token.token_id,
+                proposal,
+                lambda p: self.registry.execute(p.tool_name, p.parameters),
+            )
+        except PermissionError:
+            # withdrawn between issue and redemption (suspension, policy, guard veto)
+            return ExecutionStep(
+                proposal_id=proposal_id,
+                tool_name=tool_name,
+                route=decision.route,
+                decision=decision,
+                executed=False,
+                receipt=None,
+                error="authorization withdrawn before redemption",
+            )
+        except Exception as exc:
+            # constraint: the token was consumed before the handler ran, so the operation
+            # is spent whether or not the effect happened. Record it as executed so the
+            # same proposal cannot be retried in this run, and surface the failure as a
+            # step rather than an exception out of run().
+            executed.add(proposal_id)
+            return ExecutionStep(
+                proposal_id=proposal_id,
+                tool_name=tool_name,
+                route=decision.route,
+                decision=decision,
+                executed=False,
+                receipt=None,
+                error=f"handler failed: {exc}",
+                failed=True,
+            )
         executed.add(proposal_id)
         return ExecutionStep(
             proposal_id=proposal_id,

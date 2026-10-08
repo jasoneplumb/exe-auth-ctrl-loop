@@ -224,6 +224,21 @@ class LifecycleTests(unittest.TestCase):
              ("QUALIFYING", "AUTONOMOUS", "GATE_MET")],
         )
 
+    def test_declared_invalidation_survives_refresh_and_blocks_the_gate(self):
+        self.autonomous()
+        self.store.invalidate(self.key, "oracle_recalled")
+        decision = self.decide()
+        self.assertFalse(self.store.get(self.key).valid)
+        self.assertEqual(self.store.get(self.key).invalidation_reason, "oracle_recalled")
+        self.assertIn("EVIDENCE_INVALID", decision.reason_codes)
+        self.assertNotEqual(decision.route, Route.AUTONOMOUS)
+        self.assertEqual(self.manager.state(self.key), S.QUALIFYING)
+        self.add(20)  # fresh labels republish counts but must not un-invalidate
+        decision = self.decide()
+        self.assertFalse(self.store.get(self.key).valid)
+        self.assertIn("EVIDENCE_INVALID", decision.reason_codes)
+        self.assertNotEqual(decision.route, Route.AUTONOMOUS)
+
     def test_severe_failure_while_suspended_is_recorded_not_raised(self):
         self.autonomous()
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "first")

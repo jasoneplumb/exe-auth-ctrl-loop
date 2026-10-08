@@ -268,7 +268,9 @@ class RedemptionGuard(Protocol):
              every guard inside its consume lock, so a veto and a consume cannot
              interleave, and calls commit() only once the token is consumed
     constraint: Must not call back into the gateway. redemption_blockers() is read-only;
-                commit() is the one place a guard may record that an effect happened.
+                commit() is the one place a guard may record that an effect happened, and
+                it must not raise -- it runs after the token is consumed, so anything that
+                could refuse the operation belongs in redemption_blockers().
     """
 
     def redemption_blockers(
@@ -630,6 +632,12 @@ class ExecutionGateway:
             token.used = True
             # effect: budgets are charged here, still under the lock and only for a token
             # that was actually consumed, so a charge and a consume are one event
+            # constraint: guard.commit() must not raise. It is the settlement of an
+            # operation already consumed; a failure here would leave the token spent with
+            # the effect unapplied and no retry path. A guard must do its checking in
+            # redemption_blockers(), which runs before the consume -- RiskPolicy does:
+            # the same budget.amount() call that could raise in commit() has already run
+            # there for every limit-based budget.
             for guard in self.guards:
                 guard.commit(token, proposal)
         return adapter(proposal)
@@ -664,9 +672,12 @@ class ExecutionGateway:
             if snapshot is not None and (snapshot.suspended or not snapshot.valid):
                 informed = token.human_approved and token.evidence_version == snapshot.version
                 if not informed:
-                    reasons.append(
-                        "PARTITION_SUSPENDED" if snapshot.suspended else "EVIDENCE_INVALID"
-                    )
+                    # both named when both hold: an incident review should see that the
+                    # evidence was independently invalid, not only that it was suspended
+                    if snapshot.suspended:
+                        reasons.append("PARTITION_SUSPENDED")
+                    if not snapshot.valid:
+                        reasons.append("EVIDENCE_INVALID")
             if token.evidence_id is not None and not token.human_approved:
                 if snapshot is None or snapshot.evidence_id != token.evidence_id:
                     reasons.append("EVIDENCE_WITHDRAWN")

@@ -55,5 +55,8 @@ A human signature overrides a *route* (`HUMAN_APPROVAL`, `AUDIT`), never a *proh
 
 - In-process lock only; no durable or distributed atomicity (see above).
 - Denials are raised, not ledgered, by the gateway itself; the pipeline records them. Step 07 revisits what the ledger must hold.
-- Guards are called inside the lock and must be read-only and fast. `LifecycleManager.redemption_blockers` does not call `refresh()`.
+- Guards are called inside the lock and must be read-only and fast. `LifecycleManager.redemption_blockers` does not call `refresh()`: lifecycle state at redemption is exactly as fresh as the last `evaluate()`. A bound that fell or evidence that went stale between issuance and redemption, with no `evaluate()` in between, is not caught by the guard; the gateway's own checks still catch suspension, declared invalidation, and evidence replacement, and the TTL bounds the rest.
+- `commit()` on a guard must not raise; it runs after the token is consumed. Anything that could refuse the operation belongs in `redemption_blockers()`.
+- When a snapshot is both suspended and invalid, the denial names both `PARTITION_SUSPENDED` and `EVIDENCE_INVALID`.
+- A handler that raises after the token is consumed surfaces as an `ExecutionStep` with `failed=True` and run status `FAILED`; the proposal is marked executed for the run so it cannot be retried on a spent token.
 - Risk envelopes and sequence budgets (amount, recipient, ordering) are Step 06; this step covers only identity, scope, and justification.

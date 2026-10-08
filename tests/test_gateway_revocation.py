@@ -153,6 +153,16 @@ class LiveStateInvalidationTests(GatewayBase):
         self.assertIn("POLICY_CHANGED", str(ctx.exception))
         self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
 
+    def test_suspended_and_invalid_names_both_reasons(self):
+        token = self.autonomous_token()
+        severe = Outcome("p-0", OutcomeStatus.UNACCEPTABLE, True, "reviewer", T0, "d")
+        self.store.adjudicate(self.key, severe, autonomous=True)
+        self.store.invalidate(self.key, "oracle_recalled")
+        with self.assertRaises(PermissionError) as ctx:
+            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+        self.assertIn("PARTITION_SUSPENDED", str(ctx.exception))
+        self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
+
     def test_gateway_without_live_state_keeps_v1_semantics(self):
         self.gateway = ExecutionGateway(self.clock)
         token = self.autonomous_token()

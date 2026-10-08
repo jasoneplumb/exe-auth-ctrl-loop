@@ -253,6 +253,13 @@ class LifecycleManager:
         method: Read-only view of the current record (RedemptionGuard). No refresh: a
                 state change caused by ordinary evidence shows up at the next evaluate(),
                 which is the documented boundary for what invalidates a token.
+        constraint: Lifecycle state at redemption is therefore exactly as fresh as the last
+                    evaluate(). A bound that fell, or evidence that went stale, between
+                    issuance and redemption with no evaluate() in between is NOT caught
+                    here; the gateway's own checks catch suspension, declared invalidation,
+                    and evidence replacement, and the token TTL bounds the rest. Callers
+                    wanting full recalculation at redemption must call evaluate() first.
+                    See docs/v2/gateway-redemption.md.
         effect: An evidence-based token needs AUTONOMOUS; a human-approved one survives a
                 non-autonomous state but not retirement, lineage suspension, or suspension
         """
@@ -270,6 +277,10 @@ class LifecycleManager:
         reasons: list[str] = []
         if snapshot is None or snapshot.n < self.policy.n_min:
             reasons.append("EVIDENCE_IMMATURE")
+        stored = self.store.get(key)
+        if stored is not None and not stored.valid:
+            # a declared invalidation blocks the gate until whoever declared it lifts it
+            reasons.append("EVIDENCE_INVALID")
         if snapshot is not None:
             if self.clock() - snapshot.collected_until > self.policy.max_evidence_age:
                 reasons.append("EVIDENCE_STALE")
@@ -355,14 +366,22 @@ class LifecycleManager:
             base = self._empty(key, f"lifecycle-{digest(key.__dict__)[:16]}")
         if base is None:
             return
+        # constraint: `valid` belongs to whoever declared the invalidation (EvidenceStore
+        # .invalidate), not to the lifecycle. It is carried forward, never reset here, so a
+        # republish of fresh counts cannot quietly un-invalidate a record.
+        valid = current.valid if current is not None else True
+        reason = current.invalidation_reason if current is not None else None
         desired = replace(
             base,
+            valid=valid,
             suspended=suspended,
-            invalidation_reason=record.suspension_reason if suspended else None,
+            invalidation_reason=record.suspension_reason if suspended else reason,
         )
         if current is not None and (
-            (current.successes, current.failures, current.collected_until, current.suspended)
-            == (desired.successes, desired.failures, desired.collected_until, desired.suspended)
+            (current.successes, current.failures, current.collected_until,
+             current.suspended, current.valid)
+            == (desired.successes, desired.failures, desired.collected_until,
+                desired.suspended, desired.valid)
         ):
             return
         self.store.put(replace(desired, version=current.version + 1 if current else 1))
