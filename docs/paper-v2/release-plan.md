@@ -8,7 +8,7 @@ Written at Step 09 on `research/v2`; status updated at release. `research/v2` wa
 |---|---|---|
 | Software version | `0.3.0` (owner's choice, 2026-10-07) | released 2026-10-08; `pyproject.toml`, `__init__.__version__`, and `CITATION.cff` bumped in the release commit |
 | Software tag / GitHub release | `v0.3.0` | created 2026-10-08 |
-| Zenodo version DOI for 0.3.0 | — | not minted; added to `CITATION.cff` `identifiers` only after it exists |
+| Zenodo version DOI for 0.3.0 | 10.5281/zenodo.23226913 | minted on release 2026-10-08; in `CITATION.cff` `identifiers` |
 | Concept DOI | 10.5281/zenodo.21983061 | unchanged; resolves to the latest version |
 | Paper v2 | manuscript per `manuscript-plan.md` | not written as prose, not submitted; venue undecided |
 | Paper v2 preprint DOI | — | none; added only when issued |
