@@ -46,6 +46,21 @@ def referenced_tests() -> set[tuple[str, str]]:
     return found
 
 
+def cited_claims(text: str) -> set[str]:
+    """Claim tags cited in `text`: singles [C5], ranges [C4–C7], compounds [C13, C15]."""
+    cited: set[str] = set()
+    for group in re.findall(r"\[((?:[CL]\d+)(?:(?:–|,\s*)[CL]\d+)*)\]", text):
+        for token in re.split(r",\s*", group):
+            if "–" in token:
+                start, end = token.split("–")
+                if start[0] != end[0]:
+                    raise ValueError(f"range mixes claim kinds: {token}")
+                cited.update(f"{start[0]}{n}" for n in range(int(start[1:]), int(end[1:]) + 1))
+            else:
+                cited.add(token)
+    return cited
+
+
 class ClaimsMatrixTests(unittest.TestCase):
     def test_every_referenced_path_exists(self):
         missing = sorted(p for p in referenced_paths() if not (ROOT / p).exists())
@@ -64,12 +79,18 @@ class ClaimsMatrixTests(unittest.TestCase):
     def test_manuscript_cites_only_claims_the_matrix_defines(self):
         manuscript = (ROOT / "docs" / "paper-v2" / "manuscript.md").read_text()
         defined = set(re.findall(r"^\| (C\d+|L\d+) \|", MATRIX, re.MULTILINE))
-        cited = set(re.findall(r"\[((?:C|L)\d+)\]", manuscript))
-        self.assertGreater(len(cited), 20)
+        cited = cited_claims(manuscript)
+        self.assertGreater(len(cited), 30)
         self.assertEqual(sorted(cited - defined), [])
-        # every experimental claim in the matrix is used somewhere in the manuscript
-        experimental = {c for c in defined if c.startswith("C") and int(c[1:]) >= 24}
-        self.assertEqual(sorted(experimental - cited), [])
+        # every claim and limitation in the matrix is used somewhere in the manuscript,
+        # so a row cannot be deleted without the manuscript noticing
+        self.assertEqual(sorted(defined - cited), [])
+
+    def test_citation_parser_handles_ranges_and_compounds(self):
+        text = "see [C5], [C4–C7], [C13, C15] and [L3, L4]; not [X1] or C9"
+        self.assertEqual(
+            cited_claims(text), {"C5", "C4", "C6", "C7", "C13", "C15", "L3", "L4"}
+        )
 
     def test_canonical_hash_in_matrix_matches_manifest(self):
         import json

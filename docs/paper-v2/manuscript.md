@@ -245,4 +245,4 @@ The v0.2.0 design moved the authority decision out of the models and bound it to
 
 ## Reproducibility
 
-`reproducibility.md` gives the clean-room procedure: install, run the 202-test offline suite, run `python -m experiments.run --all --output <dir>` (about four minutes), and compare `manifest.json → canonical_hash` to the value above. Figures and tables cite their config file, results directory, commit, and that hash.
+`reproducibility.md` gives the clean-room procedure: install, run the 203-test offline suite, run `python -m experiments.run --all --output <dir>` (about four minutes), and compare `manifest.json → canonical_hash` to the value above. Figures and tables cite their config file, results directory, commit, and that hash.
