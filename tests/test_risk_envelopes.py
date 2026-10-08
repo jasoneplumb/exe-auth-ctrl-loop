@@ -261,6 +261,23 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(self.controller.evaluate(staged).route, Route.AUTONOMOUS)
         self.assertEqual(self.risk.charged("daily-refunds", other), (0.0, 0))
 
+    def test_non_numeric_metric_is_denied_before_issue_not_raised_at_commit(self):
+        # count-only budget that still names a metric: the metric must be checked up front
+        counted = (SequenceBudget("ops", frozenset({"create_refund"}), "partition", "usd",
+                                  None, 10),)
+        self.risk.update("risk-v1", envelopes(), counted)
+        self.seed("low")
+        bad = self.proposal(usd="24")  # string, not a number
+        decision = self.controller.evaluate(bad)
+        self.assertEqual(decision.route, Route.DENY)
+        self.assertIn("BUDGET_METRIC_ERROR:ops", decision.reason_codes)
+        with self.assertRaises(PermissionError):
+            self.gateway.issue(decision, bad, self.policy)
+        self.assertEqual(self.risk.charged("ops", self.key()), (0.0, 0))
+        # a numeric metric on the same budget is fine and commit() charges the count
+        self.assertEqual(self.run_op(self.proposal(usd=24)), "done")
+        self.assertEqual(self.risk.charged("ops", self.key()), (24.0, 1))
+
     def test_budget_validation(self):
         with self.assertRaises(ValueError):
             SequenceBudget("x", frozenset())

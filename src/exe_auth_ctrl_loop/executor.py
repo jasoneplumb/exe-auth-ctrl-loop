@@ -324,10 +324,14 @@ run; do not route around it."""
                 error="authorization withdrawn before redemption",
             )
         except Exception as exc:
-            # constraint: the token was consumed before the handler ran, so the operation
-            # is spent whether or not the effect happened. Record it as executed so the
-            # same proposal cannot be retried in this run, and surface the failure as a
-            # step rather than an exception out of run().
+            # Three ways here. (1) The handler raised: the token was consumed first, the
+            # effect is unknown. (2) A guard's commit() raised, which its contract forbids:
+            # the token was consumed, the effect never ran. (3) A guard's
+            # redemption_blockers() raised unexpectedly, before the consume: the token is
+            # NOT spent. In every case the proposal is marked executed so it cannot be
+            # retried in this run, and the failure is a step rather than an exception out
+            # of run(); the step cannot tell (3) from (1), so it claims nothing about the
+            # token beyond that this run will not present it again.
             executed.add(proposal_id)
             return ExecutionStep(
                 proposal_id=proposal_id,

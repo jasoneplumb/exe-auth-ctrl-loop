@@ -6,8 +6,9 @@ Context: Implements the transition contract in docs/v2/spec.md section 9 over th
         this layer decides whether the partition may be autonomous at all.
 Pattern: A table of legal (state, event) pairs. Anything not in the table raises, so no
         code path can move a partition to AUTONOMOUS except QUALIFYING on GATE_MET.
-Future: In-memory. Token invalidation on suspension is Step 05, so an already-issued
-        token still outlives a suspension here.
+Future: In-memory. As a RedemptionGuard this manager also refuses an already-issued token
+        once its partition leaves AUTONOMOUS, is retired, or inherits a suspension; the
+        gateway asks it under the consume lock (docs/v2/gateway-redemption.md).
 """
 
 from __future__ import annotations
@@ -189,6 +190,11 @@ class LifecycleManager:
         self.refresh(key)
         record = self._records[key]
         reasons = (reason, f"PROVENANCE_{provenance.value.upper()}")
+        if record.retired:
+            # effect: a retired partition routes nothing and cannot be released, so
+            # suspending it would create a state no call can leave. Record and return.
+            self._log(key, record, record.state, None, (*reasons, "PARTITION_RETIRED"))
+            return
         if record.state == LifecycleState.SUSPENDED:
             # effect: a second severe failure while suspended is recorded, not a crash,
             # and does not restart the clock on the first one; the original reason stands
@@ -377,10 +383,13 @@ class LifecycleManager:
             suspended=suspended,
             invalidation_reason=record.suspension_reason if suspended else reason,
         )
+        # constraint: evidence_id is part of the comparison so a hand-seeded record with
+        # the same counts as the first shadow snapshot is still replaced, and tokens bind
+        # to the shadow-derived id rather than a stale one
         if current is not None and (
-            (current.successes, current.failures, current.collected_until,
+            (current.evidence_id, current.successes, current.failures, current.collected_until,
              current.suspended, current.valid)
-            == (desired.successes, desired.failures, desired.collected_until,
+            == (desired.evidence_id, desired.successes, desired.failures, desired.collected_until,
                 desired.suspended, desired.valid)
         ):
             return

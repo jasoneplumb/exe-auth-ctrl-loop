@@ -194,7 +194,17 @@ class RiskPolicy:
             if not budget.covers(proposal.tool_name):
                 continue
             charges = self._charges.get((budget.budget_id, budget.scope_key(proposal)), _Charges())
-            if budget.limit is not None and charges.total + budget.amount(proposal) > budget.limit:
+            # constraint: the metric is read here for every budget that has one, limit or
+            # not, so a non-numeric argument is a denial now rather than an exception in
+            # commit() after the token is spent
+            amount = 0.0
+            if budget.metric is not None:
+                try:
+                    amount = budget.amount(proposal)
+                except ValueError:
+                    reasons.append(f"BUDGET_METRIC_ERROR:{budget.budget_id}")
+                    continue
+            if budget.limit is not None and charges.total + amount > budget.limit:
                 reasons.append(f"BUDGET_EXCEEDED:{budget.budget_id}")
             if budget.max_operations is not None and charges.count + 1 > budget.max_operations:
                 reasons.append(f"OPERATION_LIMIT:{budget.budget_id}")
@@ -221,7 +231,9 @@ class RiskPolicy:
         RedemptionGuard: charge budgets for an operation the gateway has just consumed
         constraint: Called inside the gateway lock, after the token is marked used and
                     after every guard returned no blockers, so a charge never lands for
-                    an operation that did not run and two redemptions never both charge
+                    an operation that did not run and two redemptions never both charge.
+                    Must not raise: every amount() read here was already read, for the
+                    same proposal and budgets, in redemption_blockers() a moment earlier.
         """
         for budget in self.budgets:
             if not budget.covers(proposal.tool_name):

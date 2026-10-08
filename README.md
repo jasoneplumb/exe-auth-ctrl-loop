@@ -80,7 +80,7 @@ across an MCP `tools/call`.
 | --- | --- |
 | **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
-| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 195 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 198 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
 | **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. When the gateway is given the live evidence store, policy, and lifecycle, a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy is refused at redemption; see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md) and the [production trust boundary](#production-trust-boundary). |
 
@@ -166,7 +166,7 @@ verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 
 1. **No capability, no execution.** Registered handlers are reachable only through the gateway.
 2. **Models do not grant authority.** OpenAI and Claude outputs are untrusted requests.
-3. **Exact scope.** A token binds the proposal digest, tool, effects, policy, evidence snapshot, expiry, and one use.
+3. **Exact scope.** A token binds the proposal digest, tool, effects, policy, partition, evidence snapshot, expiry, and one use. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
 4. **No post-approval mutation.** Changed arguments or tools require a new proposal and decision.
 5. **Conservative authority.** Autonomous execution requires the lower bound to clear the applicable risk threshold.
 6. **Sparse or stale evidence fails closed.** Missing, immature, invalid, suspended, mismatched, or expired evidence requires approval.

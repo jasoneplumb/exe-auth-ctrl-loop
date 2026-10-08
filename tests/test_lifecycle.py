@@ -239,6 +239,31 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("EVIDENCE_INVALID", decision.reason_codes)
         self.assertNotEqual(decision.route, Route.AUTONOMOUS)
 
+    def test_severe_on_retired_partition_is_logged_not_stuck(self):
+        self.autonomous()
+        new = self.make_key(tool="refund-api-v3")
+        self.manager.on_churn(self.key, new)
+        self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "late report")
+        record = self.manager.record(self.key)
+        self.assertTrue(record.retired)
+        self.assertNotEqual(record.state, S.SUSPENDED)
+        logged = [
+            e.payload for e in self.ledger.events
+            if e.event_type == "lifecycle.transition"
+            and {"PARTITION_RETIRED", "late report"} <= set(e.payload["reasons"])
+        ]
+        self.assertEqual(len(logged), 1)
+        # the successor is unaffected: no lineage suspension from a post-retirement report
+        self.assertFalse(self.manager.record(new).lineage_suspended)
+
+    def test_seeded_record_is_replaced_by_shadow_evidence_even_with_equal_counts(self):
+        self.store.put(EvidenceSnapshot("seed", 1, self.key, 1, 0, T0, T0))
+        self.add(1)  # one shadow positive labelled at T0: identical counts and time
+        self.decide()
+        snapshot = self.store.get(self.key)
+        self.assertTrue(snapshot.evidence_id.startswith("shadow-"), snapshot.evidence_id)
+        self.assertEqual((snapshot.successes, snapshot.failures), (1, 0))
+
     def test_severe_failure_while_suspended_is_recorded_not_raised(self):
         self.autonomous()
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "first")

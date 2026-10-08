@@ -48,7 +48,7 @@ A human signature overrides a *route* (`HUMAN_APPROVAL`, `AUDIT`), never a *proh
 
 - `issue()` refuses a human-approved token for any prohibited effect, whatever the decision's route says, and refuses a policy object that is not the current one when a provider is attached.
 - At redemption a human-approved token is subject to checks 4, 5, and 8 like any other, and to check 6 unless the approval was **informed**: the decision it was issued from saw the same snapshot version that now carries the suspension or invalidation. A human who approves an operation on a partition they can see is suspended is exercising the `SUSPENDED → HUMAN_APPROVAL` route the spec allows; a human who approved before the suspension did not consent to the new state, and that token is refused.
-- Check 7 does not apply (a human approval needs no evidence record). The lifecycle guard lets a human token through `UNESTABLISHED` and `QUALIFYING` but not retirement, lineage suspension, or suspension.
+- Check 7 does not apply (a human approval needs no evidence record). Stated consequence: a human-approved token survives the replacement of the evidence record it was approved against by a *healthy* successor record, because the approval is consent to one operation, not reliance on the record. Degradation of that record (suspension, invalidation) still refuses it unless the approval was informed. This is the one deviation from README invariant 3 and is listed there. The lifecycle guard lets a human token through `UNESTABLISHED` and `QUALIFYING` but not retirement, lineage suspension, or suspension.
 - `revoke(token_id, reason)` records the reason on the token.
 
 ## Limits
