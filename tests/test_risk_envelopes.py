@@ -278,6 +278,15 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(self.run_op(self.proposal(usd=24)), "done")
         self.assertEqual(self.risk.charged("ops", self.key()), (24.0, 1))
 
+    def test_missing_scope_parameter_is_denied_not_pooled(self):
+        self.seed("low")
+        p = self.proposal(usd=10)
+        orphan = replace(p, parameters={"order_id": 1, "usd": 10})  # no payee
+        decision = self.controller.evaluate(orphan)
+        self.assertEqual(decision.route, Route.DENY)
+        self.assertIn("BUDGET_SCOPE_ERROR:per-payee", decision.reason_codes)
+        self.assertEqual(self.risk.charged("per-payee", None), (0.0, 0))
+
     def test_budget_validation(self):
         with self.assertRaises(ValueError):
             SequenceBudget("x", frozenset())

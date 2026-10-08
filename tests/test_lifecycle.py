@@ -239,6 +239,34 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("EVIDENCE_INVALID", decision.reason_codes)
         self.assertNotEqual(decision.route, Route.AUTONOMOUS)
 
+    def test_sufficient_evidence_at_first_proposal_reaches_autonomous_immediately(self):
+        self.add(60)  # labels accrue before the controller ever sees this partition
+        decision = self.decide()
+        self.assertEqual(decision.route, Route.AUTONOMOUS)
+        self.assertEqual(
+            [(f, t, e) for f, t, e, _ in self.transitions()],
+            [(None, "UNESTABLISHED", "FIRST_PROPOSAL"),
+             ("UNESTABLISHED", "QUALIFYING", "TRIAL_ADMITTED"),
+             ("QUALIFYING", "AUTONOMOUS", "GATE_MET")],
+        )
+        gate_met = next(
+            e.payload for e in self.ledger.events
+            if e.event_type == "lifecycle.transition" and e.payload["event"] == "GATE_MET"
+        )
+        self.assertEqual(gate_met["evidence_version"], 1)  # the version the gate read
+        self.assertEqual(self.store.get(self.key).version, 1)  # same counts: no republish
+
+    def test_retired_partition_token_is_refused_without_the_lifecycle_guard(self):
+        # a gateway holding only the store, not the manager as a guard
+        gateway = ExecutionGateway(self.clock, evidence=self.store)
+        decision = self.autonomous()
+        token = gateway.issue(decision, self.proposal(), self.policy)
+        self.manager.on_churn(self.key, self.make_key(tool="refund-api-v3"))
+        with self.assertRaises(PermissionError) as ctx:
+            gateway.execute(token.token_id, self.proposal(), lambda p: "ran")
+        self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
+        self.assertTrue(self.store.get(self.key).invalidation_reason.startswith("PARTITION_RETIRED"))
+
     def test_severe_on_retired_partition_is_logged_not_stuck(self):
         self.autonomous()
         new = self.make_key(tool="refund-api-v3")

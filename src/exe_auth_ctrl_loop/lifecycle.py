@@ -115,6 +115,13 @@ class LifecycleManager:
         """
         intent: One decision per operation, with the lifecycle state enforced on top
         constraint: Non-autonomous states can only add reason codes and narrow the route
+        constraint: Decisions are only half of it. Register this manager as a gateway
+                    guard -- ExecutionGateway(guards=(manager, ...)) -- or a token issued
+                    here outlives a later loss of autonomy or an inherited lineage
+                    suspension until its TTL. Suspension, declared invalidation, and
+                    retirement are also written to the store, so a gateway holding only
+                    the store still refuses those; QUALIFYING and LINEAGE_SUSPENDED are
+                    known to the guard alone.
         """
         key = proposal.partition
         state = self.refresh(key)
@@ -166,6 +173,11 @@ class LifecycleManager:
         # method: publish before moving, so the transition record names the evidence
         # version the gate actually relied on
         self._sync_store(key, record)
+        # effect: these are `if`s, not `elif`s, so a partition first seen with enough
+        # admitted evidence walks UNESTABLISHED -> QUALIFYING -> AUTONOMOUS in this one
+        # call, logging TRIAL_ADMITTED then GATE_MET. Both records name the version
+        # published just above, which is the evidence the gate read; the republish at the
+        # end carries the same counts under the new state.
         if record.state == LifecycleState.UNESTABLISHED and snapshot and snapshot.n >= 1:
             self._move(key, record, E.TRIAL_ADMITTED, ())
         if record.state == LifecycleState.QUALIFYING:
@@ -309,7 +321,17 @@ class LifecycleManager:
         return tuple(reasons)
 
     def _retire(self, key: PartitionKey, record: PartitionRecord, reason: str) -> None:
+        """
+        effect: Besides marking the record, declares the stored evidence invalid. The
+                shadow-derived evidence_id is stable per partition, so the gateway's
+                EVIDENCE_WITHDRAWN check cannot notice a retirement; EVIDENCE_INVALID can,
+                and it is checked by a gateway holding only the store. T-19 therefore
+                holds whether or not this manager is also registered as a guard.
+        """
         record.retired = True
+        current = self.store.get(key)
+        if current is not None and current.valid:
+            self.store.invalidate(key, f"PARTITION_RETIRED:{reason}")
         self._log(key, record, record.state, None, ("PARTITION_RETIRED", reason))
 
     def _move(
@@ -362,6 +384,11 @@ class LifecycleManager:
                 the manager and uses AuthorityController directly still fails closed.
         method: Counting evidence comes from the shadow log. After an epoch reset it is
                 empty, and an existing snapshot is zeroed rather than left stale.
+        constraint: Republishing bumps the version and keeps the evidence_id, which is
+                    stable per partition for shadow evidence. So a bump here never trips
+                    the gateway's EVIDENCE_WITHDRAWN; that check is for a record replaced
+                    from outside. Retirement is enforced by _retire's invalidation and by
+                    this manager as a guard, not by versioning.
         """
         current = self.store.get(key)
         suspended = record.state == LifecycleState.SUSPENDED

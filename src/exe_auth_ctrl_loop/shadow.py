@@ -339,6 +339,11 @@ class ShadowEvidenceLog:
                 an unlabeled or undecidable trial must not look better than a failure
         effect: Returns None while no counting trial exists, so an unknown partition stays
                 unknown rather than becoming an empty-but-present record
+        constraint: evidence_id is a digest of the partition key, so every version of a
+                    partition's shadow evidence carries the same id. The gateway's
+                    EVIDENCE_WITHDRAWN check is therefore blind to shadow republishes by
+                    design; what withdraws a token is the snapshot's suspended/valid
+                    flags, which retirement, suspension, and declared invalidation set.
         """
         parts = [self.counts(key, p) for p in COUNTING_PROVENANCE]
         frozen = sum(c.frozen for c in parts)

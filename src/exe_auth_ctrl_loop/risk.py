@@ -102,6 +102,7 @@ class SequenceBudget:
         return not self.tool_names or tool_name in self.tool_names
 
     def scope_key(self, proposal: Proposal) -> Any:
+        """None when a parameter scope names an argument the proposal lacks; callers deny."""
         if self.scope == "global":
             return "*"
         if self.scope == "partition":
@@ -193,7 +194,13 @@ class RiskPolicy:
         for budget in self.budgets:
             if not budget.covers(proposal.tool_name):
                 continue
-            charges = self._charges.get((budget.budget_id, budget.scope_key(proposal)), _Charges())
+            scope = budget.scope_key(proposal)
+            if scope is None:
+                # constraint: a proposal without the scoping argument gets no bucket of its
+                # own and must not share one with every other such proposal; it is denied
+                reasons.append(f"BUDGET_SCOPE_ERROR:{budget.budget_id}")
+                continue
+            charges = self._charges.get((budget.budget_id, scope), _Charges())
             # constraint: the metric is read here for every budget that has one, limit or
             # not, so a non-numeric argument is a denial now rather than an exception in
             # commit() after the token is spent

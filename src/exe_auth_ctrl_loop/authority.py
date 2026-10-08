@@ -678,6 +678,10 @@ class ExecutionGateway:
                         reasons.append("PARTITION_SUSPENDED")
                     if not snapshot.valid:
                         reasons.append("EVIDENCE_INVALID")
+            # constraint: this catches a record removed or replaced from outside (a new
+            # evidence_id). Shadow-managed partitions keep one evidence_id for life, so
+            # for them the live signals are the suspended/valid flags above, which the
+            # lifecycle sets on suspension and on retirement.
             if token.evidence_id is not None and not token.human_approved:
                 if snapshot is None or snapshot.evidence_id != token.evidence_id:
                     reasons.append("EVIDENCE_WITHDRAWN")
