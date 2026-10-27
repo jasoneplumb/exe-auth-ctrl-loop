@@ -26,9 +26,10 @@ from exe_auth_ctrl_loop import (
     Route,
     ToolDefinition,
     ToolRegistry,
+    digest,
 )
 
-NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
+NOW =datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
 class FakeMessages:
@@ -301,10 +302,46 @@ class ChainLimitTests(unittest.TestCase):
             ledger.append("e", f"a-{i}", "x", {"i": i})
         return ledger
 
+    def rehash_from(self, ledger, start):
+        """Recompute every hash from `start` on, as anyone holding the chain can."""
+        previous = ledger.events[start - 1].event_hash if start else "GENESIS"
+        for index in range(start, len(ledger.events)):
+            event = ledger.events[index]
+            body = {
+                "sequence": event.sequence,
+                "event_type": event.event_type,
+                "aggregate_id": event.aggregate_id,
+                "actor": event.actor,
+                "occurred_at": event.occurred_at.isoformat(),
+                "payload": event.payload,
+                "previous_hash": previous,
+            }
+            ledger.events[index] = replace(event, previous_hash=previous, event_hash=digest(body))
+            previous = ledger.events[index].event_hash
+
     def test_interior_edit_is_detected(self):
         ledger = self.ledger()
         ledger.events[1] = replace(ledger.events[1], payload={"i": 99})
         self.assertFalse(ledger.verify())
+
+    # The next two pin documented limits (claims matrix C22). A keyed hash or a sequence-gap
+    # check would make them fail, and should update them deliberately.
+    def test_interior_edit_with_a_rehashed_suffix_passes_verify(self):
+        ledger = self.ledger()
+        anchor = ledger.anchor()
+        ledger.events[1] = replace(ledger.events[1], payload={"i": 99})
+        self.rehash_from(ledger, 1)
+        self.assertTrue(ledger.verify())  # the hash is unkeyed SHA-256
+        self.assertFalse(ledger.verify_anchor(*anchor))  # what an external anchor adds
+
+    def test_interior_deletion_with_a_rehashed_suffix_passes_verify(self):
+        ledger = self.ledger()
+        anchor = ledger.anchor()
+        del ledger.events[1]
+        self.rehash_from(ledger, 1)
+        self.assertEqual([e.sequence for e in ledger.events], [0, 2, 3])
+        self.assertTrue(ledger.verify())  # sequence numbers are hashed, not checked for gaps
+        self.assertFalse(ledger.verify_anchor(*anchor))
 
     def test_truncation_is_not_detected_by_verify_alone(self):
         ledger = self.ledger()
