@@ -15,27 +15,57 @@ Future: In-process. Charges live in this object's memory; the guarantee is per p
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
-from typing import Any, Mapping
+from typing import Any, Mapping, TypeGuard
 
 from .authority import AuthorizationToken, PartitionKey, Proposal
 
 
+def _finite_number(value: object) -> TypeGuard[int | float]:
+    """An int, or a float that is not NaN or infinite. Booleans are not numbers."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    # constraint: ints are always finite, and math.isfinite() raises on one too large
+    # for a float, so only floats are tested
+    return isinstance(value, int) or math.isfinite(value)
+
+
 @dataclass(frozen=True)
 class Bound:
-    """A numeric argument must lie within [minimum, maximum]. Booleans are not numbers."""
+    """
+    intent: A numeric argument must lie within [minimum, maximum]
+    constraint: A value outside the finite numbers is admitted by no bound. Every
+                comparison with NaN is false, so a NaN would otherwise satisfy any limit.
+                An omitted minimum is 0, not unbounded: an envelope that forgot its floor
+                denies a negative amount instead of classifying it. A field that may be
+                negative declares a negative minimum.
+    """
 
     field: str
     maximum: float | None = None
     minimum: float | None = None
 
+    def __post_init__(self) -> None:
+        for name, limit in (("maximum", self.maximum), ("minimum", self.minimum)):
+            if limit is not None and not _finite_number(limit):
+                raise ValueError(f"bound {self.field}: {name} must be a finite number")
+        if self.maximum is not None and self.maximum < self.floor:
+            raise ValueError(
+                f"bound {self.field}: maximum {self.maximum} is below the floor {self.floor}"
+            )
+
+    @property
+    def floor(self) -> float:
+        return 0.0 if self.minimum is None else self.minimum
+
     def admits(self, parameters: Mapping[str, Any]) -> bool:
         value = parameters.get(self.field)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if not _finite_number(value):
+            return False
+        if value < self.floor:
             return False
         if self.maximum is not None and value > self.maximum:
-            return False
-        if self.minimum is not None and value < self.minimum:
             return False
         return True
 
@@ -97,6 +127,8 @@ class SequenceBudget:
             raise ValueError("a metric limit needs a metric")
         if self.scope not in {"global", "partition"} and not self.scope.startswith("parameter:"):
             raise ValueError("scope must be global, partition, or parameter:<name>")
+        if self.limit is not None and not (_finite_number(self.limit) and self.limit >= 0):
+            raise ValueError("a limit must be a finite, non-negative number")
 
     def covers(self, tool_name: str) -> bool:
         return not self.tool_names or tool_name in self.tool_names
@@ -110,12 +142,24 @@ class SequenceBudget:
         return proposal.parameters.get(self.scope.removeprefix("parameter:"))
 
     def amount(self, proposal: Proposal) -> float:
+        """
+        constraint: A charge is a finite, non-negative number. A NaN total makes every
+                    later comparison against the limit false, and a negative charge
+                    refunds the budget. Raising is a denial: proposal_blockers() reads every
+                    amount before a token exists, so commit() never meets a bad one.
+        """
         if self.metric is None:
             return 0.0
         value = proposal.parameters.get(self.metric)
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            raise ValueError(f"budget {self.budget_id}: {self.metric} is not numeric")
-        return float(value)
+        if not _finite_number(value):
+            raise ValueError(f"budget {self.budget_id}: {self.metric} is not a finite number")
+        try:
+            charge = float(value)
+        except OverflowError:
+            raise ValueError(f"budget {self.budget_id}: {self.metric} is too large") from None
+        if charge < 0:
+            raise ValueError(f"budget {self.budget_id}: {self.metric} is negative")
+        return charge
 
 
 @dataclass
@@ -202,8 +246,8 @@ class RiskPolicy:
                 continue
             charges = self._charges.get((budget.budget_id, scope), _Charges())
             # constraint: the metric is read here for every budget that has one, limit or
-            # not, so a non-numeric argument is a denial now rather than an exception in
-            # commit() after the token is spent
+            # not, so a non-numeric, non-finite, or negative argument is a denial now
+            # rather than an exception in commit() after the token is spent
             amount = 0.0
             if budget.metric is not None:
                 try:
