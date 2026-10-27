@@ -305,7 +305,7 @@ class ChainLimitTests(unittest.TestCase):
     def rehash_from(self, ledger, start):
         """Recompute every hash from `start` on, as anyone holding the chain can."""
         # the body mirrors EventLedger.append/verify; a schema change there must land here
-        previous =ledger.events[start - 1].event_hash if start else "GENESIS"
+        previous = ledger.events[start - 1].event_hash if start else "GENESIS"
         for index in range(start, len(ledger.events)):
             event = ledger.events[index]
             body = {
