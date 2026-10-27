@@ -6,7 +6,7 @@ title: "Cross-Model Execution-Authority Control Loop"
 authors:
   - family-names: Plumb
     given-names: Jason E.
-version: 0.3.0
+version: 0.3.1
 license: Apache-2.0
 repository-code: "https://github.com/jasoneplumb/exe-auth-ctrl-loop"
 doi: 10.5281/zenodo.21983061

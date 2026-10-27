@@ -380,6 +380,7 @@ frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 | Paper v1 | manuscript on the v0.2.0 design, August 2026 | not published; retained as written |
 | Software v0.3.0 (the v2 design) | tag `v0.3.0` (commit `78bdf9d`, merged as #10), DOI 10.5281/zenodo.23226913; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | released 2026-10-08 |
 | Paper v2 | draft in [docs/paper-v2/manuscript.md](docs/paper-v2/manuscript.md), built on the v0.3.0 artifacts | draft; not submitted, no preprint |
+| Software v0.3.1 | tag `v0.3.1`; fixes and tests from the v0.3.0 claims audit (see [CHANGELOG.md](CHANGELOG.md)) | released 2026-10-27; version DOI added to `CITATION.cff` once Zenodo mints it |
 
 What v2 changes relative to the v1 design and paper, in one paragraph: a
 partition can now earn autonomy from an empty evidence store, through shadow

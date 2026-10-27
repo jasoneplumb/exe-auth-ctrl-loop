@@ -1,5 +1,56 @@
 # Changelog
 
+## [0.3.1] - 2026-10-27
+
+Fixes and tests from the claims audit of the v0.3.0 artifacts (#13). Two
+changes in "Changed" tighten fail-closed behaviour; read them before
+upgrading. The paper v2 draft and `results/` stay pinned to v0.3.0: these
+fixes leave the simulation's canonical hash unchanged.
+
+### Changed
+
+- A `Bound` with no `minimum` now has a floor of 0 and denies negative values;
+  a field that may be negative declares a negative `minimum`. A non-finite
+  limit, or a `maximum` below the floor, is rejected at construction. Every
+  `Bound` in this repository already declares `minimum=0` (#16).
+- `jsonschema` is imported unconditionally. It was already a required
+  dependency; an install without it now fails at import instead of falling
+  back to a validator that ignored `pattern`, `minLength`/`maxLength`,
+  `minItems`/`maxItems`, and `anyOf`/`oneOf`/`allOf` (#14).
+- `ToolRegistry.register` checks each input schema against the Draft 2020-12
+  meta-schema and refuses a malformed one with a `ValueError` that names where
+  it is wrong (#14).
+
+### Fixed
+
+- `NaN` and infinite amounts passed every `Bound`, and a `NaN`, infinite, or
+  negative charge corrupted a `SequenceBudget`'s running total. Both are now
+  denied before a token is issued (`BUDGET_METRIC_ERROR` for budgets). An int
+  too large for a float raised `OverflowError` out of the policy check instead
+  of being denied (#16).
+
+### Tests
+
+- A deterministic test fails if the gateway's redemption lock is removed
+  (claims matrix C15); tests pin the ledger's re-hash limit (C22) (#17).
+
+### Documentation
+
+- Paper v2 claims matrix, manuscript, READMEs, and method docs corrected
+  against the v0.3.0 artifacts: C26–C28, the setup each guarantee needs,
+  limitations L6–L13, and the trial figure (53 versus 35 to clear 0.90, not 60
+  versus 40, also corrected in the 0.3.0 entry below). The reproducibility
+  procedure checks out `v0.3.0`. `SECURITY.md` and the threat model list the
+  limitations the matrix discloses (#13).
+- Paper v2 manuscript drafted on the v0.3.0 artifacts (#12).
+
+### Note
+
+Archived to Zenodo on release, which mints a version DOI for v0.3.1; it is
+added to `CITATION.cff` `identifiers` after the archive exists, as for v0.3.0.
+`results/manifest.json` keeps naming the v0.3.0 commit, since the paper cites
+that release and the artifacts are unchanged.
+
 ## [0.3.0] - 2026-10-08
 
 The v2 design: earn authority from zero, gate it with an anytime-valid bound,
