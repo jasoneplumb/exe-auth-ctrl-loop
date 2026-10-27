@@ -313,7 +313,7 @@ class SequenceBudgetTests(RiskBase):
                                   (OneOf("payee", PAYEES),)),)
         self.risk.update("risk-v1", unbounded, (budgets()[0],))
         self.seed("low")
-        for usd in (float("nan"), float("inf"), -50, 10**400):
+        for usd in (float("nan"), float("inf"), float("-inf"), -50, 10**400):
             bad = self.proposal(usd=usd)
             decision = self.controller.evaluate(bad)
             self.assertEqual(decision.route, Route.DENY)

@@ -23,11 +23,15 @@ from .authority import AuthorizationToken, PartitionKey, Proposal
 
 
 def _finite_number(value: object) -> TypeGuard[int | float]:
-    """An int, or a float that is not NaN or infinite. Booleans are not numbers."""
+    """
+    intent: An int, or a float that is not NaN or infinite. Booleans are not numbers.
+    constraint: A true result does not mean float() succeeds: an int too large for a
+                float passes, and float() raises OverflowError on it. Compare the value
+                directly, as Bound.admits() does, or catch OverflowError, as amount() does.
+    """
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
-    # constraint: ints are always finite, and math.isfinite() raises on one too large
-    # for a float, so only floats are tested
+    # math.isfinite() raises on an int too large for a float, so only floats are tested
     return isinstance(value, int) or math.isfinite(value)
 
 
