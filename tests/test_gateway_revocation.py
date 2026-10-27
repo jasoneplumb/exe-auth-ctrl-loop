@@ -246,6 +246,53 @@ class ScopeAndExpiryTests(GatewayBase):
 
 
 class ConcurrencyTests(GatewayBase):
+    def test_a_second_redeemer_cannot_enter_the_critical_section(self):
+        # A guard parks the first redeemer after its checks and before the consume. With
+        # the lock, a second redeemer cannot reach that point while the first is there;
+        # without it, the second walks in and both see used=False. The other tests here
+        # pass with the lock replaced by a no-op, so this one is what pins it (C15).
+        parked, release, second_inside = (threading.Event() for _ in range(3))
+
+        class ParkingGuard:
+            def redemption_blockers(self, token, proposal):
+                if parked.is_set():
+                    second_inside.set()
+                else:
+                    parked.set()
+                    release.wait(timeout=5)
+                return ()
+
+            def commit(self, token, proposal):
+                pass
+
+        self.gateway = ExecutionGateway(
+            self.clock, evidence=self.store, current_policy=lambda: self.policy,
+            guards=(ParkingGuard(),),
+        )
+        token = self.autonomous_token()
+        outcomes: list[str] = []
+
+        def redeem():
+            try:
+                self.gateway.execute(token.token_id, self.proposal(), self.handler)
+                outcomes.append("ok")
+            except PermissionError:
+                outcomes.append("denied")
+
+        first, second = threading.Thread(target=redeem), threading.Thread(target=redeem)
+        first.start()
+        self.assertTrue(parked.wait(timeout=5))
+        second.start()
+        # A correct lock can never set second_inside, so this cannot flap into a failure;
+        # the bound only limits how long a missing lock has to show itself.
+        entered = second_inside.wait(timeout=0.5)
+        release.set()
+        first.join()
+        second.join()
+        self.assertFalse(entered, "a second redeemer reached the guard inside the lock")
+        self.assertEqual(self.handler.calls, 1)
+        self.assertEqual(sorted(outcomes), ["denied", "ok"])
+
     def test_simultaneous_redemptions_invoke_handler_once(self):
         token = self.autonomous_token()
         threads = 8
