@@ -29,7 +29,7 @@ from exe_auth_ctrl_loop import (
     digest,
 )
 
-NOW =datetime(2026, 10, 1, tzinfo=timezone.utc)
+NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
 
 
 class FakeMessages:
@@ -304,7 +304,8 @@ class ChainLimitTests(unittest.TestCase):
 
     def rehash_from(self, ledger, start):
         """Recompute every hash from `start` on, as anyone holding the chain can."""
-        previous = ledger.events[start - 1].event_hash if start else "GENESIS"
+        # the body mirrors EventLedger.append/verify; a schema change there must land here
+        previous =ledger.events[start - 1].event_hash if start else "GENESIS"
         for index in range(start, len(ledger.events)):
             event = ledger.events[index]
             body = {
