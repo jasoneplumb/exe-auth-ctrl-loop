@@ -49,13 +49,18 @@ class SchemaValidationTests(unittest.TestCase):
                 registry.validate("lookup_order", bad)
 
     def test_malformed_schema_is_refused_at_registration(self):
-        for schema in (
-            {"type": "object", "required": "code"},
-            {"type": "object", "properties": {"code": {"type": "strng"}}},
-            {"type": "object", "properties": {"code": {"type": "string", "maxLength": "5"}}},
+        # the refusal names where in the schema the fault is, not only what it is
+        for schema, where in (
+            ({"type": "object", "required": "code"}, "$.required"),
+            ({"type": "object", "properties": {"code": {"type": "strng"}}},
+             "$.properties.code.type"),
+            ({"type": "object", "properties": {"code": {"type": "string", "maxLength": "5"}}},
+             "$.properties.code.maxLength"),
         ):
-            with self.subTest(schema=schema), self.assertRaises(ValueError):
-                ToolRegistry().register(lookup_tool(schema))
+            with self.subTest(where=where):
+                with self.assertRaises(ValueError) as ctx:
+                    ToolRegistry().register(lookup_tool(schema))
+                self.assertIn(f"at {where}:", str(ctx.exception))
 
 
 if __name__ == "__main__":

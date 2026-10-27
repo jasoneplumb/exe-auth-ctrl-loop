@@ -78,7 +78,9 @@ class ToolRegistry:
             Draft202012Validator.check_schema(tool.input_schema)
         except SchemaError as exc:
             # a malformed schema fails here, at setup, rather than mid-operation
-            raise ValueError(f"{tool.name}: invalid input schema: {exc.message}") from exc
+            raise ValueError(
+                f"{tool.name}: invalid input schema at {exc.json_path}: {exc.message}"
+            ) from exc
         if self.risk is not None and tool.risk_class is not None:
             raise ValueError(
                 f"{tool.name}: this registry classifies risk through its RiskPolicy; "
