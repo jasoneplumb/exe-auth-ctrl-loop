@@ -14,15 +14,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from .risk import RiskPolicy
+from jsonschema import Draft202012Validator
+from jsonschema.exceptions import SchemaError
 
-try:
-    from jsonschema import Draft202012Validator
-except ImportError:  # pragma: no cover - exercised only without optional dependencies
-    # constraint: jsonschema is optional, so the fallback validator below must stay
-    # strictly narrower than the real one -- a permissive fallback would mean validation
-    # silently weakens when the dependency is absent.
-    Draft202012Validator = None  # type: ignore[assignment,misc]
+from .risk import RiskPolicy
 
 
 class ToolValidationError(ValueError):
@@ -79,6 +74,13 @@ class ToolRegistry:
             raise ValueError(f"tool already registered: {tool.name}")
         if tool.input_schema.get("type") != "object":
             raise ValueError("tool input schema must describe an object")
+        try:
+            Draft202012Validator.check_schema(tool.input_schema)
+        except SchemaError as exc:
+            # a malformed schema fails here, at setup, rather than mid-operation
+            raise ValueError(
+                f"{tool.name}: invalid input schema at {exc.json_path}: {exc.message}"
+            ) from exc
         if self.risk is not None and tool.risk_class is not None:
             raise ValueError(
                 f"{tool.name}: this registry classifies risk through its RiskPolicy; "
@@ -114,24 +116,19 @@ class ToolRegistry:
     def validate(self, name: str, parameters: Mapping[str, Any]) -> None:
         """
         intent: Check arguments against the host's schema, not the model's idea of it
-        method: jsonschema when installed, otherwise the narrow fallback validator below
+        method: jsonschema's Draft 2020-12 validator. It is a required dependency, so there
+                is no reduced fallback that could accept what it does not implement.
         context: Runs twice per operation -- at proposal time and again at execution -- so
                  a registry change between the two is caught rather than assumed away
         """
         tool = self.get(name)
-        if Draft202012Validator is not None:
-            errors = sorted(
-                Draft202012Validator(tool.input_schema).iter_errors(dict(parameters)),
-                key=lambda e: list(e.path),
-            )
-            if errors:
-                rendered = "; ".join(error.message for error in errors)
-                raise ToolValidationError(f"invalid {name} parameters: {rendered}")
-            return
-        try:
-            _validate_schema(tool.input_schema, dict(parameters), "$")
-        except ToolValidationError as exc:
-            raise ToolValidationError(f"invalid {name} parameters: {exc}") from exc
+        errors = sorted(
+            Draft202012Validator(tool.input_schema).iter_errors(dict(parameters)),
+            key=lambda e: list(e.path),
+        )
+        if errors:
+            rendered = "; ".join(error.message for error in errors)
+            raise ToolValidationError(f"invalid {name} parameters: {rendered}")
 
     def execute(self, name: str, parameters: Mapping[str, Any]) -> Any:
         self.validate(name, parameters)
@@ -194,51 +191,3 @@ class ToolRegistry:
             })
         return tools
 
-
-def _validate_schema(schema: Mapping[str, Any], value: Any, path: str) -> None:
-    """
-    intent: Validate without jsonschema installed, without ever being more permissive
-    method: Walk the small subset of JSON Schema the prototype uses
-    constraint: An unrecognised `type` raises rather than passing. A validator that ignored
-                what it did not understand would let an unknown construct through as valid,
-                which is the one failure mode a fallback must not have.
-    """
-    expected = schema.get("type")
-    type_checks = {
-        "object": lambda v: isinstance(v, dict),
-        "array": lambda v: isinstance(v, list),
-        "string": lambda v: isinstance(v, str),
-        "integer": lambda v: isinstance(v, int) and not isinstance(v, bool),
-        "number": lambda v: isinstance(v, (int, float)) and not isinstance(v, bool),
-        "boolean": lambda v: isinstance(v, bool),
-        "null": lambda v: v is None,
-    }
-    if expected not in type_checks:
-        raise ToolValidationError(f"{path}: unsupported schema type {expected!r}")
-    if not type_checks[expected](value):
-        raise ToolValidationError(f"{path}: expected {expected}")
-    if "enum" in schema and value not in schema["enum"]:
-        raise ToolValidationError(f"{path}: value is not in enum")
-    if "const" in schema and value != schema["const"]:
-        raise ToolValidationError(f"{path}: value does not match const")
-
-    if expected == "object":
-        properties = schema.get("properties", {})
-        missing = set(schema.get("required", [])) - set(value)
-        if missing:
-            raise ToolValidationError(f"{path}: missing {sorted(missing)}")
-        if schema.get("additionalProperties") is False:
-            extras = set(value) - set(properties)
-            if extras:
-                raise ToolValidationError(f"{path}: unexpected {sorted(extras)}")
-        for key, child in value.items():
-            if key in properties:
-                _validate_schema(properties[key], child, f"{path}.{key}")
-    elif expected == "array" and "items" in schema:
-        for index, child in enumerate(value):
-            _validate_schema(schema["items"], child, f"{path}[{index}]")
-    elif expected in {"integer", "number"}:
-        if "minimum" in schema and value < schema["minimum"]:
-            raise ToolValidationError(f"{path}: below minimum")
-        if "maximum" in schema and value > schema["maximum"]:
-            raise ToolValidationError(f"{path}: above maximum")
