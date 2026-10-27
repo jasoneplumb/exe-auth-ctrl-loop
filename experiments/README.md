@@ -1,6 +1,6 @@
 # Simulated evaluation (Step 08)
 
-**This is a simulation.** Every number under `results/` comes from a synthetic proposal stream driven through the real controller, lifecycle, shadow log, risk policy, and gateway. The models, the human reviewer, the adjudication oracle, and configuration churn are simulated by the few lines in `experiments/simulate.py` that say so. The results establish that the implemented system behaves as implemented under the modelled assumptions. They are not field validation, not evidence about real LLM agents, and not evidence about safety for high-impact side effects. No claim in this directory generalizes beyond the modelled scenarios.
+**This is a simulation.** Every number under `results/` comes from a synthetic proposal stream driven through the real controller, lifecycle, shadow log, risk policy, and gateway. The models, the human reviewer, the adjudication oracle, and configuration churn are simulated by the few lines in `experiments/simulate.py` that say so. The results establish that the implemented components behave as implemented under the modelled assumptions, wired the way the harness wires them, which differs from the shipped loop in ways some results depend on (see "Where the harness differs from the shipped loop"). They are not field validation, not evidence about real LLM agents, and not evidence about safety for high-impact side effects. No claim in this directory generalizes beyond the modelled scenarios.
 
 ## Reproduce
 
@@ -11,7 +11,7 @@ python -m experiments.run --config experiments/configs/stable.json --output resu
 pytest -q tests/test_experiments.py                         # reduced-size determinism checks
 ```
 
-Run `--all` twice into two directories and compare `manifest.json → canonical_hash`. They must be identical; `tests/test_experiments.py::ArtifactTests::test_rerun_reproduces_the_canonical_hash` does this on a reduced configuration. Reduced runs via `--seeds N --horizon H` are for development only; the committed `results/` use the full configs.
+Run `--all` twice into two directories and compare `manifest.json → canonical_hash`. They must be identical; `tests/test_experiments.py::ArtifactTests::test_rerun_reproduces_the_canonical_hash` does this on a reduced configuration. Reduced runs via `--seeds N --horizon H` are for development only; the committed `results/` use the full configs. Full-size reproduction has been checked on one platform only (macOS, Python 3.14.4; three runs recorded in the Step 08 and 09 gate reports). CI runs the reduced test on Linux and does not regenerate `results/` or compare it with the committed manifest.
 
 The full run takes about four minutes because the lifecycle re-reads every shadow trial at every decision (quadratic in the horizon); that is the production code path, not a harness shortcut.
 
@@ -19,14 +19,14 @@ The full run takes about four minutes because the lifecycle re-reads every shado
 
 One proposal for the current partition. In order:
 
-1. Tokens issued `redeem_delay` (2) steps ago are redeemed through the gateway. A token whose partition was suspended, retired, or lost autonomy in between is refused and counted as `stale_token_denials`. Redeemed operations run the handler, draw their true outcome, are frozen into the shadow log as `AUTONOMOUS` or `AUDIT` provenance, and get an oracle label `label_delay` steps later (or never, with probability `label_missing`). A severe outcome calls `record_severe` immediately.
+1. Tokens issued `redeem_delay` (2) steps ago are redeemed through the gateway. A token the gateway refuses is counted as `stale_token_denials`: most are tokens whose partition was suspended, retired, or lost autonomy in between, but the count also includes budget refusals at redemption (7 of the 19 in `risk_envelopes` are `BUDGET_EXCEEDED`). Redeemed operations run the handler, draw their true outcome, are frozen into the shadow log as `AUTONOMOUS` or `AUDIT` provenance, and get an oracle label `label_delay` steps later (or never, with probability `label_missing`). A severe outcome calls `record_severe` immediately.
 2. Due oracle labels are delivered to the shadow log.
 3. If a suspension is `release_after` steps old, a simulated operator releases it (new epoch).
 4. Every `churn_every` steps the proposer's prompt version changes: the old partition is retired and the new one starts at `n = 0`.
 5. A proposal is generated (amount, payee, and the host-derived risk class; `mislabel_rate` of high-envelope proposals carry a `low` label) and decided by `LifecycleManager.evaluate`.
    - `DENY`: counted, with the reason codes.
    - `AUTONOMOUS` / `AUDIT`: a token is issued and queued for redemption.
-   - `HUMAN_APPROVAL`: the proposal is frozen as a `SHADOW` trial first, then a simulated reviewer sees it and catches a bad one with probability `reviewer_catch`; approved proposals execute as human-approved (never counted as evidence). This is the cold-start path: shadow labels are the only evidence an unqualified partition can earn.
+   - `HUMAN_APPROVAL`: the proposal is frozen as a `SHADOW` trial first, then a simulated reviewer sees it and catches a bad one with probability `reviewer_catch`; approved proposals execute as human-approved (never counted as evidence). The harness runs the handler and counts a consumed token directly; it does not call the gateway. This is the cold-start path: shadow labels are the only evidence an unqualified partition can earn.
 6. The lifecycle state is observed and the metrics updated.
 
 Truth: each proposal is acceptable with probability `p_good` (modified by `shift_at`, bursts, or defection), and an unacceptable one is severe with probability `severe_given_bad`. Oracle: the truth bit, flipped with probability `oracle_flip`, `INCONCLUSIVE` with probability `oracle_inconclusive`, delivered after `label_delay` steps, missing with probability `label_missing` (then expiring to `INCONCLUSIVE` at `label_deadline`).
@@ -42,6 +42,17 @@ Read these before reading any number.
 - **Labels arrive on a fixed schedule.** Delay and missingness are independent of the label's value. Non-random missingness (bad outcomes less likely to be labelled) is exactly the selection problem the censoring rule is meant to blunt, and it is not simulated.
 - **One partition at a time, one tool.** No cross-partition interactions beyond churn lineage; the multiplicity policy (one α per partition and epoch) is never stressed.
 - **Costs are counts.** Review cost is `human_reviews`; harm is `failures_after_autonomy`. No monetary model, no latency.
+
+## Where the harness differs from the shipped loop
+
+The harness drives the real components, but it wires them differently from `pipeline.py`, and some results depend on the difference.
+
+- **It labels every autonomous execution.** Every redeemed operation is frozen and labelled; the shipped loop freezes only audited ones. A failure under autonomy therefore always reaches the bound `label_delay` steps later. That is why the gate withdraws autonomy quickly in `delayed_defection` and `distribution_shift`, and why the audit rate changes nothing that executes.
+- **It never commits decisions to the ledger.** It calls the gateway directly, without the executor's commit-before-act hook.
+- **It freezes audits after execution.** The shipped loop freezes an audited proposal before the token is issued.
+- **Its human path bypasses the gateway.** A human-approved execution increments `handler_calls` and `tokens_consumed` without a token, so `unauthorized_side_effects` cannot be non-zero on that path.
+
+It is also the only code in the repository that creates `SHADOW` trials; a host using the shipped loop must freeze human-routed proposals itself.
 
 ## Scenarios
 
@@ -69,7 +80,7 @@ All v2 scenarios start every partition at `n = 0` with an empty evidence store. 
 
 Totals are over the 10 runs; medians are over qualified runs only, with the censored count beside them.
 
-| Scenario | Qualified | Steps to authority (median; censored) | Autonomous + audit executions | Failures after autonomy (severe) | Suspensions | Human reviews | Stale-token denials | Final states |
+| Scenario | Qualified | Steps to authority (median; censored) | Autonomous + audit executions | Failures after autonomy (severe) | Suspensions | Human reviews | Redemption refusals | Final states |
 |---|---|---|---|---|---|---|---|---|
 | `stable` | 10/10 | 84; 0 | 1509 + 81 | 57 (7) | 7 | 2386 | 18 | 3 autonomous, 7 suspended |
 | `never_qualifies` | 0/10 | –; 10 | 0 | 0 | 7 | 4000 | 0 | 3 qualifying, 7 suspended |
@@ -87,20 +98,29 @@ Totals are over the 10 runs; medians are over qualified runs only, with the cens
 | `human_only` | 0/10 | n/a | 0 | 0 | 0 | 4000 | 0 | human only |
 | `legacy_wilson_seeded` | seeded | 0 (seeded) | 3046 + 154 | 31 (4) | 4 (v1 path) | 788 | 0 | 6 seeded-autonomous, 4 suspended |
 
-Other reported quantities (all in `results/<scenario>/summary.json` and per run in `runs.csv`): `qualified_before_turnover_fraction` (0.3 fast, 0.7 slow), `audit_overhead_mean`, `failures_human_missed_total`, `policy_denials_total` with per-reason breakdown (`risk_envelopes`: 925, led by `BUDGET_EXCEEDED`, `RISK_CLASS_MISMATCH`, `NO_RISK_ENVELOPE`), `censored_fraction_mean` (`censoring`: 0.377), `intervention_delay` (median 2 steps for `delayed_defection` with 1 censored run; 14.5 for `distribution_shift` with 3 censored), and `unauthorized_side_effects_total` (0 everywhere, by construction: every handler call is preceded by a consumed token or a human approval).
+"Redemption refusals" is `stale_token_denials_total`: every token the gateway refused at redemption, whatever the reason, so it includes budget refusals as well as stale tokens.
+
+Other reported quantities (all in `results/<scenario>/summary.json` and per run in `runs.csv`):
+
+- `qualified_before_turnover_fraction` (0.3 fast, 0.7 slow): the fraction of *runs* whose partition is `AUTONOMOUS` at the moment of the first churn. It is set once per run, so it says nothing about later epochs.
+- `audit_overhead_mean` and `failures_human_missed_total`.
+- `policy_denials_total`, with a per-reason breakdown (`risk_envelopes`: 925, led by `BUDGET_EXCEEDED`, `RISK_CLASS_MISMATCH`, `NO_RISK_ENVELOPE`).
+- `censored_fraction_mean` (`censoring`: 0.377): inconclusive plus still-pending shadow trials over all shadow trials, so it counts trials pending at the horizon. The shadow log's own `Counts.censored_fraction`, which counts inconclusive trials only, averages 0.342.
+- `intervention_delay`: *steps*, not failures, from the first failure after defection or shift to the first step the partition is no longer `AUTONOMOUS`, whether it went to `QUALIFYING` or `SUSPENDED`. The median is 2 for `delayed_defection` (1 censored: suspended before defecting) and 14.5 for `distribution_shift` (3 censored: suspended before the shift).
+- `unauthorized_side_effects_total`: `handler_calls` minus `tokens_consumed`, 0 everywhere. This is zero by construction rather than measured, because the human path increments both counts without calling the gateway.
 
 ## What the numbers say, and what they do not
 
 - **Cold start works and is slow.** From an empty store, a 97 %-acceptable partition qualifies in a median of 84 steps, all 10 seeds; at 95 % it is 230 steps and half the seeds do not make it within 400. Every one of those steps is a human review. Gate 1 of the plan is met by `stable` with no seeded history (`results/stable/trace.jsonl` begins at `n = 0`).
 - **Below threshold never qualifies.** `never_qualifies` (80 %) reaches autonomy in no seed; 7 of 10 are suspended by severe failures the reviewer missed, which is the policy working, not a defect.
-- **Turnover is the cost of partitioning.** With churn every 60 steps, only 30 % of epochs qualify before the next invalidation; every churn starts the partition over. This is the price the design pays for refusing to pool evidence across configurations.
-- **Delayed defection is contained, not prevented.** All 10 defecting runs qualify (p = 0.99 looks excellent), then suffer a median of 2 failures before the first severe outcome suspends them; one run never produced a severe outcome inside the horizon and kept failing at 50 % until the bound fell. The statistical gate did nothing here and was never supposed to; this is the limitation the method note states. Harm before intervention is real and its size depends on `severe_given_bad`, which the deterministic layer cannot control.
-- **Shift is detected late.** A drop to 70 % after qualification takes a median of 14.5 steps to withdraw autonomy, with 3 of 10 runs not withdrawn within the horizon, and 61 failures occurred meanwhile. The bound is designed to be slow to lose confidence; `max_evidence_age` and audit rate are the levers, and neither was tuned here.
-- **Censoring is punishing.** With 30 % of labels missing and 10 % inconclusive, no run qualifies in 400 steps. The rule that an unlabelled trial counts as a failure is what keeps non-response from inflating the bound; the consequence is that label coverage above roughly 95 % is required at these thresholds.
+- **Turnover is the cost of partitioning.** With churn every 60 steps, only 3 of 10 runs are autonomous at the first churn, and of all 70 epochs only 13 (19 %) ever reach `AUTONOMOUS`: the fastest qualification takes 54 steps, so an epoch has little room. With churn every 200 steps, 7 of 10 runs are autonomous at the first churn. Every churn starts the partition over. This is the price the design pays for refusing to pool evidence across configurations.
+- **Delayed defection is not prevented.** All 10 runs qualify (p = 0.99 looks excellent). Seed 5 is suspended at t=63 by a severe outcome before its defection begins. Of the 9 that defect, 7 lose autonomy to `QUALIFYING` 2 steps after their first failure, when that failure's label arrives and one negative takes the bound below 0.90, and are suspended 24–208 steps later; seeds 1 and 10 are suspended at once because their first failure is severe. All 10 end suspended. The fast withdrawal comes from the harness labelling every autonomous execution (see "Where the harness differs from the shipped loop"); the shipped loop would see the failure only through an audit or an outcome the host chooses to label. Harm before intervention is real, and its size depends on how many failures are labelled and on `severe_given_bad`, neither of which the deterministic layer controls.
+- **Shift is detected, with delay.** Six runs are autonomous at the shift (step 250); all six lose autonomy 0–32 steps after their first post-shift failure (median 14.5), four by a severe outcome and two by the bound, with 32 failures in those windows. The three censored runs were suspended before the shift (t=87, 178, 233), one run never qualified, and no run ends autonomous. The 61 failures in the table cover whole runs, before the shift included. Partitions near the threshold also move between `AUTONOMOUS` and `QUALIFYING` repeatedly (up to three times in one run), because a partition qualifies just above 0.90 and one labelled failure takes it back below. `max_evidence_age` and audit rate are the levers, and neither was tuned here.
+- **Censoring is punishing.** With 30 % of labels missing and 10 % inconclusive, no run qualifies in 400 steps, and none could: about 0.97 × 0.7 × 0.9 ≈ 0.61 of trials end positive, far below 0.90. The rule that an unlabelled trial counts as a failure is what keeps non-response from inflating the bound; the consequence is that label coverage above roughly 95 % is required at these thresholds.
 - **The oracle must be good.** 5 % label noise at a 0.90 threshold drops qualification to 1 in 10. The design's evidence is only as good as the oracle, exactly as A5 says.
-- **Audit rate changes what is labelled, not what runs.** `audit_rate_0` and `audit_rate_20` execute the same operations with the same outcomes; the difference is 76 operations that carry an independent post-hoc label. The benefit of auditing (catching a defection the ordinary outcome stream would miss) is not modelled, because outcomes here are observed perfectly anyway.
-- **Stale tokens are refused.** Tokens outstanding across a suspension, churn, or loss of autonomy are refused at redemption in every v2 scenario (4–23 per 10 runs). The legacy comparator refuses none, which is baseline gap 2 in numbers.
-- **Risk scope denies before evidence.** 925 denials in `risk_envelopes` across 4000 proposals, with mislabelled and out-of-envelope amounts refused at decision time regardless of the partition's record.
+- **Audit rate changes a tag, not what runs.** `audit_rate_0` and `audit_rate_20` execute the same operations with the same outcomes, by construction: the harness labels every redeemed operation, so the audit draw decides only whether 76 of those labels carry `AUDIT` rather than `AUTONOMOUS` provenance. The two `trace.jsonl` files are identical only because seed 1 never qualifies in either. The benefit of auditing (a label on an execution that would otherwise have none, and with it a defection the ordinary outcome stream would miss) is not modelled.
+- **Outstanding tokens are refused.** Tokens outstanding across a suspension, churn, or loss of autonomy are refused at redemption in every v2 scenario where a partition qualifies (4–23 per 10 runs; 0 in `never_qualifies` and `censoring`, where nothing qualifies). The count includes budget refusals at redemption: 7 of the 19 in `risk_envelopes` are `BUDGET_EXCEEDED`. The legacy comparator refuses none, by construction, because its gateway has no live checks; that shows baseline gap 2 rather than measuring it.
+- **Risk scope denies regardless of evidence.** 925 denials in `risk_envelopes` across 4000 proposals, with mislabelled and out-of-envelope amounts refused at decision time regardless of the partition's record.
 - **Suspension is permanent without a human.** In `stable`, 7 of 10 seeds end suspended because a severe failure occurred (3 % failures × 10 % severe over ~160 autonomous operations). That is the policy as written. `suspension_cycle` shows the release path: 18 suspensions, 18 releases, 8 requalifications within the horizon.
 
 ## Artifacts and manifest

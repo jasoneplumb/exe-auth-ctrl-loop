@@ -80,9 +80,9 @@ across an MCP `tools/call`.
 | --- | --- |
 | **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
-| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 203 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit (`results/manifest.json`). Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 203 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit on macOS with Python 3.14 (`results/manifest.json`); CI checks only a reduced-size rerun. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
-| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. When the gateway is given the live evidence store, policy, and lifecycle, a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy is refused at redemption; see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md) and the [production trust boundary](#production-trust-boundary). |
+| **Limitations** | In-process only: the gateway shares an address space with its caller, token consumption is serialized by an in-process lock rather than a transactional store, the ledger is an in-memory hash chain, and evidence is not persisted. Only when the gateway is given the live evidence store, policy, and lifecycle is a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy refused at redemption, and a loss of autonomy is seen only after a later decision has recorded it; without them the gateway checks only the token. Human approval and release are not authenticated, and non-finite or negative amounts get past risk envelopes and budgets. The simulation harness wires the components differently from the shipped loop; see [experiments/README.md](experiments/README.md), [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md), the [claims matrix](docs/paper-v2/claims-matrix.md), and the [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
 
@@ -159,23 +159,27 @@ A receiving server recomputes the call digest from the tool name and arguments i
 received. Edited arguments, a substituted tool, a forged or stripped signature, and an
 expired authorization each deny.
 
+Verification is stateless: the server does not redeem or consume the gateway token, so a
+block verifies again until it expires, even after its token has been consumed or revoked.
+The audit flag also tells the server, before execution, which calls are audited.
+
 See [docs/mcp-extension.md](docs/mcp-extension.md) for the key specification and the
 verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 
 ## Safety invariants
 
-1. **No capability, no execution.** Registered handlers are reachable only through the gateway.
+1. **No capability, no execution.** In the executor's path, a registered handler runs only after the gateway redeems a token for that exact proposal. This is a property of that path, not of the process: the gateway runs whichever handler its caller passes, `ToolRegistry.execute` is public, and the MCP binding verifies a block without redeeming a token.
 2. **Models do not grant authority.** OpenAI and Claude outputs are untrusted requests.
-3. **Exact scope.** A token binds the proposal digest, tool, effects, policy, partition, evidence snapshot, expiry, and one use. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
+3. **Exact scope.** A token records the proposal digest, tool, effects, policy version, partition, evidence id and version, and expiry, and is consumed once. Redemption always checks the digest, tool, effects, and expiry. It checks the policy version only when the gateway has a policy provider and the evidence id only when it has an evidence store, and it compares the evidence version only to decide whether a human approval saw the current snapshot. Single use is per token: one decision can be issued several tokens, and because `issue()` does not check that a decision came from the controller, any in-process caller holding one can mint more. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
 4. **No post-approval mutation.** Changed arguments or tools require a new proposal and decision.
 5. **Conservative authority.** Autonomous execution requires the lower bound to clear the applicable risk threshold.
 6. **Sparse or stale evidence fails closed.** Missing, immature, invalid, suspended, mismatched, or expired evidence requires approval.
 7. **Early proposals cannot execute.** Draft and clarification-needed states never reach Claude.
-8. **Severe failures contract immediately.** The exact cross-model partition is suspended before ordinary updating.
-9. **Audit selection precedes outcomes.** The audit draw is realized in the decision and committed to the ledger before a token is issued; if the commit fails, the step is refused. Independence from results holds given a trusted RNG and controller; it is an ordering guarantee, not a proof against a malicious host (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
-10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence.
+8. **Severe failures contract immediately.** The exact cross-model partition is suspended before ordinary updating. Exceptions: a retired partition only logs the failure, and a partition on a superseded policy version is retired instead of suspended.
+9. **Audit selection precedes outcomes.** The audit draw is realized in the decision, and the executor commits it to the ledger before asking for a token; if the commit fails, the step is refused. The order is the executor's: `issue()` does not itself require a commit. Independence from results holds given a trusted RNG and controller; it is an ordering guarantee, not a proof against a malicious host (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
+10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence. The provenance is whatever the caller passes when it freezes a trial; the shadow log trusts it.
 11. **Provider diversity is not independence.** End-to-end evidence is collected for the combined pipeline.
-12. **Authorization provenance is tamper-evident within the chain.** `EventLedger` is an in-memory hash chain: `verify()` detects edits to retained events, and does not detect truncation of the tail or wholesale replacement by whoever holds the chain. External anchoring would close that gap and is demonstrated, not provided.
+12. **Authorization provenance is hash-chained within the process.** `EventLedger` is an in-memory hash chain: `verify()` detects an edit to a retained event only if the later entries are not re-hashed (the hash is unkeyed SHA-256, and sequence numbers are not checked for gaps), and does not detect truncation of the tail or wholesale replacement by whoever holds the chain. External anchoring would close that gap and is demonstrated, not provided.
 
 ## Evidence partition
 
@@ -220,14 +224,19 @@ lower_bound = BetaMixtureCS(successes, failures, alpha)
 ```
 
 See [docs/v2/statistical-method.md](docs/v2/statistical-method.md) for the
-proposition, its assumptions (i.i.d. labels within an epoch, no selection of
-trials, conservative censoring, oracle validity), and reference vectors. The
-v0.2.0 one-sided Wilson bound is retained as `estimator = "wilson_legacy"` for
-comparison only; it is a fixed-sample interval and exceeds its nominal error
-rate when read repeatedly. Neither bound protects against an agent that behaves
-until it qualifies and then defects; that is the job of the deterministic
-controls (per-operation checks, single-use tokens, suspension), not the
-statistics.
+proposition, its assumptions (labels i.i.d. within an epoch in the order they
+enter the count, no selection of trials, conservative censoring, oracle
+validity), and reference vectors. Two of those assumptions are easy to break in
+use: latency that depends on the label (failures counted later than successes)
+voids the guarantee, and a label still pending before its deadline is outside the
+count, so withholding negative labels raises the bound until the deadline passes.
+The error budget `alpha` restarts with every release and every successor
+partition. The v0.2.0 one-sided Wilson bound is retained as
+`estimator = "wilson_legacy"` for comparison only; it is a fixed-sample interval
+and exceeds its nominal error rate when read repeatedly. Neither bound protects
+against an agent that behaves until it qualifies and then defects; that is the
+job of the deterministic controls (per-operation checks, single-use tokens,
+suspension), not the statistics.
 
 Autonomous execution requires:
 
@@ -326,7 +335,13 @@ and gateway with a synthetic proposal stream from an empty evidence store, and
 defection, turnover, audit rates, risk envelopes, censoring, oracle noise, a
 suspension/release cycle, and two comparators). It is a simulation: read
 [experiments/README.md](experiments/README.md) for what is modelled, where the
-adjudication is unrealistically strong, and what the numbers do not show.
+adjudication is unrealistically strong, and what the numbers do not show. The
+harness also wires the components differently from the shipped loop: it labels
+every autonomous execution, never commits decisions to the ledger, freezes
+audits after execution, and runs human-approved executions without the gateway.
+The speed at which the gate withdraws autonomy under defection and shift, and
+the finding that audit rate changes nothing that executes, depend on the first
+of these.
 
 ```sh
 python -m experiments.run --all --output results
@@ -338,7 +353,15 @@ When a decision routes to `human_approval`, `ClaudeExecutionAgent.run()`
 returns without invoking the handler. A reviewed caller can restart with the
 exact proposal ID in `approved_proposal_ids`. Denials, draft states, and
 clarification requests cannot be overridden by that mechanism; they require a
-corrected proposal or policy change.
+corrected proposal or policy change. The approval is not authenticated: whoever
+calls `run()` with that list is treated as the reviewer, and the token records
+only a `human_approved` flag. A lifecycle release likewise accepts any non-empty
+actor name.
+
+The loop does not freeze human-routed proposals as shadow trials. A host that
+wants a partition to earn evidence from an empty store must freeze each one with
+`ShadowEvidenceLog.freeze` before review, as the simulation harness does (see
+[docs/v2/shadow-evidence.md](docs/v2/shadow-evidence.md)).
 
 An `audit` route is not a human gate. It executes unattended like
 `autonomous`; what the pre-outcome draw selects is which executions get an
@@ -381,6 +404,10 @@ This remains an in-process prototype. A production deployment should:
 - use durable append-only storage and cryptographic tool receipts, and anchor
   the ledger head somewhere the controller cannot write;
 - authenticate human approvals with role and scope checks;
+- accept at `issue()` only decisions the controller produced, not any decision
+  object that names the proposal and an executing route;
+- carry a suspension to every successor partition, including one created by a
+  policy-version change;
 - enforce idempotency and replay protection at each external service;
 - isolate Claude code or shell execution in an OS sandbox;
 - independently verify outcomes through readback, tests, or service receipts;

@@ -11,7 +11,7 @@ Scope: the lifecycle and evidence contract in `spec.md`. Prototype scope: single
 | Tool handlers and adapters | Trusted to run only behind the gateway; their outputs are untrusted data | Output text never grants authority |
 | Adjudication oracle and human reviewers | **Fallible** | Labels can be wrong or late. Handled by A5, conservative censoring, and a required scope statement. Not assumed correct |
 | Audit RNG | Trusted host randomness | Default `random.SystemRandom`. A seeded RNG (tests, experiments) is deterministic and MUST be labeled so; "independent of outcomes" holds only if the draw is recorded before any outcome and the RNG state is not model-observable |
-| Ledger (`EventLedger`) | Hash chain, **in-memory** | Detects in-chain edits. Does not detect truncation, replacement of the whole chain, or tampering by the host. No external anchor |
+| Ledger (`EventLedger`) | Hash chain, **in-memory** | Detects an in-chain edit only if the later entries are not re-hashed (unkeyed SHA-256, no sequence-gap check). Does not detect truncation, replacement of the whole chain, or tampering by the host. No external anchor |
 | Clock | Trusted | Skew affects expiry and staleness |
 
 ## Assets and threats
@@ -19,13 +19,13 @@ Scope: the lifecycle and evidence contract in `spec.md`. Prototype scope: single
 | ID | Threat | Containment (layer) | Residual |
 |---|---|---|---|
 | TM-1 | Model asserts or forges authority in text | Controller-only routing; tokens issued by gateway (deterministic) | None within trust boundary |
-| TM-2 | Argument drift after approval | Digest binding, redeem-time check (deterministic) | Value-level limits need Step 06 envelopes |
+| TM-2 | Argument drift after approval | Digest binding, redeem-time check (deterministic) | Value-level limits come from Step 06 envelopes, which `NaN` and negative amounts get past (#16) |
 | TM-3 | Selective labels: human filtering inflates successes | Provenance rules; `HUMAN_APPROVED` excluded (spec §3) | Reviewer-induced shift in the proposal process (A3) |
 | TM-4 | Optional stopping / repeated looks | Time-uniform bound (statistical, Step 04) | Valid only under A1-A5 |
 | TM-5 | Cold start used as bypass (human approves everything, then claims history) | `n=0` blocked; only admissible shadow/audit/autonomous evidence counts | Shadow oracle error (A5) |
-| TM-6 | Suspension laundering via config churn | Successor inherits `lineage_suspended` (spec §2) | Requires lineage tracking in a durable store |
-| TM-7 | Stale or replayed token after suspension or policy change | Redemption-time checks (Step 05) | Not enforced in baseline code (gap 2) |
-| TM-8 | Concurrent double redemption | Atomic consume (Step 05) | Not enforced in baseline code |
+| TM-6 | Suspension laundering via config churn | Successor inherits `lineage_suspended` (spec §2) | Only `on_churn` carries the flag: a successor created by a policy-version change starts without it, so the suspension clears with no human release (claims matrix L12, open). Lineage is in memory; production needs it in a durable store |
+| TM-7 | Stale or replayed token after suspension or policy change | Redemption-time checks (Step 05) | Covers only the live state the gateway was given (evidence store, policy provider, lifecycle guard); without them, expiry and revocation only |
+| TM-8 | Concurrent double redemption | Atomic consume (Step 05) | In-process lock: no claim across processes or a restart. The concurrency tests do not detect the lock's removal (#17) |
 | TM-9 | Strategic defection after qualification | Per-operation checks, risk envelopes, severe-failure suspension (deterministic) | **Not statistically bounded.** Damage up to envelope and detection delay |
 | TM-10 | Adaptive agent biases which proposals are shadowed or audited | Host-owned draw recorded before outcome; A3 | Fails if the agent can influence the draw or the proposal stream composition |
 | TM-11 | Label non-response used to steer the sample | Deadline converts missing labels to `INCONCLUSIVE` (spec §3 rule 5) | Reduced power, reported censoring |
