@@ -43,8 +43,8 @@ and evaluated in a seeded simulation whose artifacts reproduce bit-for-bit
 ### Changed
 
 - `Policy.estimator` defaults to `"beta_mixture"`; `"wilson_legacy"` restores
-  the 0.2.0 bound. The new bound is more conservative at every `n` (60 perfect
-  trials to clear 0.90 instead of 40). Treat the upgrade as a policy-version
+  the 0.2.0 bound. The new bound is more conservative at every `n` (53 perfect
+  trials to clear 0.90 instead of 35). Treat the upgrade as a policy-version
   change.
 - `Route.AUDIT` executes unattended and is labelled afterwards; it is no
   longer a pre-execution human review. `ExecutionStatus.AWAITING_AUDIT` is

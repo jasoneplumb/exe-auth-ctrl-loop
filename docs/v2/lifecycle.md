@@ -14,7 +14,7 @@ Implements spec §9 in `src/exe_auth_ctrl_loop/lifecycle.py` over the evidence f
 
 ## Gate (`QUALIFYING` to `AUTONOMOUS`)
 
-All of: `n >= n_min`; Wilson lower bound at least the policy's bound for the risk class (v1 bound, replaced in Step 04); evidence not older than `max_evidence_age`, measured from the last label or censor time; policy version matches; not lineage-suspended; not retired. An `AUTONOMOUS` partition falls back to `QUALIFYING` on stale evidence (`EVIDENCE_EXPIRED`) or a bound below policy (`GATE_LOST_OUTCOME`), with the reason codes in the ledger.
+All of: `n >= n_min`; `Policy.lower_bound` at least the policy's bound for the risk class (the Beta-mixture confidence sequence by default since Step 04, see `statistical-method.md`; this step shipped with the v1 Wilson bound, now selected only by `estimator = "wilson_legacy"`); evidence not older than `max_evidence_age`, measured from the last label or censor time; policy version matches; not lineage-suspended; not retired. An `AUTONOMOUS` partition falls back to `QUALIFYING` on stale evidence (`EVIDENCE_EXPIRED`) or a bound below policy (`GATE_LOST_OUTCOME`), with the reason codes in the ledger.
 
 ## Transition table
 
@@ -31,7 +31,7 @@ Each state change, retirement, and lineage event is a `lifecycle.transition` led
 
 ## Limits
 
-- An already-issued token is not invalidated by a suspension or retirement; that is Step 05 (baseline gap 2 remains open).
-- The statistical gate is still the fixed-`z` Wilson bound; do not read `AUTONOMOUS` here as the time-uniform guarantee of spec §6 (Step 04).
+- Step 05 closed baseline gap 2 for gateways wired for it (`gateway-redemption.md`). An already-issued token is refused after a suspension or retirement when the gateway holds the evidence store, because the manager marks the snapshot suspended or invalid (check 6). Refusal on lifecycle state, such as leaving `AUTONOMOUS` or lineage suspension, needs the manager attached as a `RedemptionGuard` (check 8). A gateway with neither keeps the v1 behaviour, and the token survives.
+- `AUTONOMOUS` carries the time-uniform guarantee of spec §6 only under the default `beta_mixture` estimator and its assumptions (`statistical-method.md` §3). Under `wilson_legacy` it does not.
 - Severity is supplied by the caller through `record_severe`; nothing detects it. State is in memory, and `refresh` is pull-based (it runs at `evaluate`), so expiry is noticed on the next decision, not by a timer.
 - Churn is reported by the caller; the manager detects only policy-version changes by itself.
