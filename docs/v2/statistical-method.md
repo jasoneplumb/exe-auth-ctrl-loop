@@ -94,7 +94,7 @@ $a = b = 1/2$. Verified in `tests/test_sequential_gate.py` by an independent exa
 | 60 | 0 | 0.1 | 0.9212073855 |
 | 100000 | 1000 | 0.05 | 0.9887198075 |
 
-For comparison, the fixed-sample Wilson bound ($z = 1.96$) at 60/0 is 0.9398 and at 40/0 is 0.9124; the sequential bound is lower at every $n$, which is the price of validity at every look. With the default policy threshold of 0.90, qualification from a perfect record needs 53 trials under the sequential bound (53/0 gives 0.9005, 52/0 gives 0.8988) rather than 35 under Wilson (35/0 gives 0.9011, 34/0 gives 0.8985).
+For comparison with the 40/0 and 60/0 rows above, the fixed-sample Wilson bound ($z = 1.96$) is 0.9124 at 40/0 and 0.9398 at 60/0, against 0.8734 and 0.9106 for the sequential bound; the sequential bound is lower at every $n$, which is the price of validity at every look. With the default policy threshold of 0.90, qualification from a perfect record needs 53 trials under the sequential bound (53/0 gives 0.9005, 52/0 gives 0.8988) rather than 35 under Wilson (35/0 gives 0.9011, 34/0 gives 0.8985).
 
 ## 10. Illustrative simulations
 

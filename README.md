@@ -179,7 +179,7 @@ verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 9. **Audit selection precedes outcomes.** The audit draw is realized in the decision, and the executor commits it to the ledger before asking for a token; if the commit fails, the step is refused. The order is the executor's: `issue()` does not itself require a commit. Independence from results holds given a trusted RNG and controller; it is an ordering guarantee, not a proof against a malicious host (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence. The provenance is whatever the caller passes when it freezes a trial; the shadow log trusts it.
 11. **Provider diversity is not independence.** End-to-end evidence is collected for the combined pipeline.
-12. **Authorization provenance is tamper-evident within the chain.** `EventLedger` is an in-memory hash chain: `verify()` detects an edit to a retained event only if the later entries are not re-hashed (the hash is unkeyed SHA-256, and sequence numbers are not checked for gaps), and does not detect truncation of the tail or wholesale replacement by whoever holds the chain. External anchoring would close that gap and is demonstrated, not provided.
+12. **Authorization provenance is hash-chained within the process.** `EventLedger` is an in-memory hash chain: `verify()` detects an edit to a retained event only if the later entries are not re-hashed (the hash is unkeyed SHA-256, and sequence numbers are not checked for gaps), and does not detect truncation of the tail or wholesale replacement by whoever holds the chain. External anchoring would close that gap and is demonstrated, not provided.
 
 ## Evidence partition
 
@@ -404,6 +404,10 @@ This remains an in-process prototype. A production deployment should:
 - use durable append-only storage and cryptographic tool receipts, and anchor
   the ledger head somewhere the controller cannot write;
 - authenticate human approvals with role and scope checks;
+- accept at `issue()` only decisions the controller produced, not any decision
+  object that names the proposal and an executing route;
+- carry a suspension to every successor partition, including one created by a
+  policy-version change;
 - enforce idempotency and replay protection at each external service;
 - isolate Claude code or shell execution in an OS sandbox;
 - independently verify outcomes through readback, tests, or service receipts;

@@ -63,3 +63,13 @@ single process.
 - Ordinary evidence increments (a new label on the same evidence record, with
   the partition still valid, unsuspended, and autonomous) do not invalidate an
   outstanding token. See `docs/v2/gateway-redemption.md` for the exact rule.
+- `issue()` does not check that a decision came from the controller. It accepts
+  any decision object that names the proposal and an executing route, so every
+  in-process party that can reach the gateway is trusted not to construct one.
+- A policy-version change clears a suspension without a human release. The
+  suspended partition is retired, and its successor under the new version
+  starts at `UNESTABLISHED` without the lineage flag; only `on_churn` carries a
+  suspension forward. The successor must still qualify from zero trials.
+- Risk envelopes and sequence budgets assume finite, non-negative amounts.
+  `NaN` passes every bound, a negative value passes a bound with no minimum,
+  and a `NaN` or negative charge corrupts a budget's running total (#16).
