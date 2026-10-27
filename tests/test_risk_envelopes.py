@@ -180,6 +180,35 @@ class HostDerivedRiskTests(RiskBase):
         self.assertEqual(self.controller.evaluate(self.proposal(usd=100.01)).route, Route.DENY)
         self.assertEqual(self.controller.evaluate(self.proposal(usd=-1)).route, Route.DENY)
 
+    def test_non_finite_amounts_have_no_class(self):
+        # every comparison with NaN is false, so unchecked it would satisfy any bound
+        classify = lambda usd: self.risk.risk_class(  # noqa: E731
+            "create_refund", {"usd": usd, "payee": "acct-100"}
+        )
+        self.seed("low")
+        for usd in (float("nan"), float("inf"), float("-inf")):
+            self.assertIsNone(classify(usd))
+            decision = self.controller.evaluate(self.proposal(usd=usd))
+            self.assertEqual(decision.route, Route.DENY)
+            self.assertIn("NO_RISK_ENVELOPE", decision.reason_codes)
+        # an int too large for a float is finite: compared exactly, not raised on
+        self.assertIsNone(classify(10**400))
+
+    def test_omitted_minimum_is_zero_not_unbounded(self):
+        capped = Bound("usd", maximum=100)
+        self.assertFalse(capped.admits({"usd": -500}))
+        self.assertTrue(capped.admits({"usd": 0}))
+        signed = Bound("delta", maximum=100, minimum=-50)
+        self.assertTrue(signed.admits({"delta": -50}))
+        self.assertFalse(signed.admits({"delta": -50.01}))
+
+    def test_bound_validation(self):
+        for limits in ({"maximum": float("nan")}, {"maximum": float("inf")},
+                       {"minimum": float("-inf")}, {"maximum": 5, "minimum": 10},
+                       {"maximum": -5}):
+            with self.subTest(**limits), self.assertRaises(ValueError):
+                Bound("usd", **limits)
+
 
 class SequenceBudgetTests(RiskBase):
     def test_individually_legal_operations_cannot_exceed_the_aggregate(self):
@@ -278,6 +307,25 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(self.run_op(self.proposal(usd=24)), "done")
         self.assertEqual(self.risk.charged("ops", self.key()), (24.0, 1))
 
+    def test_non_finite_negative_or_oversized_charge_is_denied_before_issue(self):
+        # an envelope with no amount bound, so only the budget stands in the way
+        unbounded = (RiskEnvelope("create_refund", "low", 0, frozenset({"refund:write"}),
+                                  (OneOf("payee", PAYEES),)),)
+        self.risk.update("risk-v1", unbounded, (budgets()[0],))
+        self.seed("low")
+        for usd in (float("nan"), float("inf"), float("-inf"), -50, 10**400):
+            bad = self.proposal(usd=usd)
+            decision = self.controller.evaluate(bad)
+            self.assertEqual(decision.route, Route.DENY)
+            self.assertIn("BUDGET_METRIC_ERROR:daily-refunds", decision.reason_codes)
+            with self.assertRaises(PermissionError):
+                self.gateway.issue(decision, bad, self.policy)
+        # nothing was charged, so the running total is intact and still enforced
+        self.assertEqual(self.risk.charged("daily-refunds", self.key()), (0.0, 0))
+        self.assertEqual(self.run_op(self.proposal(usd=240)), "done")
+        decision = self.controller.evaluate(self.proposal(usd=20))
+        self.assertIn("BUDGET_EXCEEDED:daily-refunds", decision.reason_codes)
+
     def test_missing_scope_parameter_is_denied_not_pooled(self):
         self.seed("low")
         p = self.proposal(usd=10)
@@ -294,6 +342,9 @@ class SequenceBudgetTests(RiskBase):
             SequenceBudget("x", frozenset(), "partition", None, 10.0)
         with self.assertRaises(ValueError):
             SequenceBudget("x", frozenset(), "session", "usd", 10.0)
+        for limit in (float("nan"), float("inf"), -1.0):
+            with self.subTest(limit=limit), self.assertRaises(ValueError):
+                SequenceBudget("x", frozenset(), "partition", "usd", limit)
 
 
 class PolicyChangePropagationTests(RiskBase):

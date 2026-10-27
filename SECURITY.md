@@ -70,6 +70,3 @@ single process.
   suspended partition is retired, and its successor under the new version
   starts at `UNESTABLISHED` without the lineage flag; only `on_churn` carries a
   suspension forward. The successor must still qualify from zero trials.
-- Risk envelopes and sequence budgets assume finite, non-negative amounts.
-  `NaN` passes every bound, a negative value passes a bound with no minimum,
-  and a `NaN` or negative charge corrupts a budget's running total (#16).

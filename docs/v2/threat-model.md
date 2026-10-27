@@ -19,7 +19,7 @@ Scope: the lifecycle and evidence contract in `spec.md`. Prototype scope: single
 | ID | Threat | Containment (layer) | Residual |
 |---|---|---|---|
 | TM-1 | Model asserts or forges authority in text | Controller-only routing; tokens issued by gateway (deterministic) | None within trust boundary |
-| TM-2 | Argument drift after approval | Digest binding, redeem-time check (deterministic) | Value-level limits come from Step 06 envelopes, which `NaN` and negative amounts get past (#16) |
+| TM-2 | Argument drift after approval | Digest binding, redeem-time check (deterministic) | Value-level limits come from Step 06 envelopes and cover only the arguments their rules name |
 | TM-3 | Selective labels: human filtering inflates successes | Provenance rules; `HUMAN_APPROVED` excluded (spec §3) | Reviewer-induced shift in the proposal process (A3) |
 | TM-4 | Optional stopping / repeated looks | Time-uniform bound (statistical, Step 04) | Valid only under A1-A5 |
 | TM-5 | Cold start used as bypass (human approves everything, then claims history) | `n=0` blocked; only admissible shadow/audit/autonomous evidence counts | Shadow oracle error (A5) |
