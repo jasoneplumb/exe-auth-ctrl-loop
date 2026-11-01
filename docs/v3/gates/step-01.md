@@ -22,7 +22,7 @@
 | Mutation check of the new test (not a pre-registered criterion; v3 plan §5 rule) | PASS | On a scratch copy, each defect made the suite fail: an untagged MUST, a reintroduced "Pending O-6", a dropped fixture row, `GATE_LOST` widened to all tokens, a duplicate planned-test name, a planned test missing once `tests/test_revocation.py` exists, and O-3 marked closed |
 
 **Design and statistical assumptions:** One design addition, made without a separate owner decision and stated here for review:
-- **New revoking event RV-04 `ORACLE_CHANGED`.** O-2 resets counts when the oracle changes, so an `AUTONOMOUS` partition falls below `n_min` and loses autonomy. Without an event, its tokens would survive until redemption, which breaks spec §5's purpose. Like `GATE_LOST`, it is scoped to evidence-based tokens; approval-based tokens are kept.
+- **New revoking event RV-04 `ORACLE_CHANGED`.** O-2 resets counts when the oracle changes, so an `AUTONOMOUS` partition falls below `n_min` and loses autonomy. Without an event, its tokens would survive until redemption, which breaks spec §5's purpose. Like `GATE_LOST`, it is scoped to evidence-based tokens; approval-based tokens are kept. Raised by the PR #25 review as needing an owner decision; approved by the owner 2026-11-01 and recorded as O-9 in spec §11.
 - `BUDGET_TIGHTENED` and `ENVELOPE_CHANGED`, one row at Step 00, are now RV-09 and RV-10, so each fixture row is one event.
 - `PRINCIPAL_DEACTIVATED` records its cascade (grants, descendant grants, approvals) inside the one event rather than emitting `GRANT_REVOKED` per grant, consistent with the one-occurrence-one-event rule from the PR #23 review.
 - §4 rules 1–2 and §3 rule 2, descriptive at Step 00, are now MUST so they carry step tags.

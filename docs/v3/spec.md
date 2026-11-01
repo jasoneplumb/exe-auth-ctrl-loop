@@ -67,7 +67,7 @@ Every successor partition, including one created by RV-07, MUST get a lineage ed
 
 1. Extension version `0.2`. Signed keys add `audience` (the receiving server's principal id) and `redemption` (`server` or `nonce`). The binding of 0.1 (proposal digest, call digest, decision, token, policy version, expiry, MAC) is kept unchanged.
 2. A tool is **consequential** iff its registered effect set is non-empty. A consequential call MUST be redeemed by the server against the host's token table under §3.2, with the call digest and audience checked inside the transaction, and the host MUST NOT consume a token it bound to MCP (Step 07).
-3. A non-consequential call MAY instead be accepted on verification plus an insert into `nonces(token_id, audience)` under a uniqueness constraint; a failed insert MUST deny, and the token MUST still be in state `issued` at the insert, so revocation applies on this path too (O-5) (Step 07).
+3. A non-consequential call MAY instead be accepted on verification plus an insert into `nonces(token_id, audience)` under a uniqueness constraint; a failed insert MUST deny, and the check that the token is still `issued` and the nonce insert MUST be one `BEGIN IMMEDIATE` transaction (§2 rule 2, as for redemption in §3 rule 2), so a revocation cannot commit between them (O-5) (Step 07).
 4. Inside the redemption transaction the server MUST check that the token's `redemption_channel` is `mcp` and that the block's `audience` equals the stored `mcp_audience` (Step 07).
 5. A server MUST refuse a block whose `audience` is not itself, a block whose version is not exactly `0.2` (allowlist: past and unknown future versions alike), and a block whose token is not `issued` (Step 07).
 
@@ -112,15 +112,16 @@ Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ 
 
 ## 11. Decisions
 
-O-1, O-2, O-5, O-6, O-7 are closed and written into the rules above (§2 rule 5, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 wait on Step 09.
+O-1, O-2, O-5, O-6, O-7, O-9 are closed and written into the rules above (§2 rule 5, §5 RV-04, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 wait on Step 09.
 
 | ID | Statement |
 |---|---|
 | O-1 | **Closed 2026-11-01 (owner): durable, same process.** Not: full service separation; in-process without durability; staged tiers. |
-| O-2 | **Closed 2026-11-01 (owner): new epoch, counts reset.** Each epoch is bound to one oracle; a change opens a new epoch (§7 rules 11–12, RV-04). Not: oracle fields in `PartitionKey`; pooling with a per-oracle report. |
+| O-2 | **Closed 2026-11-01 (owner): new epoch, counts reset.** Each epoch is bound to one oracle; a change opens a new epoch (§7 rules 11–12). Extended at Step 01 by O-9 (RV-04), which the original decision did not include. Not: oracle fields in `PartitionKey`; pooling with a per-oracle report. |
 | O-3 | Open until Step 09. Pending trials: **count as failures until resolved (pessimistic)** (recommended, if Step 09 confirms) vs. outside `n` until the deadline (v0.3.1). |
 | O-4 | Open until Step 09. Multiplicity: **online α spending by partition registration order, recorded in `alpha_ledger`** (recommended) vs. fixed Bonferroni with a declared K in the policy. |
 | O-5 | **Closed 2026-11-01 (owner): nonce-only allowed** for non-consequential MCP calls (§6 rule 3). Not: redemption for every call; verify-only with replay until expiry. |
 | O-6 | **Closed 2026-11-01 (owner): freeze every one** (§7 rule 10). Not: a host-drawn shadow rate; per-partition operator opt-in. |
 | O-7 | **Closed 2026-11-01 (owner): remove in-memory classes in 0.4.0** (§2 rule 5). Not: deprecated shims for one release; a permanent in-memory backend. |
 | O-8 | Open until Step 09. Repeated epochs (L11): **lineage-level α spending across releases** (recommended, if Step 09 confirms) vs. per-epoch α with lifetime rate reported only. |
+| O-9 | **Closed 2026-11-01 (owner), raised at Step 01 review: approve RV-04 as written.** An oracle change (O-2) synchronously revokes the partition's evidence-based tokens; approval-based tokens are kept, as for `GATE_LOST`. Not: revoke every token; no event, leaving it to redemption-time gate recomputation. |

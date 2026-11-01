@@ -71,8 +71,14 @@ class RevocationFixtureTest(unittest.TestCase):
         for r in rows:
             self.assertIn(f"def {r['planned_test']}(", body, r["planned_test"])
 
+    def test_spared_flag_agrees_with_token_kinds(self):
+        for e in EVENTS:
+            spared = e["token_kinds"] == "evidence_based"
+            self.assertEqual(e["spares_approval_tokens"], spared, e["id"])
+
     def test_only_statistical_events_spare_approval_tokens(self):
-        spared = {e["event"] for e in EVENTS if e["token_kinds"] == "evidence_based"}
+        # Sentinel: adding an event that spares approvals needs a decision (spec §11, O-9).
+        spared = {e["event"] for e in EVENTS if e["spares_approval_tokens"]}
         self.assertEqual(spared, {"GATE_LOST", "ORACLE_CHANGED"})
 
     def test_policy_change_is_one_event_that_retires(self):
@@ -107,7 +113,7 @@ class SpecContractTest(unittest.TestCase):
     def test_no_pending_rule_remains_for_a_decided_option(self):
         self.assertNotRegex(SPEC, r"[Pp]ending O-[2567]\b")
         decisions = section(SPEC, 11)
-        for closed in ("O-1", "O-2", "O-5", "O-6", "O-7"):
+        for closed in ("O-1", "O-2", "O-5", "O-6", "O-7", "O-9"):
             self.assertRegex(decisions, rf"\| {closed} \| \*\*Closed \d{{4}}-\d{{2}}-\d{{2}}")
         for still_open in ("O-3", "O-4", "O-8"):
             self.assertRegex(decisions, rf"\| {still_open} \| Open until Step 09")
