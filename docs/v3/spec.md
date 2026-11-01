@@ -104,13 +104,15 @@ Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ 
 
 ## 11. Decisions to confirm
 
+O-1, O-2, O-5, O-6, O-7 are closed. The rules that still read "pending" for O-2, O-5, and O-6 (§6 rule 3, §7 rules 10–11) become normative in Step 01 (gate criterion 3b). O-3, O-4, O-8 wait on Step 09.
+
 | ID | Statement |
 |---|---|
 | O-1 | **Closed 2026-11-01 (owner): durable, same process.** Not: full service separation; in-process without durability; staged tiers. |
-| O-2 | Oracle change: **bind each epoch to one oracle and open a new epoch on change, with counts reset (§7 rule 11)** (recommended; no partition-key change, same no-pooling result) vs. add `oracle_id`, `oracle_version` to `PartitionKey` (a new partition; changes every digest). |
+| O-2 | **Closed 2026-11-01 (owner): new epoch, counts reset.** Oracle change: **bind each epoch to one oracle and open a new epoch on change, with counts reset (§7 rule 11)** (recommended; no partition-key change, same no-pooling result) vs. add `oracle_id`, `oracle_version` to `PartitionKey` (a new partition; changes every digest). |
 | O-3 | Pending trials: **count as failures until resolved (pessimistic)** (recommended, if Step 09 confirms) vs. outside `n` until the deadline (v0.3.1). |
 | O-4 | Multiplicity: **online α spending by partition registration order, recorded in `alpha_ledger`** (recommended) vs. fixed Bonferroni with a declared K in the policy. |
-| O-5 | Non-consequential MCP calls: **nonce-only acceptance allowed** (recommended) vs. server-side redemption for every call. |
-| O-6 | Shadow selection: **freeze every human-routed proposal on a non-autonomous partition** (recommended; no selection, A3 by construction) vs. a host-drawn shadow rate committed with the decision. |
-| O-7 | Compatibility: **remove in-memory classes in 0.4.0** (recommended; 0.x, one code path) vs. keep them as deprecated shims for one release. |
+| O-5 | **Closed 2026-11-01 (owner): nonce-only allowed.** Non-consequential MCP calls: **nonce-only acceptance allowed** (recommended) vs. server-side redemption for every call. |
+| O-6 | **Closed 2026-11-01 (owner): freeze every one.** Shadow selection: **freeze every human-routed proposal on a non-autonomous partition** (recommended; no selection, A3 by construction) vs. a host-drawn shadow rate committed with the decision. |
+| O-7 | **Closed 2026-11-01 (owner): remove in 0.4.0.** Compatibility: **remove in-memory classes in 0.4.0** (recommended; 0.x, one code path) vs. keep them as deprecated shims for one release. |
 | O-8 | Repeated epochs (L11): **lineage-level α spending across releases** (recommended, if Step 09 confirms) vs. per-epoch α with lifetime rate reported only. |
