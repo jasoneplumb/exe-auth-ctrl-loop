@@ -4,7 +4,7 @@ Status: draft contract, written at Step 00 alongside `plan.md`; Step 01 finalize
 
 ## 1. Scope and trust boundary (replaces v2 §1)
 
-- Models produce proposals and requests only. They never grant authority, and no object handed to the agent side MUST contain or reach a handler, the handler table, the token table, or a signing key.
+- Models produce proposals and requests only. They never grant authority. An object supplied to the agent side MUST NOT contain or reach a handler, the handler table, the token table, or a signing key.
 - The controller, gateway, lifecycle, evidence intake, and store are one trust domain, the **host**, running in one process over one SQLite database on one host.
 - v3 guarantees are **durable**: they hold across threads, across OS processes sharing the database file, and across restarts. They do not hold across hosts, and they do not hold against code running inside the host process (§4).
 - Separating the host from the agent into different processes or hosts is a production requirement, stated, not provided (O-1).
@@ -20,10 +20,13 @@ Status: draft contract, written at Step 00 alongside `plan.md`; Step 01 finalize
 
 Token states: `issued`, `revoked`, `consumed`, `handler_started`, `handler_completed`, `handler_failed`. Legal transitions: `issued → revoked`, `issued → consumed → handler_started → handler_completed | handler_failed`. Nothing leaves `revoked`, `handler_completed`, or `handler_failed`.
 
+Each token row records, besides the v0.3.1 token fields: `state`, `decision_id` (unique), `grant_id`, `requesting_principal`, `redemption_channel ∈ {local, mcp}`, and `mcp_audience` (null iff the channel is `local`). All are fixed at issue.
+
 1. `issue()` MUST refuse a decision that is not recorded in `decisions` with the same `decision_id`, `proposal_digest`, and route. Commit-before-issue is enforced by the gateway.
 2. Redemption is one transaction: every check in `docs/v2/gateway-redemption.md` (checks 1–8), the gate recomputation in §5, and `UPDATE tokens SET state='consumed' WHERE token_id=? AND state='issued'`. The redemption succeeds iff that update affects exactly one row and the transaction commits. The commit is the linearization point.
-3. The handler runs after the commit. `handler_started` is written before the call and `handler_completed` or `handler_failed` after it, each in its own transaction. A token left in `handler_started` after a restart means the effect is unknown; it MUST NOT be re-run.
-4. One decision MAY issue at most one token (closes C2's "several tokens from one decision").
+3. The handler runs after the commit. `handler_started` is written before the call and `handler_completed` or `handler_failed` after it, each in its own transaction. A token left in `handler_started` after a restart means the effect is unknown; it MUST NOT be re-run, and the store MUST expose such tokens to an operator query (`effect_unknown()`), so they are triaged rather than silently left.
+4. Each decision MUST produce at most one token. `issue()` MUST refuse a second request for a `decision_id` that already has a token row, whatever that row's state; the unique constraint on `decision_id` enforces it at the database. Closes C2's "several tokens from one decision".
+5. `ExecutionGateway.execute()` MUST refuse a token whose `redemption_channel` is `mcp`. Only §6 redemption consumes it.
 
 ## 4. Execution boundary
 
@@ -33,17 +36,17 @@ Token states: `issued`, `revoked`, `consumed`, `handler_started`, `handler_compl
 
 ## 5. Revoking events (F4)
 
-Each event below MUST, in the same transaction that records it, set `state='revoked'` on every `issued` token in its scope with the event as `revocation_reason`, and append one ledger event naming the count revoked. Redemption checks remain as a second line.
+Each event below MUST, in the same transaction that records it, set `state='revoked'` on every `issued` token in its scope with the event as `revocation_reason`, and append one ledger event naming the count revoked and listing any in-scope tokens already in `handler_started` (effect unknown; not revocable, reported). Redemption checks remain as a second line. One occurrence produces exactly one revoking event: where two rows could describe the same change, the table says which one fires.
 
 | Event | Recorded by | Scope revoked |
 |---|---|---|
 | `SEVERE_FAILURE` (any provenance) | lifecycle | partition, and every partition with a lineage edge from it |
 | `EVIDENCE_INVALIDATED` | evidence store | partition |
-| `GATE_LOST` (an admitted label takes $L_t < r$) | evidence intake, same transaction as the label | evidence-based tokens of the partition |
-| `PARTITION_RETIRED` (policy change or key churn) | lifecycle | partition |
+| `GATE_LOST` (an admitted label takes $L_t < r$) | evidence intake, same transaction as the label | evidence-based tokens of the partition only. Tokens issued on an `Approval` are deliberately kept: an approval does not rest on the statistical gate (as at v0.3.1, `docs/v2/gateway-redemption.md`). Contrast `SEVERE_FAILURE`, which revokes every token |
+| `PARTITION_RETIRED` (key churn of a field other than `policy_version`) | lifecycle | partition |
 | `LINEAGE_SUSPENDED` | lifecycle | successor partition |
-| `POLICY_CHANGED` | policy provider | every token under the old policy version |
-| `EFFECT_PROHIBITED` | policy provider | every token whose effect set intersects the newly prohibited set |
+| `POLICY_CHANGED` (new `policy_version`) | policy provider | every token under the old version. In the same transaction, every partition on the old version is marked retired and gets a lineage edge to its successor key; this is one event, not one `PARTITION_RETIRED` per partition |
+| `EFFECT_PROHIBITED` (prohibited set grows without a version change) | policy provider | every token whose effect set intersects the newly prohibited set |
 | `BUDGET_TIGHTENED` or `ENVELOPE_CHANGED` | risk policy | tokens whose committed proposal the new limits would refuse |
 | `APPROVAL_RESCINDED` | principals | the token issued on that approval |
 | `GRANT_REVOKED` | principals | tokens issued under the grant and under every descendant grant |
@@ -57,8 +60,9 @@ Not revoking, deliberately: an admitted label that leaves $L_t \ge r$; a new pri
 
 1. Extension version `0.2`. Signed keys add `audience` (the receiving server's principal id) and `redemption` (`server` or `nonce`). The binding of 0.1 (proposal digest, call digest, decision, token, policy version, expiry, MAC) is kept unchanged.
 2. A tool is **consequential** iff its registered effect set is non-empty. A consequential call MUST be redeemed by the server against the host's token table under §3.2, with the call digest and audience checked inside the transaction. The host MUST NOT consume a token it bound to MCP.
-3. A non-consequential call MAY be accepted on verification plus an insert into `nonces(token_id, audience)` under a uniqueness constraint; a failed insert denies.
-4. A server MUST refuse a block whose `audience` is not itself, a block of version `0.1`, and a block whose token is not `issued`.
+3. Pending O-5: a non-consequential call MAY be accepted on verification plus an insert into `nonces(token_id, audience)` under a uniqueness constraint; a failed insert denies. If O-5 is decided the other way, rule 2 applies to every call.
+4. Inside the redemption transaction the server MUST check that the token's `redemption_channel` is `mcp` and that the block's `audience` equals the stored `mcp_audience`.
+5. A server MUST refuse a block whose `audience` is not itself, a block whose version is not exactly `0.2` (allowlist: past and unknown future versions alike), and a block whose token is not `issued`.
 
 ## 7. Evidence admission records (extends v2 §3–§5)
 
@@ -73,7 +77,8 @@ Rules (in addition to v2 §3 rules 1–6):
 7. Provenance MUST be derived by the host from the committed decision. A caller cannot assert it.
 8. A label MUST be quarantined if its MAC fails, its oracle is not the epoch's bound oracle (`WRONG_ORACLE`), its principal is not an active `ORACLE`, or its principal recorded a human review of the same trial (`REVIEWER_IS_ORACLE`).
 9. The label deadline is measured on `received_at`. `claimed_at` is recorded and never used for admission.
-10. Every `HUMAN_APPROVAL`-routed proposal on an `UNESTABLISHED` or `QUALIFYING` partition MUST be frozen as `SHADOW` before the approval request is shown (O-6).
+10. Pending O-6 (decided at Step 01; not yet normative): every `HUMAN_APPROVAL`-routed proposal on an `UNESTABLISHED` or `QUALIFYING` partition is frozen as `SHADOW` before the approval request is shown. Alternative: a host-drawn shadow rate committed with the decision.
+11. Opening an epoch (human release, or an oracle change under O-2) MUST reset the partition's counts to zero: no trial or label from an earlier epoch enters a later epoch's bound, so evidence never pools across oracles or across a suspension. The epoch open is recorded in `alpha_ledger` with the α it starts with, so a reset of counts is never a silent reset of the error budget (see O-8).
 
 ## 8. Principals and delegation (new; F5)
 
@@ -102,7 +107,7 @@ Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ 
 | ID | Statement |
 |---|---|
 | O-1 | **Closed 2026-11-01 (owner): durable, same process.** Not: full service separation; in-process without durability; staged tiers. |
-| O-2 | Oracle change: **bind each epoch to one oracle and open a new epoch on change** (recommended; no partition-key change) vs. add `oracle_id`, `oracle_version` to `PartitionKey` (changes every digest). |
+| O-2 | Oracle change: **bind each epoch to one oracle and open a new epoch on change, with counts reset (§7 rule 11)** (recommended; no partition-key change, same no-pooling result) vs. add `oracle_id`, `oracle_version` to `PartitionKey` (a new partition; changes every digest). |
 | O-3 | Pending trials: **count as failures until resolved (pessimistic)** (recommended, if Step 09 confirms) vs. outside `n` until the deadline (v0.3.1). |
 | O-4 | Multiplicity: **online α spending by partition registration order, recorded in `alpha_ledger`** (recommended) vs. fixed Bonferroni with a declared K in the policy. |
 | O-5 | Non-consequential MCP calls: **nonce-only acceptance allowed** (recommended) vs. server-side redemption for every call. |
