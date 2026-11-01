@@ -47,13 +47,13 @@ flowchart LR
     M[MCP server] -->|redeem token_id, call digest, audience| S
 ```
 
-New module boundaries (names provisional, fixed in Step 01):
+New module boundaries (names fixed at Step 01, 2026-11-01; no renames from the Step 00 draft). Each spec §5 event is recorded by the module named in its `revocation_fixture.json` row; `revocation.py` provides the scoped revoke the others call, and records the two policy events itself:
 
 | Module | Owns |
 |---|---|
 | `store.py` | SQLite connection, schema, migrations, `transaction()` (`BEGIN IMMEDIATE`) |
 | `principals.py` | `Principal`, `Grant`, `Approval`, HMAC verification, attenuation check |
-| `revocation.py` | The revoking-event table (spec §5) and the scoped revoke in the event's transaction |
+| `revocation.py` | The scoped revoke run inside the caller's transaction, and the policy events `POLICY_CHANGED` and `EFFECT_PROHIBITED` (RV-07, RV-08) |
 | `tools.py` | Split into `ToolCatalog` (agent-visible) and `HandlerTable` (gateway-only) |
 
 ## 4. Steps
