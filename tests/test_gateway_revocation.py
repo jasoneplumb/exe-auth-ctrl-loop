@@ -11,7 +11,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from _support import forge_token, scratch_store
+from _support import AdapterHandlers, forge_token, issue, run, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -73,7 +73,7 @@ class GatewayBase(unittest.TestCase):
         )
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy
-        , store=self.store.store)
+        , store=self.store.store, handlers=AdapterHandlers())
         self.handler = Handler()
 
     def proposal(self, **kw):
@@ -92,16 +92,16 @@ class GatewayBase(unittest.TestCase):
         self.seed()
         decision = self.controller.evaluate(self.proposal())
         self.assertEqual(decision.route, Route.AUTONOMOUS)
-        return self.gateway.issue(decision, self.proposal(), self.policy)
+        return issue(self.gateway, decision, self.proposal(), self.policy)
 
     def human_token(self):
         decision = self.controller.evaluate(self.proposal())
         self.assertEqual(decision.route, Route.HUMAN_APPROVAL)
-        return self.gateway.issue(decision, self.proposal(), self.policy, human_approved=True)
+        return issue(self.gateway, decision, self.proposal(), self.policy, human_approved=True)
 
     def assert_denied(self, token, fragment, proposal=None):
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, proposal or self.proposal(), self.handler)
+            run(self.gateway, token.token_id, proposal or self.proposal(), self.handler)
         self.assertIn(fragment, str(ctx.exception))
         self.assertEqual(self.handler.calls, 0)
         self.assertFalse(self.gateway.token(token.token_id).used)
@@ -135,7 +135,7 @@ class LiveStateInvalidationTests(GatewayBase):
         ok = Outcome("p-0", OutcomeStatus.ACCEPTABLE, False, "oracle", T0, "d")
         self.store.adjudicate(self.key, ok, autonomous=True)
         self.assertEqual(self.store.get(self.key).version, 2)
-        receipt = self.gateway.execute(token.token_id, self.proposal(), self.handler)
+        receipt = run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertEqual(receipt, "done")
         self.assertEqual(self.handler.calls, 1)
 
@@ -151,7 +151,7 @@ class LiveStateInvalidationTests(GatewayBase):
         self.store.invalidate(self.key, "x")
         self.policy = replace(self.policy, version="pol2")
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("POLICY_CHANGED", str(ctx.exception))
         self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
 
@@ -161,16 +161,18 @@ class LiveStateInvalidationTests(GatewayBase):
         self.store.adjudicate(self.key, severe, autonomous=True)
         self.store.invalidate(self.key, "oracle_recalled")
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("PARTITION_SUSPENDED", str(ctx.exception))
         self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
 
     def test_gateway_without_live_state_keeps_v1_semantics(self):
-        self.gateway = ExecutionGateway(self.clock, store=scratch_store())
+        self.gateway = ExecutionGateway(
+            self.clock, store=scratch_store(), handlers=AdapterHandlers()
+        )
         token = self.autonomous_token()
         self.store.invalidate(self.key, "x")
         self.policy = replace(self.policy, version="pol2")
-        receipt = self.gateway.execute(token.token_id, self.proposal(), self.handler)
+        receipt = run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertEqual(receipt, "done")
 
 
@@ -180,11 +182,11 @@ class HumanApprovalTests(GatewayBase):
         decision = self.controller.evaluate(proposal)
         self.assertEqual(decision.route, Route.DENY)
         with self.assertRaises(PermissionError):
-            self.gateway.issue(decision, proposal, self.policy, human_approved=True)
+            issue(self.gateway, decision, proposal, self.policy, human_approved=True)
         # a forged non-DENY decision for the same proposal is refused on the effect alone
         forged = replace(decision, route=Route.HUMAN_APPROVAL)
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.issue(forged, proposal, self.policy, human_approved=True)
+            issue(self.gateway, forged, proposal, self.policy, human_approved=True)
         self.assertIn("prohibited", str(ctx.exception))
 
     def test_human_token_dies_with_policy_change(self):
@@ -199,7 +201,7 @@ class HumanApprovalTests(GatewayBase):
             self.gateway.token(token.token_id).revocation_reason, "approver rescinded"
         )
         with self.assertRaises(PermissionError):
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertEqual(self.handler.calls, 0)
 
     def test_human_approval_before_suspension_is_refused(self):
@@ -215,15 +217,15 @@ class HumanApprovalTests(GatewayBase):
         self.store.adjudicate(self.key, severe, autonomous=False)
         decision = self.controller.evaluate(self.proposal())
         self.assertIn("PARTITION_SUSPENDED", decision.reason_codes)
-        token = self.gateway.issue(decision, self.proposal(), self.policy, human_approved=True)
-        receipt = self.gateway.execute(token.token_id, self.proposal(), self.handler)
+        token = issue(self.gateway, decision, self.proposal(), self.policy, human_approved=True)
+        receipt = run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertEqual(receipt, "done")
 
     def test_issue_refuses_a_stale_policy_object(self):
         self.seed()
         decision = self.controller.evaluate(self.proposal())
         with self.assertRaises(PermissionError):
-            self.gateway.issue(decision, self.proposal(), replace(self.policy, version="old"))
+            issue(self.gateway, decision, self.proposal(), replace(self.policy, version="old"))
 
 
 class ScopeAndExpiryTests(GatewayBase):
@@ -272,14 +274,14 @@ class ConcurrencyTests(GatewayBase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(ParkingGuard(),),
-            store=self.store.store,
+            store=self.store.store, handlers=AdapterHandlers(),
         )
         token = self.autonomous_token()
         outcomes: list[str] = []
 
         def redeem():
             try:
-                self.gateway.execute(token.token_id, self.proposal(), self.handler)
+                run(self.gateway, token.token_id, self.proposal(), self.handler)
                 outcomes.append("ok")
             except PermissionError:
                 outcomes.append("denied")
@@ -308,7 +310,7 @@ class ConcurrencyTests(GatewayBase):
         def redeem():
             barrier.wait()
             try:
-                self.gateway.execute(token.token_id, self.proposal(), self.handler)
+                run(self.gateway, token.token_id, self.proposal(), self.handler)
                 result = "ok"
             except PermissionError:
                 result = "denied"
@@ -334,13 +336,13 @@ class ConcurrencyTests(GatewayBase):
             return "slow"
 
         first = threading.Thread(
-            target=lambda: self.gateway.execute(token.token_id, self.proposal(), slow_handler)
+            target=lambda: run(self.gateway, token.token_id, self.proposal(), slow_handler)
         )
         first.start()
         self.assertTrue(entered.wait(timeout=5))
         # The first redemption is inside its handler; a second one must already be refused
         with self.assertRaises(PermissionError):
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         release.set()
         first.join()
         self.assertEqual(self.handler.calls, 0)
@@ -353,7 +355,7 @@ class ConcurrencyTests(GatewayBase):
         def redeem():
             barrier.wait()
             try:
-                self.gateway.execute(token.token_id, self.proposal(), self.handler)
+                run(self.gateway, token.token_id, self.proposal(), self.handler)
                 outcome.append("ok")
             except PermissionError:
                 outcome.append("denied")
@@ -380,10 +382,10 @@ class ConcurrencyTests(GatewayBase):
             raise RuntimeError("downstream failed")
 
         with self.assertRaises(RuntimeError):
-            self.gateway.execute(token.token_id, self.proposal(), failing)
+            run(self.gateway, token.token_id, self.proposal(), failing)
         self.assertTrue(self.gateway.token(token.token_id).used)
         with self.assertRaises(PermissionError):
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
 
 
 class LifecycleGuardTests(unittest.TestCase):
@@ -403,7 +405,7 @@ class LifecycleGuardTests(unittest.TestCase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.manager.policy,
             guards=(self.manager,),
-            store=self.store.store,
+            store=self.store.store, handlers=AdapterHandlers(),
         )
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",
@@ -431,13 +433,13 @@ class LifecycleGuardTests(unittest.TestCase):
         self.add(60)
         decision = self.manager.evaluate(self.proposal())
         self.assertEqual(decision.route, Route.AUTONOMOUS)
-        return self.gateway.issue(decision, self.proposal(), self.policy)
+        return issue(self.gateway, decision, self.proposal(), self.policy)
 
     def test_lifecycle_suspension_denies_outstanding_token(self):
         token = self.autonomous_token()
         self.manager.record_severe(self.key, Provenance.AUDIT, "bad")
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("PARTITION_SUSPENDED", str(ctx.exception))
         self.assertIn("LIFECYCLE_SUSPENDED", str(ctx.exception))
         self.assertEqual(self.handler.calls, 0)
@@ -447,13 +449,13 @@ class LifecycleGuardTests(unittest.TestCase):
         self.add(10, TrialLabel.NEGATIVE)
         self.manager.evaluate(self.proposal())  # next decision notices the bound fell
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("LIFECYCLE_QUALIFYING", str(ctx.exception))
 
     def test_ordinary_increment_without_reevaluation_keeps_token_good(self):
         token = self.autonomous_token()
         self.add(1)
-        receipt = self.gateway.execute(token.token_id, self.proposal(), self.handler)
+        receipt = run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertEqual(receipt, "done")
 
     def test_config_churn_denies_old_partition_token(self):
@@ -461,24 +463,24 @@ class LifecycleGuardTests(unittest.TestCase):
         new = replace(self.key, tool_version="refund-api-v3")
         self.manager.on_churn(self.key, new)
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("PARTITION_RETIRED", str(ctx.exception))
 
     def test_policy_change_via_manager_denies(self):
         token = self.autonomous_token()
         self.manager.policy = replace(self.policy, version="pol2")
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("POLICY_CHANGED", str(ctx.exception))
 
     def test_human_token_survives_qualifying_but_not_suspension(self):
         decision = self.manager.evaluate(self.proposal())
         self.assertEqual(decision.route, Route.HUMAN_APPROVAL)
-        token = self.gateway.issue(decision, self.proposal(), self.policy, human_approved=True)
+        token = issue(self.gateway, decision, self.proposal(), self.policy, human_approved=True)
         self.assertEqual(self.gateway.redemption_blockers(token, self.proposal()), ())
         self.manager.record_severe(self.key, Provenance.HUMAN_APPROVED, "bad")
         with self.assertRaises(PermissionError):
-            self.gateway.execute(token.token_id, self.proposal(), self.handler)
+            run(self.gateway, token.token_id, self.proposal(), self.handler)
 
 
 if __name__ == "__main__":

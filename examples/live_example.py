@@ -17,9 +17,10 @@ from exe_auth_ctrl_loop.authority import (
     Policy,
 )
 from exe_auth_ctrl_loop.executor import ClaudeExecutionAgent
+from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.providers import OpenAIProposalGenerator
 from exe_auth_ctrl_loop.store import Store
-from exe_auth_ctrl_loop.tools import ToolDefinition, ToolRegistry
+from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
 
 def required_env(name: str) -> str:
@@ -33,8 +34,8 @@ openai_model = required_env("OPENAI_MODEL")
 anthropic_model = required_env("ANTHROPIC_MODEL")
 now = datetime.now(timezone.utc)
 
-registry = ToolRegistry()
-registry.register(ToolDefinition(
+catalog = ToolCatalog()
+catalog.register(ToolDefinition(
     name="record_refund_request",
     description="Record one simulated refund request; this demo does not move money.",
     input_schema={
@@ -50,13 +51,17 @@ registry.register(ToolDefinition(
     version="demo-refund-v1",
     task_category="bounded_demo_refund",
     risk_class="low",
-    handler=lambda args: {"receipt_id": "demo-r-1", "recorded": dict(args)},
 ))
+# Only the gateway holds the handler table; the models' side gets the catalog.
+handlers = HandlerTable(catalog)
+handlers.register(
+    "record_refund_request", lambda args: {"receipt_id": "demo-r-1", "recorded": dict(args)}
+)
 
 generator = OpenAIProposalGenerator(
     model=openai_model,
     prompt_version="proposal-prompt-v1",
-    registry=registry,
+    catalog=catalog,
 )
 bundle = generator.generate(
     "Record a simulated $24 refund request for order 4815.",
@@ -94,8 +99,10 @@ executor = ClaudeExecutionAgent(
     model=anthropic_model,
     prompt_version="execution-prompt-v1",
     authority=AuthorityController(evidence, policy),
-    gateway=ExecutionGateway(store=evidence.store),
-    registry=registry,
+    gateway=ExecutionGateway(store=evidence.store, handlers=handlers),
+    catalog=catalog,
+    # every decision is committed to the ledger before the gateway will issue for it
+    commit=EventLedger(evidence.store).commit_decision,
 )
 run = executor.run(bundle)
 print({

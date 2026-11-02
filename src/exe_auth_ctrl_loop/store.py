@@ -24,7 +24,7 @@ from typing import Any, Iterator
 # constraint: the tables whose rows are history. UPDATE and DELETE on them are refused by
 # triggers (spec §2 rule 3). `lifecycle` is deliberately absent: it is the current state
 # of a state machine, and every change to it is a ledger event.
-APPEND_ONLY_TABLES = (
+_V1_APPEND_ONLY = (
     "ledger",
     "ledger_anchor",
     "evidence_snapshots",
@@ -127,7 +127,7 @@ _SCHEMA_V1 = (
     "CREATE INDEX trials_partition ON trials (partition, frozen_sequence)",
     *(
         statement
-        for table in APPEND_ONLY_TABLES
+        for table in _V1_APPEND_ONLY
         for statement in (
             f"""CREATE TRIGGER {table}_no_update BEFORE UPDATE ON {table}
                 BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END""",
@@ -193,9 +193,28 @@ _SCHEMA_V2 = (
         BEGIN SELECT RAISE(ABORT, 'tokens are never deleted'); END""",
 )
 
+# v3 Step 04: committed decisions (docs/v3/spec.md §3 rule 1). Written only by
+# EventLedger.commit_decision, in the same transaction as the ledger event, and read by
+# ExecutionGateway.issue(), which refuses any decision without a matching row.
+_SCHEMA_V3 = (
+    """CREATE TABLE decisions (
+        decision_id TEXT PRIMARY KEY,
+        proposal_digest TEXT NOT NULL,
+        route TEXT NOT NULL,
+        ledger_sequence INTEGER NOT NULL
+    )""",
+    """CREATE TRIGGER decisions_no_update BEFORE UPDATE ON decisions
+        BEGIN SELECT RAISE(ABORT, 'decisions is append-only'); END""",
+    """CREATE TRIGGER decisions_no_delete BEFORE DELETE ON decisions
+        BEGIN SELECT RAISE(ABORT, 'decisions is append-only'); END""",
+)
+
+# constraint: every table whose rows are history, across all schema versions
+APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions")
+
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
 
 
 class StoreError(RuntimeError):

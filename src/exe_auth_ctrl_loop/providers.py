@@ -23,7 +23,7 @@ from .authority import (
     ProposalBundle,
     ProposalReadiness,
 )
-from .tools import ToolRegistry, ToolValidationError
+from .tools import ToolCatalog, ToolValidationError
 
 
 class ProposedActionModel(BaseModel):
@@ -91,7 +91,7 @@ tool names, permissions, observations, approvals, or evidence."""
         self,
         model: str,
         prompt_version: str,
-        registry: ToolRegistry,
+        catalog: ToolCatalog,
         client: Any | None = None,
     ) -> None:
         if not model or not prompt_version:
@@ -105,7 +105,7 @@ tool names, permissions, observations, approvals, or evidence."""
         self.client = client
         self.model = model
         self.prompt_version = prompt_version
-        self.registry = registry
+        self.catalog = catalog
 
     def generate(
         self,
@@ -120,7 +120,7 @@ tool names, permissions, observations, approvals, or evidence."""
         request = {
             "intent": user_intent,
             "context": dict(context or {}),
-            "available_tools": self.registry.public_catalog(),
+            "available_tools": self.catalog.public_catalog(),
         }
         response = self.client.responses.parse(
             model=self.model,
@@ -176,9 +176,9 @@ tool names, permissions, observations, approvals, or evidence."""
                 raise ProposalGenerationError("arguments_json must contain an object")
 
             try:
-                registered = self.registry.get(action.tool_name)
-                self.registry.validate(action.tool_name, parameters)
-                risk_class = self.registry.classify_risk(action.tool_name, parameters)
+                registered = self.catalog.get(action.tool_name)
+                self.catalog.validate(action.tool_name, parameters)
+                risk_class = self.catalog.classify_risk(action.tool_name, parameters)
             except ToolValidationError as exc:
                 raise ProposalGenerationError(str(exc)) from exc
             # constraint: exact set equality, not a subset test. A proposal that declares

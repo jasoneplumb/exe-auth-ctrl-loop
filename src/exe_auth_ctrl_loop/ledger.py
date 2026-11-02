@@ -158,7 +158,24 @@ class EventLedger:
         context: Called by the executor between evaluate() and issue(). If this raises,
                  the executor refuses the step, so no handler runs on an uncommitted
                  decision (docs/v2/audit-commitment.md, event-order contract).
+        effect: Since v3 Step 04 this also writes the decision's row in `decisions`, in the
+                same transaction as the event. ExecutionGateway.issue() refuses a decision
+                without that row, so commit-before-issue is enforced by the gateway, not by
+                the caller's convention (C20), and a Decision built by hand cannot be
+                issued against (L7).
+        constraint: A decision is committed once; a second commit of the same id fails on
+                    the table's primary key and appends nothing.
         """
+        with self.store.transaction() as conn:
+            event = self._append_decision(decision, proposal)
+            conn.execute(
+                "INSERT INTO decisions VALUES (?, ?, ?, ?)",
+                (decision.decision_id, proposal.proposal_digest, decision.route.value,
+                 event.sequence),
+            )
+        return event
+
+    def _append_decision(self, decision: Decision, proposal: Proposal) -> LedgerEvent:
         return self.append(
             "authority.decision.committed",
             decision.proposal_id,

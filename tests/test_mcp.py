@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from _support import scratch_store
+from _support import AdapterHandlers, issue, scratch_store
 
 from exe_auth_ctrl_loop import mcp
 from exe_auth_ctrl_loop.authority import (
@@ -100,13 +100,15 @@ class CallMetaTests(unittest.TestCase):
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         self.store = EvidenceStore(scratch_store())
         self.store.put(EvidenceSnapshot("e1", 1, self.key, 99, 1, NOW - timedelta(days=2), NOW))
-        self.gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
+        self.gateway = ExecutionGateway(
+            lambda: NOW, store=scratch_store(), handlers=AdapterHandlers()
+        )
 
     def authorize(self, audit_rate=0.0, human_approved=False):
         policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), audit_rate)
         controller = AuthorityController(self.store, policy, random.Random(1), lambda: NOW)
         decision = controller.evaluate(self.proposal)
-        token = self.gateway.issue(
+        token = issue(self.gateway,
             decision, self.proposal, policy, human_approved=human_approved
         )
         return decision, token

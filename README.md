@@ -65,7 +65,7 @@ no exact evidence            route=human_approval reasons=('NO_EXACT_EVIDENCE',)
 unresolved question          route=clarification  reasons=('UNRESOLVED_QUESTIONS',)
 authorized (before edit)     route=autonomous     reasons=('AUTHORITY_SUFFICIENT',)
 arguments edited             gateway denied: proposal changed after authorization
-first use                    handler ran: ['op-mutated']
+first use                    handler ran: [{'order_id': 4815, 'usd': 24.0}]
 replayed capability          gateway denied: missing, consumed, or revoked token
 ```
 
@@ -119,8 +119,8 @@ returns one of three states:
   success criteria, assumptions, and unresolved questions.
 
 The host, not OpenAI, resolves tool versions, task categories, risk classes,
-and effects from `ToolRegistry`. Model-declared effects must exactly match the
-registry. Invalid JSON, unknown tools, invalid parameters, or mismatched
+and effects from the host's `ToolCatalog` (`ToolRegistry` in 0.3.1). Model-declared
+effects must exactly match the catalog. Invalid JSON, unknown tools, invalid parameters, or mismatched
 effects fail before authority evaluation.
 
 OpenAI Structured Outputs documentation:
@@ -168,7 +168,7 @@ verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 
 ## Safety invariants
 
-1. **No capability, no execution.** In the executor's path, a registered handler runs only after the gateway redeems a token for that exact proposal. This is a property of that path, not of the process: the gateway runs whichever handler its caller passes, `ToolRegistry.execute` is public, and the MCP binding verifies a block without redeeming a token.
+1. **No capability, no execution.** A registered handler runs only after the gateway redeems a token for that exact proposal. On `mainline` (v3 Step 04, unreleased) handlers live in a `HandlerTable` that only the gateway holds, the gateway runs the handler named by the token it consumed (no caller supplies one), it issues only for a decision committed to the ledger, and the agent and proposer hold a `ToolCatalog` that cannot run anything; a reachability test finds no route to a handler from the agent, proposer, or pipeline except through the gateway. Two limits remain: in one Python process, code that inspects the interpreter (`gc.get_objects()`, frame inspection) can still reach any object, which only running the gateway in its own process closes; and the MCP binding still verifies a block without redeeming a token (v3 Step 07). In the released 0.3.1 the gateway runs whichever handler its caller passes and `ToolRegistry.execute` is public.
 2. **Models do not grant authority.** OpenAI and Claude outputs are untrusted requests.
 3. **Exact scope.** A token records the proposal digest, tool, effects, policy version, partition, evidence id and version, and expiry, and is consumed once. Redemption always checks the digest, tool, effects, and expiry. It checks the policy version only when the gateway has a policy provider and the evidence id only when it has an evidence store, and it compares the evidence version only to decide whether a human approval saw the current snapshot. Single use is per token: one decision can be issued several tokens, and because `issue()` does not check that a decision came from the controller, any in-process caller holding one can mint more. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
 4. **No post-approval mutation.** Changed arguments or tools require a new proposal and decision.
@@ -266,7 +266,7 @@ alternatives and outcome-dependent costs.
 | `src/exe_auth_ctrl_loop/lifecycle.py` | `UNESTABLISHED / QUALIFYING / AUTONOMOUS / SUSPENDED` state machine over shadow evidence |
 | `src/exe_auth_ctrl_loop/sequential.py` | Beta-mixture confidence sequence (anytime-valid lower bound); Wilson kept as legacy |
 | `src/exe_auth_ctrl_loop/risk.py` | Host-owned risk envelopes, sequence budgets, decision- and redemption-time guards |
-| `src/exe_auth_ctrl_loop/tools.py` | Host-owned tool registry, JSON Schema validation, risk classification, Anthropic tool definitions |
+| `src/exe_auth_ctrl_loop/tools.py` | Host-owned `ToolCatalog` (JSON Schema validation, risk classification, Anthropic tool definitions) and the gateway-only `HandlerTable` |
 | `src/exe_auth_ctrl_loop/providers.py` | OpenAI Structured Output models and proposal generator |
 | `src/exe_auth_ctrl_loop/executor.py` | Claude client-tool loop with per-operation authorization and commit-before-act |
 | `src/exe_auth_ctrl_loop/pipeline.py` | OpenAI-to-Claude orchestration, ledger commit, audit freezing |

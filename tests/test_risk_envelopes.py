@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from _support import scratch_store
+from _support import AdapterHandlers, issue, run, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -19,6 +19,7 @@ from exe_auth_ctrl_loop import (
     EvidenceSnapshot,
     EvidenceStore,
     ExecutionGateway,
+    HandlerTable,
     LifecycleManager,
     OneOf,
     Oracle,
@@ -34,8 +35,8 @@ from exe_auth_ctrl_loop import (
     Route,
     SequenceBudget,
     ShadowEvidenceLog,
+    ToolCatalog,
     ToolDefinition,
-    ToolRegistry,
     ToolValidationError,
     TrialLabel,
 )
@@ -84,6 +85,7 @@ class RiskBase(unittest.TestCase):
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(self.risk,),
             store=self.store.store,
+            handlers=AdapterHandlers(),
         )
         self.calls = 0
         self.counter = 0
@@ -119,8 +121,8 @@ class RiskBase(unittest.TestCase):
 
     def run_op(self, proposal, human_approved=False):
         decision = self.controller.evaluate(proposal)
-        token = self.gateway.issue(decision, proposal, self.policy, human_approved=human_approved)
-        return self.gateway.execute(token.token_id, proposal, self.handler)
+        token = issue(self.gateway, decision, proposal, self.policy, human_approved=human_approved)
+        return run(self.gateway, token.token_id, proposal, self.handler)
 
 
 class HostDerivedRiskTests(RiskBase):
@@ -176,7 +178,7 @@ class HostDerivedRiskTests(RiskBase):
         decision = self.controller.evaluate(self.proposal(usd=101))
         self.assertEqual(decision.route, Route.DENY)
         with self.assertRaises(PermissionError):
-            self.gateway.issue(decision, self.proposal(usd=101), self.policy, human_approved=True)
+            issue(self.gateway, decision, self.proposal(usd=101), self.policy, human_approved=True)
 
     def test_boundary_amounts(self):
         self.seed("low")
@@ -241,16 +243,16 @@ class SequenceBudgetTests(RiskBase):
         first, second = self.proposal(usd=100), self.proposal(usd=100, payee="acct-200")
         d1, d2 = self.controller.evaluate(first), self.controller.evaluate(second)
         self.assertEqual((d1.route, d2.route), (Route.AUTONOMOUS, Route.AUTONOMOUS))
-        t1 = self.gateway.issue(d1, first, self.policy)
-        t2 = self.gateway.issue(d2, second, self.policy)
+        t1 = issue(self.gateway, d1, first, self.policy)
+        t2 = issue(self.gateway, d2, second, self.policy)
         third = self.proposal(usd=100, payee="acct-100")
         d3 = self.controller.evaluate(third)
         self.assertEqual(d3.route, Route.AUTONOMOUS)  # nothing charged yet
-        t3 = self.gateway.issue(d3, third, self.policy)
-        self.assertEqual(self.gateway.execute(t1.token_id, first, self.handler), "done")
-        self.assertEqual(self.gateway.execute(t2.token_id, second, self.handler), "done")
+        t3 = issue(self.gateway, d3, third, self.policy)
+        self.assertEqual(run(self.gateway, t1.token_id, first, self.handler), "done")
+        self.assertEqual(run(self.gateway, t2.token_id, second, self.handler), "done")
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(t3.token_id, third, self.handler)
+            run(self.gateway, t3.token_id, third, self.handler)
         self.assertIn("BUDGET_EXCEEDED:daily-refunds", str(ctx.exception))
         self.assertEqual(self.calls, 2)
         self.assertEqual(self.risk.charged("daily-refunds", self.key()), (200.0, 2))
@@ -259,10 +261,10 @@ class SequenceBudgetTests(RiskBase):
         self.seed("low")
         proposal = self.proposal(usd=100)
         decision = self.controller.evaluate(proposal)
-        token = self.gateway.issue(decision, proposal, self.policy)
+        token = issue(self.gateway, decision, proposal, self.policy)
         self.policy = replace(self.policy, version="pol2")  # unrelated withdrawal
         with self.assertRaises(PermissionError):
-            self.gateway.execute(token.token_id, proposal, self.handler)
+            run(self.gateway, token.token_id, proposal, self.handler)
         self.assertEqual(self.risk.charged("daily-refunds", self.key()), (0.0, 0))
 
     def test_operation_count_limit(self):
@@ -319,7 +321,7 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(decision.route, Route.DENY)
         self.assertIn("BUDGET_METRIC_ERROR:ops", decision.reason_codes)
         with self.assertRaises(PermissionError):
-            self.gateway.issue(decision, bad, self.policy)
+            issue(self.gateway, decision, bad, self.policy)
         self.assertEqual(self.risk.charged("ops", self.key()), (0.0, 0))
         # a numeric metric on the same budget is fine and commit() charges the count
         self.assertEqual(self.run_op(self.proposal(usd=24)), "done")
@@ -337,7 +339,7 @@ class SequenceBudgetTests(RiskBase):
             self.assertEqual(decision.route, Route.DENY)
             self.assertIn("BUDGET_METRIC_ERROR:daily-refunds", decision.reason_codes)
             with self.assertRaises(PermissionError):
-                self.gateway.issue(decision, bad, self.policy)
+                issue(self.gateway, decision, bad, self.policy)
         # nothing was charged, so the running total is intact and still enforced
         self.assertEqual(self.risk.charged("daily-refunds", self.key()), (0.0, 0))
         self.assertEqual(self.run_op(self.proposal(usd=240)), "done")
@@ -372,23 +374,23 @@ class PolicyChangePropagationTests(RiskBase):
         proposal = self.proposal(usd=500)
         decision = self.controller.evaluate(proposal)
         self.assertEqual(decision.route, Route.AUTONOMOUS)
-        token = self.gateway.issue(decision, proposal, self.policy)
+        token = issue(self.gateway, decision, proposal, self.policy)
         self.risk.update("risk-v1", envelopes())  # rollback
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, proposal, self.handler)
+            run(self.gateway, token.token_id, proposal, self.handler)
         self.assertIn("RISK_CLASS_MISMATCH", str(ctx.exception))
         self.assertEqual(self.calls, 0)
 
     def test_tightened_budget_denies_outstanding_token(self):
         self.seed("low")
         proposal = self.proposal(usd=100)
-        token = self.gateway.issue(self.controller.evaluate(proposal), proposal, self.policy)
+        token = issue(self.gateway, self.controller.evaluate(proposal), proposal, self.policy)
         tighter = (
             SequenceBudget("daily-refunds", frozenset({"create_refund"}), "partition", "usd", 50.0),
         )
         self.risk.update("risk-v3", envelopes(), tighter)
         with self.assertRaises(PermissionError) as ctx:
-            self.gateway.execute(token.token_id, proposal, self.handler)
+            run(self.gateway, token.token_id, proposal, self.handler)
         self.assertIn("BUDGET_EXCEEDED:daily-refunds", str(ctx.exception))
 
     def test_charges_survive_a_policy_update(self):
@@ -502,11 +504,10 @@ class RegistryUnificationTests(unittest.TestCase):
             name="create_refund", description="refund", input_schema=self.SCHEMA,
             effects=frozenset({"refund:write"}), version="refund-api-v2",
             task_category="refund", risk_class=risk_class,
-            handler=lambda args: self.calls.append(args) or {"ok": True},
         )
 
     def test_policy_registry_delegates_classification(self):
-        registry = ToolRegistry(risk=self.risk)
+        registry = ToolCatalog(risk=self.risk)
         registry.register(self.tool(None))
         low = {"order_id": 1, "usd": 100, "payee": "acct-100"}
         self.assertEqual(registry.classify_risk("create_refund", low), "low")
@@ -516,14 +517,14 @@ class RegistryUnificationTests(unittest.TestCase):
 
     def test_two_classifiers_are_refused_at_registration(self):
         with self.assertRaises(ValueError):
-            ToolRegistry(risk=self.risk).register(self.tool("low"))
+            ToolCatalog(risk=self.risk).register(self.tool("low"))
         with self.assertRaises(ValueError):
-            ToolRegistry().register(self.tool(None))
+            ToolCatalog().register(self.tool(None))
         with self.assertRaises(ToolValidationError):
             self.tool(None).classify_risk({})
 
     def test_plain_registry_keeps_the_tool_classifier(self):
-        registry = ToolRegistry()
+        registry = ToolCatalog()
         registry.register(self.tool(lambda p: "high" if p["usd"] > 10 else "low"))
         self.assertEqual(registry.classify_risk("create_refund", {"usd": 5}), "low")
         self.assertEqual(registry.classify_risk("create_refund", {"usd": 50}), "high")
@@ -533,17 +534,25 @@ class RegistryUnificationTests(unittest.TestCase):
         controller = AuthorityController(
             store, policy, random.Random(1), lambda: T0, guards=(self.risk,)
         )
+        handlers = HandlerTable(registry)
+        handlers.register(
+            "create_refund", lambda args: self.calls.append(args) or {"ok": True}
+        )
         gateway = ExecutionGateway(
-            lambda: T0, evidence=store, guards=(self.risk,), store=store.store
+            lambda: T0, evidence=store, guards=(self.risk,), store=store.store,
+            handlers=handlers,
         )
         client = _FakeClaude([
             _tool_use("create_refund", proposal.proposal_id, **proposal.parameters),
             SimpleNamespace(content=[SimpleNamespace(type="text", text="done")]),
         ])
-        return ClaudeExecutionAgent("m2", "ep1", controller, gateway, registry, client)
+        return ClaudeExecutionAgent(
+            "m2", "ep1", controller, gateway, registry, client,
+            commit=EventLedger(store.store).commit_decision,
+        )
 
     def test_executor_refuses_a_proposal_whose_class_the_registry_rejects(self):
-        registry = ToolRegistry(risk=self.risk)
+        registry = ToolCatalog(risk=self.risk)
         registry.register(self.tool(None))
         key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",

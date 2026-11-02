@@ -5,7 +5,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from _support import scratch_store
+from _support import AdapterHandlers, issue, run, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -123,9 +123,9 @@ class LifecycleTests(unittest.TestCase):
              ("UNESTABLISHED", "QUALIFYING", "TRIAL_ADMITTED"),
              ("QUALIFYING", "AUTONOMOUS", "GATE_MET")],
         )
-        gateway = ExecutionGateway(self.clock, store=scratch_store())
-        token = gateway.issue(decision, self.proposal(), self.policy)
-        self.assertEqual(gateway.execute(token.token_id, self.proposal(), lambda p: "ok"), "ok")
+        gateway = ExecutionGateway(self.clock, store=scratch_store(), handlers=AdapterHandlers())
+        token = issue(gateway, decision, self.proposal(), self.policy)
+        self.assertEqual(run(gateway, token.token_id, self.proposal(), lambda p: "ok"), "ok")
 
     def test_transition_records_policy_and_evidence_identity(self):
         self.autonomous()
@@ -261,12 +261,14 @@ class LifecycleTests(unittest.TestCase):
 
     def test_retired_partition_token_is_refused_without_the_lifecycle_guard(self):
         # a gateway holding only the store, not the manager as a guard
-        gateway = ExecutionGateway(self.clock, evidence=self.store, store=self.store.store)
+        gateway = ExecutionGateway(
+            self.clock, evidence=self.store, store=self.store.store, handlers=AdapterHandlers()
+        )
         decision = self.autonomous()
-        token = gateway.issue(decision, self.proposal(), self.policy)
+        token = issue(gateway, decision, self.proposal(), self.policy)
         self.manager.on_churn(self.key, self.make_key(tool="refund-api-v3"))
         with self.assertRaises(PermissionError) as ctx:
-            gateway.execute(token.token_id, self.proposal(), lambda p: "ran")
+            run(gateway, token.token_id, self.proposal(), lambda p: "ran")
         self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
         self.assertTrue(self.store.get(self.key).invalidation_reason.startswith("PARTITION_RETIRED"))
 

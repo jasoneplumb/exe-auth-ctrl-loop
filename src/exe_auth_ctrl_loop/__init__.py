@@ -11,7 +11,7 @@ Future: Research prototype, single process. See the production trust boundary in
 
 Module map:
   authority.py  decision, evidence, capability issuance, gateway
-  tools.py      host-owned tool registry and schema validation
+  tools.py      host-owned tool catalog, schema validation, and the gateway's handler table
   providers.py  OpenAI proposal generation
   executor.py   Claude execution requests, verified per operation
   pipeline.py   composition and ledger recording
@@ -88,7 +88,7 @@ from .shadow import (
     TrialStatus,
 )
 from .store import Store, StoreError
-from .tools import ToolDefinition, ToolRegistry, ToolValidationError
+from .tools import HandlerTable, ToolCatalog, ToolDefinition, ToolValidationError
 
 __version__ = "0.3.1"
 
@@ -110,6 +110,7 @@ __all__ = [
     "ExecutionRun",
     "ExecutionStatus",
     "ExecutionStep",
+    "HandlerTable",
     "LedgerEvent",
     "LifecycleState",
     "LifecycleManager",
@@ -146,7 +147,7 @@ __all__ = [
     "ShadowEvidenceLog",
     "ShadowTrial",
     "ToolDefinition",
-    "ToolRegistry",
+    "ToolCatalog",
     "ToolValidationError",
     "TrialLabel",
     "TrialStatus",

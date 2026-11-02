@@ -10,7 +10,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from _support import forge_token
+from _support import AdapterHandlers, forge_token, issue, run
 
 from exe_auth_ctrl_loop.authority import (
     Decision,
@@ -30,6 +30,13 @@ PROPOSALS = textwrap.dedent("""
         return Proposal(f"p-{i}", "refund", "create_refund", {"order_id": i, "usd": 5},
                         .96, frozenset({"refund:write"}), KEY, "openai")
 """)
+# Worker processes drive the gateway through the same test helpers as this process.
+SUPPORT = textwrap.dedent(f"""
+    import sys
+    sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
+    from _support import AdapterHandlers, run
+""")
+
 namespace: dict = {}
 exec(PROPOSALS, namespace)
 make = namespace["make"]
@@ -51,18 +58,18 @@ class StoreCase(unittest.TestCase):
         self.path = Path(tmp.name) / "authority.db"
         self.store = Store(self.path)
         self.addCleanup(self.store.close)
-        self.gateway = ExecutionGateway(store=self.store)
+        self.gateway = ExecutionGateway(store=self.store, handlers=AdapterHandlers())
 
     def issue(self, i: int):
         p = make(i)
-        return self.gateway.issue(decision(i, p), p, POLICY), p
+        return issue(self.gateway, decision(i, p), p, POLICY), p
 
 
 class CrossProcessRedemptionTests(StoreCase):
     """Criterion 2: two OS processes race to redeem the same 200 tokens."""
 
     TOKENS = 200
-    WORKER = textwrap.dedent("""
+    WORKER = SUPPORT + textwrap.dedent("""
         import json, os, sys, time
         from exe_auth_ctrl_loop.authority import ExecutionGateway
         from exe_auth_ctrl_loop.store import Store
@@ -71,7 +78,7 @@ class CrossProcessRedemptionTests(StoreCase):
         make = namespace["make"]
         path, ids_file, start = sys.argv[1:4]
         store = Store(path)
-        gateway = ExecutionGateway(store=store)
+        gateway = ExecutionGateway(store=store, handlers=AdapterHandlers())
         ids = json.load(open(ids_file))
         while not os.path.exists(start):
             time.sleep(0.001)
@@ -82,7 +89,7 @@ class CrossProcessRedemptionTests(StoreCase):
                     conn.execute("INSERT INTO effects VALUES (?, ?)", (token_id, os.getpid()))
                 return "ok"
             try:
-                gateway.execute(token_id, make(i), handler)
+                run(gateway, token_id, make(i), handler)
                 ran += 1
             except PermissionError:
                 pass
@@ -132,9 +139,9 @@ class OneTokenPerDecisionTests(StoreCase):
                 if state == "revoked":
                     self.gateway.revoke(token.token_id)
                 if state == "consumed":
-                    self.gateway.execute(token.token_id, p, lambda _: "ok")
+                    run(self.gateway, token.token_id, p, lambda _: "ok")
                 with self.assertRaisesRegex(PermissionError, "already has a token"):
-                    self.gateway.issue(decision(i, p), p, POLICY)
+                    issue(self.gateway, decision(i, p), p, POLICY)
                 self.assertEqual(len(self.gateway.tokens), i)
 
     def test_the_database_refuses_a_second_row_for_a_decision(self):
@@ -162,7 +169,7 @@ class TransitionTests(StoreCase):
 
     def test_illegal_transitions_are_refused_at_the_database(self):
         token, p = self.issue(1)
-        self.gateway.execute(token.token_id, p, lambda _: "ok")  # → handler_completed
+        run(self.gateway, token.token_id, p, lambda _: "ok")  # → handler_completed
         revoked, _ = self.issue(2)
         self.gateway.revoke(revoked.token_id)
         issued, _ = self.issue(3)
@@ -197,9 +204,9 @@ class TransitionTests(StoreCase):
     def test_a_refused_redemption_leaves_the_token_issued(self):
         token, p = self.issue(1)
         with self.assertRaisesRegex(PermissionError, "proposal changed"):
-            self.gateway.execute(token.token_id, make(2), lambda _: "ok")
+            run(self.gateway, token.token_id, make(2), lambda _: "ok")
         self.assertEqual(self.state(token.token_id), "issued")
-        self.assertEqual(self.gateway.execute(token.token_id, p, lambda _: "ok"), "ok")
+        self.assertEqual(run(self.gateway, token.token_id, p, lambda _: "ok"), "ok")
 
     def test_a_guard_whose_commit_raises_leaves_the_token_unspent(self):
         class Breaks:
@@ -209,10 +216,12 @@ class TransitionTests(StoreCase):
             def commit(self, token, proposal):
                 raise RuntimeError("settlement failed")
 
-        gateway = ExecutionGateway(guards=(Breaks(),), store=self.store)
+        gateway = ExecutionGateway(
+            guards=(Breaks(),), store=self.store, handlers=AdapterHandlers()
+        )
         token, p = self.issue(1)
         with self.assertRaisesRegex(RuntimeError, "settlement failed"):
-            gateway.execute(token.token_id, p, lambda _: "ok")
+            run(gateway, token.token_id, p, lambda _: "ok")
         self.assertEqual(self.state(token.token_id), "issued")
 
     def test_a_transition_from_the_wrong_state_is_loud(self):
@@ -229,7 +238,7 @@ class TransitionTests(StoreCase):
     def test_handler_states_are_recorded(self):
         token, p = self.issue(1)
         seen = []
-        self.gateway.execute(token.token_id, p, lambda _: seen.append(self.state(token.token_id)))
+        run(self.gateway, token.token_id, p, lambda _: seen.append(self.state(token.token_id)))
         self.assertEqual(seen, ["handler_started"])
         self.assertEqual(self.state(token.token_id), "handler_completed")
         failing, q = self.issue(2)
@@ -238,44 +247,44 @@ class TransitionTests(StoreCase):
             raise ValueError("handler failed")
 
         with self.assertRaises(ValueError):
-            self.gateway.execute(failing.token_id, q, broken)
+            run(self.gateway, failing.token_id, q, broken)
         self.assertEqual(self.state(failing.token_id), "handler_failed")
 
 
 class RestartTests(StoreCase):
     """Criteria 4 and 4b."""
 
-    CRASH = textwrap.dedent("""
+    CRASH = SUPPORT + textwrap.dedent("""
         import os, sys
         from exe_auth_ctrl_loop.authority import ExecutionGateway
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(store=Store(sys.argv[1]))
+        gateway = ExecutionGateway(store=Store(sys.argv[1]), handlers=AdapterHandlers())
         def handler(proposal):
             os._exit(3)  # the process dies inside the effect
-        gateway.execute(sys.argv[2], namespace["make"](1), handler)
+        run(gateway, sys.argv[2], namespace["make"](1), handler)
     """)
 
     def reopen(self) -> ExecutionGateway:
         self.store.close()
         self.store = Store(self.path)
         self.addCleanup(self.store.close)
-        return ExecutionGateway(store=self.store)
+        return ExecutionGateway(store=self.store, handlers=AdapterHandlers())
 
     def test_consumed_stays_consumed(self):
         token, p = self.issue(1)
-        self.gateway.execute(token.token_id, p, lambda _: "ok")
+        run(self.gateway, token.token_id, p, lambda _: "ok")
         gateway = self.reopen()
         with self.assertRaisesRegex(PermissionError, "consumed"):
-            gateway.execute(token.token_id, p, lambda _: "again")
+            run(gateway, token.token_id, p, lambda _: "again")
 
     def test_an_issued_token_redeems_exactly_once_after_reopening(self):
         token, p = self.issue(1)
         gateway = self.reopen()
-        self.assertEqual(gateway.execute(token.token_id, p, lambda _: "ok"), "ok")
+        self.assertEqual(run(gateway, token.token_id, p, lambda _: "ok"), "ok")
         with self.assertRaisesRegex(PermissionError, "consumed"):
-            gateway.execute(token.token_id, p, lambda _: "again")
+            run(gateway, token.token_id, p, lambda _: "again")
 
     def test_a_handler_interrupted_by_a_crash_is_reported_and_never_rerun(self):
         token, p = self.issue(1)
@@ -289,23 +298,23 @@ class RestartTests(StoreCase):
         self.assertEqual(gateway.token(token.token_id).state, "handler_started")
         ran = []
         with self.assertRaisesRegex(PermissionError, "consumed"):
-            gateway.execute(token.token_id, p, ran.append)
+            run(gateway, token.token_id, p, ran.append)
         self.assertEqual(ran, [])
 
-    BEFORE_START = textwrap.dedent("""
+    BEFORE_START = SUPPORT + textwrap.dedent("""
         import os, sys
         from exe_auth_ctrl_loop.authority import ExecutionGateway
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(store=Store(sys.argv[1]))
+        gateway = ExecutionGateway(store=Store(sys.argv[1]), handlers=AdapterHandlers())
         advance = gateway._advance
         def dies_before_start(token_id, current, target):
             if target == "handler_started":
                 os._exit(4)  # after the consume committed, before handler_started is written
             advance(token_id, current, target)
         gateway._advance = dies_before_start
-        gateway.execute(sys.argv[2], namespace["make"](1), lambda p: print("HANDLER RAN"))
+        run(gateway, sys.argv[2], namespace["make"](1), lambda p: print("HANDLER RAN"))
     """)
 
     def test_a_crash_before_the_handler_starts_is_reported_as_unrun(self):
@@ -320,11 +329,11 @@ class RestartTests(StoreCase):
         self.assertEqual(gateway.consumed_unrun(), [token.token_id])
         self.assertEqual(gateway.effect_unknown(), [])
         with self.assertRaisesRegex(PermissionError, "consumed"):
-            gateway.execute(token.token_id, p, lambda _: "again")
+            run(gateway, token.token_id, p, lambda _: "again")
 
     def test_effect_unknown_is_empty_when_every_handler_reported(self):
         token, p = self.issue(1)
-        self.gateway.execute(token.token_id, p, lambda _: "ok")
+        run(self.gateway, token.token_id, p, lambda _: "ok")
         self.assertEqual(self.reopen().effect_unknown(), [])
 
 

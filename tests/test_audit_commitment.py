@@ -20,14 +20,15 @@ from exe_auth_ctrl_loop import (
     EvidenceStore,
     ExecutionGateway,
     ExecutionStatus,
+    HandlerTable,
     PartitionKey,
     Policy,
     Proposal,
     ProposalBundle,
     ProposalReadiness,
     Route,
+    ToolCatalog,
     ToolDefinition,
-    ToolRegistry,
     digest,
 )
 
@@ -71,8 +72,8 @@ class Harness:
         self.ledger = ledger if ledger is not None else EventLedger(scratch_store())
         self.handler_calls = []
         self.custom_handler = handler
-        self.registry = ToolRegistry()
-        self.registry.register(ToolDefinition(
+        self.catalog = ToolCatalog()
+        self.catalog.register(ToolDefinition(
             name="create_refund",
             description="Create one bounded refund.",
             input_schema={
@@ -85,8 +86,9 @@ class Harness:
             version="refund-api-v2",
             task_category="bounded_refund",
             risk_class="low",
-            handler=self._handle,
         ))
+        self.handlers = HandlerTable(self.catalog)
+        self.handlers.register("create_refund", self._handle)
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "claude-pinned", "execution-v1",
             "refund-api-v2", "pol1", "prod1", "bounded_refund", "0.95-1.00", "low",
@@ -97,7 +99,9 @@ class Harness:
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(seed), lambda: NOW
         )
-        self.gateway = ExecutionGateway(lambda: NOW, evidence=self.store, store=self.store.store)
+        self.gateway = ExecutionGateway(
+            lambda: NOW, evidence=self.store, store=self.store.store, handlers=self.handlers
+        )
         self.proposal = Proposal(
             "p-1", "refund order", "create_refund", {"order_id": 1, "usd": 24}, .96,
             frozenset({"refund:write"}), self.key, "openai",
@@ -106,7 +110,7 @@ class Harness:
             "b-1", "refund order", ProposalReadiness.EXECUTABLE, (self.proposal,), "one refund",
         )
         self.agent = ClaudeExecutionAgent(
-            "claude-pinned", "execution-v1", self.controller, self.gateway, self.registry,
+            "claude-pinned", "execution-v1", self.controller, self.gateway, self.catalog,
             FakeClaude([tool_use("create_refund", "p-1", order_id=1, usd=24), final_text()]),
         )
         self.approved = approved
@@ -205,11 +209,19 @@ class FailClosedTests(unittest.TestCase):
             kinds.index("authority.decision.committed"), kinds.index("execution.step.recorded")
         )
 
-    def test_agent_without_a_commit_hook_records_nothing(self):
-        # Allowed for offline demos and unit tests; the loop never runs this way.
+    def test_agent_without_a_commit_hook_cannot_execute(self):
+        # v3 Step 04: the gateway issues only for a committed decision, so an agent that
+        # records nothing can run nothing -- commit-before-act is enforced, not a habit.
         h = Harness(commit="none")
         run = h.agent.run(h.bundle)
-        self.assertEqual(run.status, ExecutionStatus.COMPLETED)
+        self.assertEqual(run.status, ExecutionStatus.DENIED)
+        step = run.steps[0]
+        self.assertFalse(step.executed)
+        self.assertEqual(step.route, Route.DENY)
+        self.assertEqual(step.error, "decision was not committed to the ledger")
+        self.assertEqual(step.decision.route, Route.AUTONOMOUS)  # the decision itself was fine
+        self.assertEqual(h.handler_calls, [])
+        self.assertEqual(h.gateway.tokens, {})
         self.assertEqual(h.ledger.events, [])
 
 

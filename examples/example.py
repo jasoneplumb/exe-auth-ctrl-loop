@@ -15,7 +15,9 @@ from exe_auth_ctrl_loop.authority import (
     Proposal,
     Route,
 )
+from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.store import Store
+from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
 now = datetime.now(timezone.utc)
 key = PartitionKey(
@@ -49,12 +51,33 @@ print({
     "reasons": decision.reason_codes,
 })
 
+# The host's tool catalog and handler table. The catalog describes the tool; the
+# handler table, given to the gateway alone, is the only route to its effect.
+catalog = ToolCatalog()
+catalog.register(ToolDefinition(
+    name="create_refund",
+    description="Refund one order.",
+    input_schema={
+        "type": "object",
+        "properties": {"order_id": {"type": "integer"}, "usd": {"type": "number"}},
+        "required": ["order_id", "usd"],
+        "additionalProperties": False,
+    },
+    effects=frozenset({"refund:create"}),
+    version="refund-api-v2",
+    task_category="bounded_refund",
+    risk_class="financial-low",
+))
+handlers = HandlerTable(catalog)
+handlers.register(
+    "create_refund", lambda args: {"receipt": "refund-9001", "parameters": dict(args)}
+)
+
 if decision.route == Route.AUTONOMOUS:
-    gateway = ExecutionGateway(store=evidence.store)
+    # The decision goes on the ledger first; the gateway issues only for a committed one.
+    EventLedger(evidence.store).commit_decision(decision, proposal)
+    gateway = ExecutionGateway(store=evidence.store, handlers=handlers)
     token = gateway.issue(decision, proposal, policy)
-    receipt = gateway.execute(
-        token.token_id,
-        proposal,
-        lambda p: {"receipt": "refund-9001", "parameters": dict(p.parameters)},
-    )
+    # No handler is passed: the gateway runs the one the token names.
+    receipt = gateway.execute(token.token_id, proposal)
     print(receipt)
