@@ -326,8 +326,8 @@ class PermissionEventTests(Fixture):
                          lambda: self.principals.delegate(ROOT_GRANT, "rev", scope, FAR)),
             "revoke_grant": ("grant.revoked",
                              lambda: self.principals.revoke_grant(ROOT_GRANT, by="alice")),
-            "record_approval": ("approval.recorded",
-                                lambda: self.principals.record_approval(approval_a)),
+            "_record_approval": ("approval.recorded",
+                                 lambda: self.principals._record_approval(approval_a)),
             "rescind_approval": ("approval.rescinded", lambda: self.principals.rescind_approval(
                 approval_b,
                 TEST_KEYRING.sign(HUMANS["alice"], rescind_payload(approval_b.approval_id)))),
@@ -336,7 +336,8 @@ class PermissionEventTests(Fixture):
     def test_the_public_api_is_fully_classified(self):
         public = {name for name, _ in inspect.getmembers(Principals, inspect.isfunction)
                   if not name.startswith("_")}
-        self.assertEqual(public, self.QUERIES | set(self.mutations()))
+        mutations = {name for name in self.mutations() if not name.startswith("_")}
+        self.assertEqual(public, self.QUERIES | mutations)
 
     def test_each_change_writes_exactly_one_event_of_its_type(self):
         for name, (event_type, call) in self.mutations().items():
@@ -355,6 +356,27 @@ class PermissionEventTests(Fixture):
         with self.assertRaises(PermissionError):
             self.principals.register("eve", PrincipalKind.MODEL, by="agent")  # models cannot
         self.assertEqual(len(self.ledger.events), before)
+
+    def test_an_approval_row_rolls_back_with_the_issue_that_recorded_it(self):
+        # the issue path relies on _record_approval joining the caller's transaction
+        approval = approve(proposal())
+        before = len(self.ledger.events)
+        with self.assertRaises(RuntimeError):
+            with self.db.transaction():
+                self.principals._record_approval(approval)
+                raise RuntimeError("the token insert failed")
+        self.assertIsNone(self.db.connection().execute(
+            "SELECT 1 FROM approvals WHERE approval_id = ?", (approval.approval_id,)
+        ).fetchone())
+        self.assertEqual(len(self.ledger.events), before)
+
+    def test_ceilings_cannot_be_widened_through_the_original_dict(self):
+        ceilings = {"usd": 100.0}
+        scope = GrantScope(ceilings=ceilings)
+        ceilings["usd"] = 999.0
+        self.assertEqual(scope.ceilings["usd"], 100.0)
+        with self.assertRaises(TypeError):
+            scope.ceilings["usd"] = 999.0  # type: ignore[index]
 
     def test_the_tables_refuse_changes_outside_the_api(self):
         import sqlite3

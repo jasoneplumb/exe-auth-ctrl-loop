@@ -125,8 +125,8 @@ class Loop:
         self.controller = AuthorityController(self.store, POLICY, random.Random(1), lambda: NOW)
         self.gateway = ExecutionGateway(lambda: NOW, **gateway_store(db), handlers=self.handlers)
         self.agent = ClaudeExecutionAgent(
-            "m2", "ep1", self.controller, self.gateway, self.catalog, client=object()
-        , **AGENT)
+            "m2", "ep1", self.controller, self.gateway, self.catalog, client=object(), **AGENT,
+        )
         self.proposer = OpenAIProposalGenerator("m1", "pp1", self.catalog, client=object())
         self.pipeline = CrossModelAuthorityLoop(
             proposer=self.proposer, executor=self.agent, ledger=self.ledger,

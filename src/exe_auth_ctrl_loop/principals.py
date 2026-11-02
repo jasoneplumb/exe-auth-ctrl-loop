@@ -23,6 +23,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
 from hashlib import sha256
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from .authority import PartitionKey, Proposal, utcnow
@@ -101,6 +102,11 @@ class GrantScope:
     risk_classes: frozenset[str] | None = None
     task_categories: frozenset[str] | None = None
     ceilings: Mapping[str, float] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        # constraint: frozen=True freezes the reference, not the dict; copy and wrap it so
+        # a caller holding the original cannot widen a grant's ceilings after the fact
+        object.__setattr__(self, "ceilings", MappingProxyType(dict(self.ceilings)))
 
     def within(self, parent: GrantScope) -> bool:
         """True iff this scope permits nothing the parent does not."""
@@ -218,10 +224,11 @@ def rescind_payload(approval_id: str) -> dict[str, Any]:
 class Principals:
     """
     intent: The one place principals, grants, and approvals change, each with its event
-    constraint: Every public method that changes state writes exactly one ledger event of
+    constraint: Every method that changes state writes exactly one ledger event of
                 PERMISSION_EVENTS in the same transaction (tests/test_principals.py
-                enumerates them). The database triggers refuse any other change to the
-                three tables except a fresh insert, which only these methods make.
+                enumerates them). Six are public; _record_approval is the gateway's. The
+                database triggers refuse any other change to the three tables except a
+                fresh insert, which only these methods make.
     """
 
     def __init__(self, store: Store, keyring: Keyring, clock: Any = utcnow) -> None:
@@ -420,11 +427,12 @@ class Principals:
             conn.execute("UPDATE grants SET revoked = 1 WHERE grant_id = ?", (grant_id,))
             self.ledger.append("grant.revoked", grant_id, by, {})
 
-    def record_approval(self, approval: Approval) -> None:
+    def _record_approval(self, approval: Approval) -> None:
         """
-        approval.recorded. Called by the gateway in its issue transaction after
-        approval_blockers() came back empty; the token's unique approval_id makes it the
-        approval's only use.
+        approval.recorded. Private to the gateway: ExecutionGateway.issue() calls it inside
+        its issue transaction after approval_blockers() came back empty, and this
+        transaction joins that one, so the approval row exists if and only if its token
+        does. Called anywhere else it would mark an approval used with no token.
         """
         with self.store.transaction() as conn:
             conn.execute(

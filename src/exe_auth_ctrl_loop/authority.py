@@ -736,6 +736,12 @@ class ExecutionGateway:
             if grant_reasons:
                 raise PermissionError(f"grant does not cover this: {', '.join(grant_reasons)}")
             if approval is not None:
+                # constraint: these reads and _record_approval's writes use this thread's
+                # one connection (Store is one connection per thread), and _record_approval's
+                # transaction() joins this one (Store.transaction is re-entrant). So the
+                # rescission check, the approval row, and the token row are one atomic
+                # step under the write lock BEGIN IMMEDIATE took: nothing commits between
+                # them, and a failure anywhere below rolls the approval row back too.
                 approval_reasons = self.principals.approval_blockers(approval, proposal)
                 if approval_reasons:
                     raise PermissionError(f"approval refused: {', '.join(approval_reasons)}")
@@ -743,7 +749,7 @@ class ExecutionGateway:
                     "SELECT 1 FROM tokens WHERE approval_id = ?", (approval.approval_id,)
                 ).fetchone():
                     raise PermissionError("approval already used")
-                self.principals.record_approval(approval)
+                self.principals._record_approval(approval)  # gateway-only (see principals)
             token = replace(
                 token, grant_id=grant_id, requesting_principal=principal_id,
                 approval_id=approval.approval_id if approval is not None else None,

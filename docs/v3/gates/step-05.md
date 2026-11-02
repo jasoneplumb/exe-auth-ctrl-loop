@@ -4,7 +4,7 @@
 
 **Step objective:** Principals, grants, lineage (serves F5, closes L9; see `docs/v3/plan.md` §4).
 
-**Branch / SHA:** `feat/v3-step-05-principals` from `mainline` @ `6d2721f`; Step 05 commit follows this report. Issue #32.
+**Branch / SHA:** `feat/v3-step-05-principals` from `mainline` @ `6d2721f`; Step 05 `0d0f111`, PR #33 review fixes follow. Issue #32.
 
 **Reviewer:** (pending, one person decides)
 
@@ -20,7 +20,7 @@
 | 4. `lineage(token_id)` returns the chain to the root grant for every token | PASS | `LineageTests`: tokens issued at depths 1, 2, and 3 return `[root]`, `[mid, root]`, `[leaf, mid, root]`; the last has no parent; the requesting principal is the leaf grant's grantee; every token in the table records a grant |
 | 5. Every permission change emits exactly one of the six event types; a test enumerates the public API and asserts no mutating path skips the ledger | PASS | `PermissionEventTests`: the public methods of `Principals` (found by `inspect`) must equal the classified set of 8 queries and 7 mutations, so a new method fails the test until classified; each mutation writes exactly one event of its type, and the 7 cover all 6 types; a refused change writes nothing; raw SQL that changes a principal's kind or re-activates it, or edits or deletes a grant, is refused by the database |
 | 6. Global gate passes | PASS | below |
-| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 14 files; 310 passed, 1 skipped (Step 06 forward check), 85 subtests; three offline examples exit 0 and `denials.py` still matches the README; `live_example.py` parses. Full experiment reproduction: canonical hash `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a`, identical to `results/manifest.json`, with the harness registering principals and a root grant, issuing under it, and signing its releases |
+| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 14 files; 312 passed, 1 skipped (Step 06 forward check), 85 subtests (after the PR #33 review fixes); three offline examples exit 0 and `denials.py` still matches the README; `live_example.py` parses. Full experiment reproduction: canonical hash `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a`, identical to `results/manifest.json`, with the harness registering principals and a root grant, issuing under it, and signing its releases |
 | Mutation check (v3 plan §5 rule) | PASS | Each fails `test_principals.py`: ledger actor check removed (2 failures), delegation narrowing skipped (5), approval signature check skipped (6), release signature check skipped (8) |
 
 **Design and statistical assumptions:**
@@ -30,6 +30,7 @@
 - **Who may do what.** Register and deactivate: an active SERVICE or HUMAN principal. Root grant: an active HUMAN, with a signature over the exact terms. Delegate: the holder of a live parent, attenuation only. Revoke: any grantor at or above the grant. Rescind: the approving human, signed.
 - **Redemption re-checks authority.** A token whose grant chain has since been revoked, expired, or lost an active party, or whose approval was rescinded, is refused at redemption and left `issued`. Revoking such tokens at the moment of the change (RV-11, RV-12, RV-13) is Step 06.
 - **Release payload includes the epoch**, so a signed release cannot be replayed at a later suspension.
+- **Approval recording is atomic with its token** (PR #33 review): `_record_approval` is private to the gateway, its transaction joins `issue()`'s (Store.transaction is re-entrant), so the approval row exists iff its token does; `test_an_approval_row_rolls_back_with_the_issue_that_recorded_it` pins it. `GrantScope.ceilings` is copied into a read-only mapping, so the caller's dict cannot widen a grant afterwards.
 
 **Limitations / deviations:**
 - **Spec §8 amended** by the owner decision above (proposal digest + single use, not decision id).
