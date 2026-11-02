@@ -155,6 +155,10 @@ class ShadowEvidenceLog:
         self.store = ledger.store
         self.label_deadline = label_deadline
         self.clock = clock
+        # effect: called with a trial's partition inside the transaction that resolves it
+        # (label or censor), so state that depends on the counts moves with them
+        # (LifecycleManager registers itself; v3 Step 06, RV-03)
+        self.listeners: list[Callable[[PartitionKey], None]] = []
 
     def open_epoch(self, key: PartitionKey) -> None:
         """
@@ -257,6 +261,7 @@ class ShadowEvidenceLog:
                 "INSERT INTO labels VALUES (?, ?, 0, ?, ?)",
                 (trial_id, label.value, time_text(when), time_us(when)),
             )
+            self._notify(trial.partition)
         return Result(True)
 
     def record_human_review(
@@ -505,6 +510,13 @@ class ShadowEvidenceLog:
                 "INSERT INTO labels VALUES (?, NULL, 1, ?, ?)",
                 (trial_id, time_text(event.occurred_at), time_us(event.occurred_at)),
             )
+            trial = self.trial(trial_id)
+            if trial is not None:
+                self._notify(trial.partition)
+
+    def _notify(self, key: PartitionKey) -> None:
+        for listener in self.listeners:
+            listener(key)
 
     def _quarantine(self, trial_id: str, reason: Reason) -> Result:
         self.ledger.append("shadow.quarantined", trial_id, "controller", {"reason": reason.value})

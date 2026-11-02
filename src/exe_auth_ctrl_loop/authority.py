@@ -151,6 +151,31 @@ class Proposal:
         })
 
 
+def proposal_json(proposal: Proposal) -> str:
+    """The canonical text of a proposal, as stored with its token (schema v5)."""
+    return json.dumps({
+        "proposal_id": proposal.proposal_id, "intent": proposal.intent,
+        "tool_name": proposal.tool_name, "parameters": dict(proposal.parameters),
+        "confidence": proposal.confidence, "requested_effects": sorted(proposal.requested_effects),
+        "partition": proposal.partition.__dict__, "proposer": proposal.proposer,
+        "readiness": proposal.readiness.value, "preconditions": list(proposal.preconditions),
+        "success_criteria": list(proposal.success_criteria),
+        "assumptions": list(proposal.assumptions),
+        "unresolved_questions": list(proposal.unresolved_questions),
+    }, sort_keys=True, separators=(",", ":"), default=str)
+
+
+def proposal_from_json(text: str) -> Proposal:
+    raw = json.loads(text)
+    return Proposal(
+        raw["proposal_id"], raw["intent"], raw["tool_name"], raw["parameters"],
+        raw["confidence"], frozenset(raw["requested_effects"]), PartitionKey(**raw["partition"]),
+        raw["proposer"], ProposalReadiness(raw["readiness"]), tuple(raw["preconditions"]),
+        tuple(raw["success_criteria"]), tuple(raw["assumptions"]),
+        tuple(raw["unresolved_questions"]),
+    )
+
+
 @dataclass(frozen=True)
 class ProposalBundle:
     bundle_id: str
@@ -366,12 +391,18 @@ class EvidenceStore:
             bool(valid), bool(suspended), reason,
         )
 
-    def invalidate(self, key: PartitionKey, reason: str) -> None:
+    def invalidate(self, key: PartitionKey, reason: str, *, revoke_tokens: bool = True) -> None:
         """
         intent: Declare a partition's evidence unusable without deleting the record
-        effect: A new version with valid=False. The controller withholds autonomy, and a
-                gateway holding this store refuses tokens issued against earlier versions.
+        effect: A new version with valid=False. The controller withholds autonomy, and since
+                v3 Step 06 every issued token of the partition is revoked in the same
+                transaction (EVIDENCE_INVALIDATED, RV-02).
+        constraint: revoke_tokens=False only for a caller whose own revoking event covers
+                    the change (a retirement is PARTITION_RETIRED or POLICY_CHANGED), so one
+                    occurrence produces exactly one revoking event (spec §5).
         """
+        from .revocation import revoke  # revocation.py imports this module
+
         with self.store.transaction():
             current = self.get(key)
             if current is None:
@@ -379,6 +410,9 @@ class EvidenceStore:
             self.put(replace(
                 current, version=current.version + 1, valid=False, invalidation_reason=reason,
             ))
+            if revoke_tokens:
+                revoke(self.store, "EVIDENCE_INVALIDATED", "partition = ?",
+                       (partition_text(key),), details={"reason": reason})
 
     def adjudicate(self, key: PartitionKey, outcome: Outcome, autonomous: bool) -> None:
         """
@@ -762,7 +796,7 @@ class ExecutionGateway:
                     partition_text(token.partition), token.policy_version, token.evidence_id,
                     token.evidence_version, time_text(token.expires_at),
                     int(token.human_approved), "issued", None, token.grant_id,
-                    token.requesting_principal, token.approval_id,
+                    token.requesting_principal, token.approval_id, proposal_json(proposal),
                 ),
             )
         return token
@@ -797,6 +831,12 @@ class ExecutionGateway:
                 (token_id,),
             ).rowcount
             if token is None or consumed != 1:
+                if token is not None and token.state == "revoked":
+                    # effect: a revocation names the event that caused it (spec §5)
+                    raise PermissionError(
+                        f"missing, consumed, or revoked token: revoked by "
+                        f"{token.revocation_reason}"
+                    )
                 raise PermissionError("missing, consumed, or revoked token")
             if self.clock() >= token.expires_at:
                 raise PermissionError("expired token")
@@ -924,7 +964,7 @@ class ExecutionGateway:
 _TOKEN_COLUMNS = (
     "token_id, decision_id, proposal_digest, allowed_tool, allowed_effects, partition,"
     " policy_version, evidence_id, evidence_version, expires_at, human_approved, state,"
-    " revocation_reason, grant_id, requesting_principal, approval_id"
+    " revocation_reason, grant_id, requesting_principal, approval_id, proposal"
 )
 _TOKEN_PLACEHOLDERS = ", ".join("?" for _ in _TOKEN_COLUMNS.split(","))
 
@@ -932,7 +972,7 @@ _TOKEN_PLACEHOLDERS = ", ".join("?" for _ in _TOKEN_COLUMNS.split(","))
 def _token(row: tuple[Any, ...]) -> AuthorizationToken:
     (token_id, decision_id, proposal_digest, allowed_tool, effects, partition, policy_version,
      evidence_id, evidence_version, expires_at, human_approved, state, reason, grant_id,
-     requesting_principal, approval_id) = row
+     requesting_principal, approval_id, _proposal) = row
     return AuthorizationToken(
         token_id=token_id,
         decision_id=decision_id,
@@ -953,3 +993,17 @@ def _token(row: tuple[Any, ...]) -> AuthorizationToken:
         requesting_principal=requesting_principal,
         approval_id=approval_id,
     )
+
+
+def select_tokens(
+    conn: Any, where: str, params: Sequence[Any] = (),
+) -> list[tuple[AuthorizationToken, Proposal | None]]:
+    """
+    intent: Tokens matching a SQL condition, each with the proposal it was issued for
+    context: revocation.py uses this to find the tokens in a revoking event's scope;
+             `where` is written by this package, never taken from input
+    """
+    rows = conn.execute(f"SELECT {_TOKEN_COLUMNS} FROM tokens WHERE {where}", tuple(params))
+    return [
+        (_token(row), None if row[-1] is None else proposal_from_json(row[-1])) for row in rows
+    ]

@@ -23,6 +23,7 @@ from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Mapping, TypeGuard
 
 from .authority import AuthorizationToken, Proposal
+from .revocation import revoke
 from .store import Store, canonical_json, partition_text
 
 
@@ -215,13 +216,47 @@ class RiskPolicy:
     ) -> None:
         """
         intent: Replace the rules while keeping what has already been charged
-        effect: A rollback to a stricter version takes effect at the next decision and
-                the next redemption; outstanding tokens are re-checked against it
+        effect: Since v3 Step 06, in one transaction with the change, every issued token for
+                a tool these rules govern is re-checked against the new rules with the
+                proposal stored on it, and those the new rules would refuse are revoked:
+                ENVELOPE_CHANGED (RV-10) when the envelopes changed, else BUDGET_TIGHTENED
+                (RV-09) when budgets or conflicts changed. One update is one event; a
+                version-only update records none.
+        constraint: Tokens issued before schema v5 carry no proposal and are left to the
+                    redemption-time check, which re-runs the same rules.
         """
-        self.version = version
-        self.envelopes = envelopes
-        self.budgets = budgets
-        self.conflicts = conflicts
+        old_tools = self._governed_tools()
+        changed_envelopes = envelopes != self.envelopes
+        changed_budgets = budgets != self.budgets or conflicts != self.conflicts
+        with self.store.transaction():
+            self.version = version
+            self.envelopes = envelopes
+            self.budgets = budgets
+            self.conflicts = conflicts
+            event = ("ENVELOPE_CHANGED" if changed_envelopes
+                     else "BUDGET_TIGHTENED" if changed_budgets else None)
+            tools = old_tools | self._governed_tools()
+            if event is None or not tools:
+                return
+            # a budget with no tool list covers every tool (SequenceBudget.covers)
+            where, params = (
+                ("1 = 1", []) if "*" in tools
+                else (f"allowed_tool IN ({', '.join('?' for _ in tools)})", sorted(tools))
+            )
+            revoke(
+                self.store, event, where, params,
+                refuses=lambda token, proposal: (
+                    proposal is not None and bool(self.redemption_blockers(token, proposal))
+                ),
+                details={"risk_policy_version": version},
+            )
+
+    def _governed_tools(self) -> set[str]:
+        """Tool names these rules govern; "*" when a budget covers every tool."""
+        tools = {envelope.tool_name for envelope in self.envelopes}
+        for budget in self.budgets:
+            tools |= set(budget.tool_names) if budget.tool_names else {"*"}
+        return tools
 
     def classify(self, tool_name: str, parameters: Mapping[str, Any]) -> RiskEnvelope | None:
         candidates = sorted(

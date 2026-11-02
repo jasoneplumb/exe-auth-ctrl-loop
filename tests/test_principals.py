@@ -271,7 +271,8 @@ class GrantTests(Fixture):
         self.principals.revoke_grant(ROOT_GRANT, by="alice")
         with self.assertRaisesRegex(PermissionError, "GRANT_REVOKED"):
             run(self.gateway, token.token_id, p, lambda _: "ran")
-        self.assertEqual(self.gateway.token(token.token_id).state, "issued")
+        # v3 Step 06: revoked at the grant revocation (RV-12), not merely refused
+        self.assertEqual(self.gateway.token(token.token_id).state, "revoked")
 
 
 class LineageTests(Fixture):
@@ -344,8 +345,9 @@ class PermissionEventTests(Fixture):
             with self.subTest(name):
                 before = len(self.ledger.events)
                 call()
-                added = [e.event_type for e in self.ledger.events[before:]]
-                self.assertEqual(added, [event_type])
+                added = [e.event_type for e in self.ledger.events[before:]
+                         if e.event_type in PERMISSION_EVENTS]
+                self.assertEqual(added, [event_type])  # plus any authority.revoked (Step 06)
         self.assertEqual(set(PERMISSION_EVENTS),
                          {event for event, _ in self.mutations().values()})
 

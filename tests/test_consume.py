@@ -152,7 +152,7 @@ class OneTokenPerDecisionTests(StoreCase):
                     "INSERT INTO tokens SELECT 'other', decision_id, proposal_digest,"
                     " allowed_tool, allowed_effects, partition, policy_version, evidence_id,"
                     " evidence_version, expires_at, human_approved, 'issued', NULL,"
-                    " grant_id, requesting_principal, NULL"
+                    " grant_id, requesting_principal, NULL, proposal"
                     " FROM tokens WHERE token_id = ?",
                     (token.token_id,),
                 )
