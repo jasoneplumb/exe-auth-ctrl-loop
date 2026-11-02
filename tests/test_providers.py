@@ -2,6 +2,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
     EvidenceSnapshot,
@@ -120,7 +122,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         return bundle, client
 
     def executor(self, bundle, claude_responses, evidence=True):
-        store = EvidenceStore()
+        store = EvidenceStore(scratch_store())
         if evidence:
             for proposal in bundle.proposals:
                 store.put(EvidenceSnapshot(

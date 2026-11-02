@@ -27,8 +27,8 @@ SEED = (
     "INSERT INTO ledger VALUES (0, 'e', 'a', 'controller', 't', '{}', 'GENESIS', 'h')",
     "INSERT INTO ledger_anchor (sequence, event_hash, anchored_at) VALUES (0, 'h', 't')",
     "INSERT INTO evidence_snapshots VALUES ('k', 1, 'ev', 1, 0, 't', 't', 1, 0, NULL)",
-    "INSERT INTO trials VALUES ('tr', 'shadow', 'k', 'd', 't', 0)",
-    "INSERT INTO labels VALUES ('tr', 'positive', 0, 't')",
+    "INSERT INTO trials VALUES ('tr', 'shadow', 'k', 'd', 't', 0, 0)",
+    "INSERT INTO labels VALUES ('tr', 'positive', 0, 't', 0)",
     "INSERT INTO epochs VALUES ('k', 3)",
     "INSERT INTO lineage VALUES ('k', 'k2', 'KEY_FIELD_CHURN', 't')",
     "INSERT INTO risk_charges (policy_version, budget_id, scope_key, amount, token_id)"
@@ -109,12 +109,12 @@ class AppendOnlyTests(StoreTestCase):
     def test_a_trial_resolves_at_most_once(self):
         with self.assertRaises(sqlite3.IntegrityError):
             with self.store.transaction() as conn:
-                conn.execute("INSERT INTO labels VALUES ('tr', NULL, 1, 't2')")
+                conn.execute("INSERT INTO labels VALUES ('tr', NULL, 1, 't2', 0)")
 
     def test_label_and_censored_are_exclusive(self):
         with self.store.transaction() as conn:
-            conn.execute("INSERT INTO trials VALUES ('tr2', 'shadow', 'k', 'd', 't', 1)")
-        for row in ("('tr2', 'positive', 1, 't')", "('tr2', NULL, 0, 't')"):
+            conn.execute("INSERT INTO trials VALUES ('tr2', 'shadow', 'k', 'd', 't', 0, 1)")
+        for row in ("('tr2', 'positive', 1, 't', 0)", "('tr2', NULL, 0, 't', 0)"):
             with self.subTest(row=row), self.assertRaises(sqlite3.IntegrityError):
                 with self.store.transaction() as conn:
                     conn.execute(f"INSERT INTO labels VALUES {row}")
@@ -161,7 +161,7 @@ class TransactionTests(StoreTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             with self.store.transaction() as conn:
                 conn.execute("PRAGMA defer_foreign_keys = ON")
-                conn.execute("INSERT INTO labels VALUES ('no-such-trial', 'positive', 0, 't')")
+                conn.execute("INSERT INTO labels VALUES ('no-such-trial', 'positive', 0, 't', 0)")
         conn = self.store.connection()
         self.assertFalse(conn.in_transaction)
         with self.store.transaction() as conn:

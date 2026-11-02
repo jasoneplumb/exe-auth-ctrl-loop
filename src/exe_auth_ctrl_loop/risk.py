@@ -9,17 +9,21 @@ Context: The 12-field partition key carries a risk class, and evidence never poo
 Pattern: Envelopes, not key explosion. An envelope is a versioned predicate over the
         arguments of one tool; the lowest-ranked envelope that admits the arguments names
         the risk class. Budgets charge at redemption, under the gateway's lock.
-Future: In-process. Charges live in this object's memory; the guarantee is per policy
-        instance per process, and production needs the same accounting in a durable store.
+Future: Durable since v3 Step 02: charges and the per-partition sequence history are rows
+        of append-only tables in the policy's Store, so a restart keeps every charge and
+        several policy objects over one database share one account. Charging is still
+        settled under the gateway's lock; making it part of the consume transaction is
+        v3 Step 03.
 """
 
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, is_dataclass
 from typing import Any, Mapping, TypeGuard
 
-from .authority import AuthorizationToken, PartitionKey, Proposal
+from .authority import AuthorizationToken, Proposal
+from .store import Store, canonical_json, partition_text
 
 
 def _finite_number(value: object) -> TypeGuard[int | float]:
@@ -195,8 +199,9 @@ class RiskPolicy:
     envelopes: tuple[RiskEnvelope, ...] = ()
     budgets: tuple[SequenceBudget, ...] = ()
     conflicts: frozenset[tuple[str, str]] = frozenset()
-    _charges: dict[tuple[str, Any], _Charges] = field(default_factory=dict, repr=False)
-    _history: dict[PartitionKey, list[str]] = field(default_factory=dict, repr=False)
+    # constraint: keyword-only and required. A policy with no store would keep charges in
+    # memory, which v3 removes (docs/v3/spec.md §2 rule 5, O-7).
+    store: Store = field(kw_only=True, repr=False, compare=False)
 
     def update(
         self,
@@ -248,7 +253,7 @@ class RiskPolicy:
                 # own and must not share one with every other such proposal; it is denied
                 reasons.append(f"BUDGET_SCOPE_ERROR:{budget.budget_id}")
                 continue
-            charges = self._charges.get((budget.budget_id, scope), _Charges())
+            charges = self._totals(budget.budget_id, scope)
             # constraint: the metric is read here for every budget that has one, limit or
             # not, so a non-numeric, non-finite, or negative argument is a denial now
             # rather than an exception in commit() after the token is spent
@@ -263,7 +268,7 @@ class RiskPolicy:
                 reasons.append(f"BUDGET_EXCEEDED:{budget.budget_id}")
             if budget.max_operations is not None and charges.count + 1 > budget.max_operations:
                 reasons.append(f"OPERATION_LIMIT:{budget.budget_id}")
-        for earlier in self._history.get(proposal.partition, ()):
+        for earlier in self._history(proposal):
             if (earlier, proposal.tool_name) in self.conflicts:
                 reasons.append(f"CONFLICTING_ACTION:{earlier}")
                 break
@@ -290,15 +295,60 @@ class RiskPolicy:
                     Must not raise: every amount() read here was already read, for the
                     same proposal and budgets, in redemption_blockers() a moment earlier.
         """
-        for budget in self.budgets:
-            if not budget.covers(proposal.tool_name):
-                continue
-            key = (budget.budget_id, budget.scope_key(proposal))
-            charges = self._charges.setdefault(key, _Charges())
-            charges.total += budget.amount(proposal)
-            charges.count += 1
-        self._history.setdefault(proposal.partition, []).append(proposal.tool_name)
+        with self.store.transaction() as conn:
+            for budget in self.budgets:
+                if not budget.covers(proposal.tool_name):
+                    continue
+                conn.execute(
+                    "INSERT INTO risk_charges"
+                    " (policy_version, budget_id, scope_key, amount, token_id)"
+                    " VALUES (?, ?, ?, ?, ?)",
+                    (self.version, budget.budget_id, _scope_text(budget.scope_key(proposal)),
+                     budget.amount(proposal), token.token_id),
+                )
+            conn.execute(
+                "INSERT INTO risk_history (policy_version, partition, tool_name, token_id)"
+                " VALUES (?, ?, ?, ?)",
+                (self.version, partition_text(proposal.partition), proposal.tool_name,
+                 token.token_id),
+            )
 
     def charged(self, budget_id: str, scope_key: Any) -> tuple[float, int]:
-        charges = self._charges.get((budget_id, scope_key), _Charges())
+        charges = self._totals(budget_id, scope_key)
         return charges.total, charges.count
+
+    def _totals(self, budget_id: str, scope_key: Any) -> _Charges:
+        """
+        intent: The committed total and count for one budget scope
+        constraint: Summed here in commit order, not with SQL SUM, so the total is the same
+                    float the v0.3.1 running sum produced; a different summation order or
+                    SQLite's compensated SUM could move a total across an exact limit
+        """
+        rows = self.store.connection().execute(
+            "SELECT amount FROM risk_charges WHERE budget_id = ? AND scope_key = ?"
+            " ORDER BY charge_id",
+            (budget_id, _scope_text(scope_key)),
+        ).fetchall()
+        total = 0.0
+        for (amount,) in rows:
+            total += amount
+        return _Charges(total, len(rows))
+
+    def _history(self, proposal: Proposal) -> list[str]:
+        return [
+            row[0] for row in self.store.connection().execute(
+                "SELECT tool_name FROM risk_history WHERE partition = ? ORDER BY entry_id",
+                (partition_text(proposal.partition),),
+            )
+        ]
+
+
+def _scope_text(scope: Any) -> str:
+    """
+    intent: A column value that names one budget scope and nothing else
+    effect: A partition scope and an argument value can never collide, because the two
+            kinds carry different prefixes
+    """
+    if is_dataclass(scope) and not isinstance(scope, type):
+        return "partition:" + partition_text(scope)
+    return "value:" + canonical_json(scope)

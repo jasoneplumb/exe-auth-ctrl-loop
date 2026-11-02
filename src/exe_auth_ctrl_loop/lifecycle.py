@@ -6,9 +6,12 @@ Context: Implements the transition contract in docs/v2/spec.md section 9 over th
         this layer decides whether the partition may be autonomous at all.
 Pattern: A table of legal (state, event) pairs. Anything not in the table raises, so no
         code path can move a partition to AUTONOMOUS except QUALIFYING on GATE_MET.
-Future: In-memory. As a RedemptionGuard this manager also refuses an already-issued token
-        once its partition leaves AUTONOMOUS, is retired, or inherits a suspension; the
-        gateway asks it under the consume lock (docs/v2/gateway-redemption.md).
+Future: Durable since v3 Step 02: each partition's record is a row of the `lifecycle`
+        table, and every public method runs as one transaction with the ledger events it
+        writes, so a restart keeps suspensions and lineage flags (closes L4). As a
+        RedemptionGuard this manager also refuses an already-issued token once its
+        partition leaves AUTONOMOUS, is retired, or inherits a suspension; the gateway asks
+        it under the consume lock (docs/v2/gateway-redemption.md).
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from .authority import (
     utcnow,
 )
 from .shadow import Provenance, ShadowEvidenceLog
+from .store import partition_text
 
 
 class LifecycleState(str, Enum):
@@ -96,19 +100,24 @@ class LifecycleManager:
         controller: AuthorityController,
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
+        # constraint: one database for the record, the evidence it publishes, and the
+        # ledger events it writes, so a transition and its record commit together or not
+        if shadow.store is not store.store:
+            raise ValueError("the shadow log and the evidence store must share one Store")
         self.shadow = shadow
         self.ledger = shadow.ledger
         self.store = store
+        self.db = store.store
         self.policy = policy
         self.controller = controller
         self.clock = clock
-        self._records: dict[PartitionKey, PartitionRecord] = {}
 
     def record(self, key: PartitionKey) -> PartitionRecord | None:
-        return self._records.get(key)
+        """A copy of the stored record; changing it changes nothing in the database."""
+        return self._load(key)
 
     def state(self, key: PartitionKey) -> LifecycleState:
-        record = self._records.get(key)
+        record = self._load(key)
         return record.state if record else LifecycleState.UNESTABLISHED
 
     def evaluate(self, proposal: Proposal) -> Decision:
@@ -124,9 +133,10 @@ class LifecycleManager:
                     known to the guard alone.
         """
         key = proposal.partition
-        state = self.refresh(key)
-        decision = self.controller.evaluate(proposal)
-        record = self._records[key]
+        with self.db.transaction():
+            state = self.refresh(key)
+            decision = self.controller.evaluate(proposal)
+            record = self._require(key)
         extra = self._blockers(key, record)
         # constraint: a retired or lineage-suspended partition keeps its old state but has
         # no authority, so the state alone is not the test
@@ -157,10 +167,14 @@ class LifecycleManager:
         effect: Registers the partition on first sight (T-01), retires it when its policy
                 version no longer matches (T-19), and otherwise moves only along TRANSITIONS
         """
-        record = self._records.get(key)
+        with self.db.transaction():
+            return self._refresh(key)
+
+    def _refresh(self, key: PartitionKey) -> LifecycleState:
+        record = self._load(key)
         if record is None:
             record = PartitionRecord(TRANSITIONS[(None, E.FIRST_PROPOSAL)])
-            self._records[key] = record
+            self._save(key, record)
             self._log(key, record, None, E.FIRST_PROPOSAL, ())
         if not record.retired and key.policy_version != self.policy.version:
             self._retire(key, record, "POLICY_CHANGE")
@@ -199,8 +213,12 @@ class LifecycleManager:
         constraint: Human-approved executions are excluded from evidence but not from this
                     safety signal. Suspension persists until release().
         """
+        with self.db.transaction():
+            self._record_severe(key, provenance, reason)
+
+    def _record_severe(self, key: PartitionKey, provenance: Provenance, reason: str) -> None:
         self.refresh(key)
-        record = self._records[key]
+        record = self._require(key)
         reasons = (reason, f"PROVENANCE_{provenance.value.upper()}")
         if record.retired:
             # effect: a retired partition routes nothing and cannot be released, so
@@ -225,7 +243,11 @@ class LifecycleManager:
         """
         if not actor or not reason:
             raise ValueError("release requires a named actor and a reason")
-        record = self._records.get(key)
+        with self.db.transaction():
+            self._release(key, actor, reason)
+
+    def _release(self, key: PartitionKey, actor: str, reason: str) -> None:
+        record = self._load(key)
         if record is None or (
             record.state != LifecycleState.SUSPENDED and not record.lineage_suspended
         ):
@@ -239,6 +261,7 @@ class LifecycleManager:
             record.suspension_reason = None
             self._move(key, record, E.HUMAN_RELEASE, (f"RELEASED_BY:{actor}", reason))
         else:
+            self._save(key, record)
             self._log(key, record, record.state, None, ("LINEAGE_RELEASED", actor, reason))
         self._sync_store(key, record)
 
@@ -251,14 +274,23 @@ class LifecycleManager:
         """
         if old == new:
             raise ValueError("churn requires a different partition key")
-        self.refresh(old)
-        previous = self._records[old]
-        self._retire(old, previous, "KEY_FIELD_CHURN")
-        self.refresh(new)
-        if previous.state == LifecycleState.SUSPENDED or previous.lineage_suspended:
-            successor = self._records[new]
-            successor.lineage_suspended = True
-            self._log(new, successor, successor.state, None, ("LINEAGE_SUSPENDED",))
+        with self.db.transaction() as conn:
+            self.refresh(old)
+            previous = self._require(old)
+            self._retire(old, previous, "KEY_FIELD_CHURN")
+            # effect: the edge is recorded for every churn, suspended or not, so lineage
+            # is a durable fact rather than only a flag on the successor
+            conn.execute(
+                "INSERT OR IGNORE INTO lineage VALUES (?, ?, ?, ?)",
+                (partition_text(old), partition_text(new), "KEY_FIELD_CHURN",
+                 self.clock().isoformat()),
+            )
+            self.refresh(new)
+            if previous.state == LifecycleState.SUSPENDED or previous.lineage_suspended:
+                successor = self._require(new)
+                successor.lineage_suspended = True
+                self._save(new, successor)
+                self._log(new, successor, successor.state, None, ("LINEAGE_SUSPENDED",))
 
     def commit(self, token: AuthorizationToken, proposal: Proposal) -> None:
         """RedemptionGuard: the lifecycle charges nothing at redemption."""
@@ -281,7 +313,7 @@ class LifecycleManager:
         effect: An evidence-based token needs AUTONOMOUS; a human-approved one survives a
                 non-autonomous state but not retirement, lineage suspension, or suspension
         """
-        record = self._records.get(token.partition)
+        record = self._load(token.partition)
         if record is None:
             return ()
         reasons = list(self._blockers(token.partition, record))
@@ -329,6 +361,7 @@ class LifecycleManager:
                 holds whether or not this manager is also registered as a guard.
         """
         record.retired = True
+        self._save(key, record)
         current = self.store.get(key)
         if current is not None and current.valid:
             self.store.invalidate(key, f"PARTITION_RETIRED:{reason}")
@@ -346,7 +379,39 @@ class LifecycleManager:
             raise ValueError(f"illegal lifecycle transition: {record.state.value} on {event.value}")
         previous = record.state
         record.state = target
+        self._save(key, record)
         self._log(key, record, previous, event, reasons)
+
+    def _load(self, key: PartitionKey) -> PartitionRecord | None:
+        row = self.db.connection().execute(
+            "SELECT state, epoch, retired, lineage_suspended, suspension_reason"
+            " FROM lifecycle WHERE partition = ?",
+            (partition_text(key),),
+        ).fetchone()
+        if row is None:
+            return None
+        state, epoch, retired, lineage_suspended, suspension_reason = row
+        return PartitionRecord(
+            LifecycleState(state), epoch, bool(retired), bool(lineage_suspended),
+            suspension_reason,
+        )
+
+    def _require(self, key: PartitionKey) -> PartitionRecord:
+        record = self._load(key)
+        if record is None:
+            raise KeyError("partition has no lifecycle record")
+        return record
+
+    def _save(self, key: PartitionKey, record: PartitionRecord) -> None:
+        self.db.connection().execute(
+            "INSERT INTO lifecycle VALUES (?, ?, ?, ?, ?, ?)"
+            " ON CONFLICT (partition) DO UPDATE SET state = excluded.state,"
+            " epoch = excluded.epoch, retired = excluded.retired,"
+            " lineage_suspended = excluded.lineage_suspended,"
+            " suspension_reason = excluded.suspension_reason",
+            (partition_text(key), record.state.value, record.epoch, int(record.retired),
+             int(record.lineage_suspended), record.suspension_reason),
+        )
 
     def _log(
         self,

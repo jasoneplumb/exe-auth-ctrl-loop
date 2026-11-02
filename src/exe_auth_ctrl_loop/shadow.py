@@ -6,14 +6,15 @@ Context: v1 counts only autonomous outcomes, but autonomy needs evidence, so an 
         the counts as an EvidenceSnapshot the existing controller already understands.
 Pattern: Freeze, then label. The candidate's digest and a ledger record exist before any
         human sees it, and every later record refers to that digest rather than replacing it.
-Future: In-memory and single-process, like the ledger it writes to. Labels from an oracle
+Future: Durable since v3 Step 02, in the ledger's database. Labels from an oracle
         estimate oracle-adjudicated acceptability, not live side-effect reliability
-        (docs/v2/spec.md section 5); the bound is still the v1 Wilson bound until Step 04.
+        (docs/v2/spec.md section 5).
 """
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+import json
+from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Callable
@@ -27,6 +28,7 @@ from .authority import (
     utcnow,
 )
 from .ledger import EventLedger
+from .store import Store, delta_us, partition_text, time_text, time_us
 
 
 class Provenance(str, Enum):
@@ -131,12 +133,16 @@ def _partition_payload(key: PartitionKey) -> dict[str, str]:
 class ShadowEvidenceLog:
     """
     intent: Hold the frozen trials and their labels, and nothing a reviewer can edit
-    method: Every state change is appended to the ledger first; counts derive from trials
+    method: Every state change is appended to the ledger first; counts derive from trials.
+            Each change and its ledger record are one transaction, so neither can exist
+            without the other.
     constraint: Human review records are appended but never touch trial state. The only
                 ways a trial leaves PENDING are an oracle label for its exact digest or
                 the label deadline, so neither approval nor rejection can discard it.
     effect: Rejected requests are quarantined with a reason code and logged, so a replay
             of the ledger reproduces both the counts and what was refused.
+    context: Trials, labels, and epoch floors live in the ledger's database (store.py), in
+             append-only tables, so a restart keeps every pending trial and its deadline.
     """
 
     def __init__(
@@ -146,13 +152,9 @@ class ShadowEvidenceLog:
         clock: Callable[[], datetime] = utcnow,
     ) -> None:
         self.ledger = ledger
+        self.store = ledger.store
         self.label_deadline = label_deadline
         self.clock = clock
-        self._trials: dict[str, ShadowTrial] = {}
-        self._labels: dict[str, TrialLabel] = {}
-        self._censored: set[str] = set()
-        self._resolved_at: dict[str, datetime] = {}
-        self._epoch_floor: dict[PartitionKey, int] = {}
 
     def open_epoch(self, key: PartitionKey) -> None:
         """
@@ -160,11 +162,14 @@ class ShadowEvidenceLog:
         effect: Trials frozen before this ledger event stop counting, so data gathered
                 around the incident cannot requalify the partition on the same day
         """
-        event = self.ledger.append(
-            "shadow.epoch_opened", digest(_partition_payload(key))[:16], "controller",
-            {"partition": _partition_payload(key)},
-        )
-        self._epoch_floor[key] = event.sequence
+        with self.store.transaction() as conn:
+            event = self.ledger.append(
+                "shadow.epoch_opened", digest(_partition_payload(key))[:16], "controller",
+                {"partition": _partition_payload(key)},
+            )
+            conn.execute(
+                "INSERT INTO epochs VALUES (?, ?)", (partition_text(key), event.sequence)
+            )
 
     def freeze(
         self,
@@ -177,25 +182,27 @@ class ShadowEvidenceLog:
         effect: The ledger event is the pre-review commitment; frozen_sequence orders it
                 before any human_review or label event for the same trial
         """
-        if trial_id in self._trials:
-            return self._quarantine(trial_id, Reason.DUPLICATE_TRIAL)
-        now = self.clock()
-        event = self.ledger.append(
-            "shadow.frozen",
-            trial_id,
-            "controller",
-            {
-                "provenance": provenance.value,
-                "partition": _partition_payload(proposal.partition),
-                "proposal_digest": proposal.proposal_digest,
-                "frozen_at": now.isoformat(),
-            },
-            now,
-        )
-        self._trials[trial_id] = ShadowTrial(
-            trial_id, provenance, proposal.partition, proposal.proposal_digest, now,
-            event.sequence,
-        )
+        with self.store.transaction() as conn:
+            if self.trial(trial_id) is not None:
+                return self._quarantine(trial_id, Reason.DUPLICATE_TRIAL)
+            now = self.clock()
+            event = self.ledger.append(
+                "shadow.frozen",
+                trial_id,
+                "controller",
+                {
+                    "provenance": provenance.value,
+                    "partition": _partition_payload(proposal.partition),
+                    "proposal_digest": proposal.proposal_digest,
+                    "frozen_at": now.isoformat(),
+                },
+                now,
+            )
+            conn.execute(
+                "INSERT INTO trials VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (trial_id, provenance.value, partition_text(proposal.partition),
+                 proposal.proposal_digest, time_text(now), time_us(now), event.sequence),
+            )
         return Result(True)
 
     def adjudicate(
@@ -215,38 +222,41 @@ class ShadowEvidenceLog:
                     quarantined; a late label also censors the trial so a favorable
                     label cannot be held back until it is convenient.
         """
-        trial = self._trials.get(trial_id)
-        when = labeled_at or self.clock()
-        if trial is None:
-            return self._quarantine(trial_id, Reason.UNKNOWN_TRIAL)
-        if partition != trial.partition:
-            return self._quarantine(trial_id, Reason.WRONG_PARTITION)
-        if proposal_digest != trial.proposal_digest:
-            return self._quarantine(trial_id, Reason.DIGEST_MISMATCH)
-        if self.status(trial_id) != TrialStatus.PENDING:
-            return self._quarantine(trial_id, Reason.ALREADY_ADJUDICATED)
-        if when < trial.frozen_at:
-            return self._quarantine(trial_id, Reason.LABEL_BEFORE_FREEZE)
-        if when > trial.frozen_at + self.label_deadline:
-            self._censor(trial_id, Reason.LATE_LABEL)
-            return self._quarantine(trial_id, Reason.LATE_LABEL)
-        self.ledger.append(
-            "shadow.labeled",
-            trial_id,
-            oracle.oracle_id,
-            {
-                "label": label.value,
-                "proposal_digest": proposal_digest,
-                "oracle_id": oracle.oracle_id,
-                "oracle_version": oracle.oracle_version,
-                "oracle_kind": oracle.kind.value,
-                "validity_scope": oracle.validity_scope,
-                "labeled_at": when.isoformat(),
-            },
-            when,
-        )
-        self._labels[trial_id] = label
-        self._resolved_at[trial_id] = when
+        with self.store.transaction() as conn:
+            trial = self.trial(trial_id)
+            when = labeled_at or self.clock()
+            if trial is None:
+                return self._quarantine(trial_id, Reason.UNKNOWN_TRIAL)
+            if partition != trial.partition:
+                return self._quarantine(trial_id, Reason.WRONG_PARTITION)
+            if proposal_digest != trial.proposal_digest:
+                return self._quarantine(trial_id, Reason.DIGEST_MISMATCH)
+            if self.status(trial_id) != TrialStatus.PENDING:
+                return self._quarantine(trial_id, Reason.ALREADY_ADJUDICATED)
+            if when < trial.frozen_at:
+                return self._quarantine(trial_id, Reason.LABEL_BEFORE_FREEZE)
+            if when > trial.frozen_at + self.label_deadline:
+                self._censor(trial_id, Reason.LATE_LABEL)
+                return self._quarantine(trial_id, Reason.LATE_LABEL)
+            self.ledger.append(
+                "shadow.labeled",
+                trial_id,
+                oracle.oracle_id,
+                {
+                    "label": label.value,
+                    "proposal_digest": proposal_digest,
+                    "oracle_id": oracle.oracle_id,
+                    "oracle_version": oracle.oracle_version,
+                    "oracle_kind": oracle.kind.value,
+                    "validity_scope": oracle.validity_scope,
+                    "labeled_at": when.isoformat(),
+                },
+                when,
+            )
+            conn.execute(
+                "INSERT INTO labels VALUES (?, ?, 0, ?, ?)",
+                (trial_id, label.value, time_text(when), time_us(when)),
+            )
         return Result(True)
 
     def record_human_review(
@@ -261,7 +271,7 @@ class ShadowEvidenceLog:
         effect: Appends a record and returns. The trial, its digest, and its label slot are
                 untouched, and a rewrite is only a digest in the record, never a trial.
         """
-        trial = self._trials.get(trial_id)
+        trial = self.trial(trial_id)
         if trial is None:
             return self._quarantine(trial_id, Reason.UNKNOWN_TRIAL)
         self.ledger.append(
@@ -282,50 +292,77 @@ class ShadowEvidenceLog:
         intent: Turn missing labels into visible censoring instead of silent drops
         effect: Pending trials past the deadline become inconclusive, which counts in n
                 and never as a success, so non-response cannot raise the bound
+        constraint: "Past the deadline" is strict, `now > frozen_at + deadline`, compared
+                    on integer microseconds so the comparison is by instant
         """
-        now = self.clock()
-        expired = [
-            t.trial_id
-            for t in self._trials.values()
-            if self.status(t.trial_id) == TrialStatus.PENDING
-            and now > t.frozen_at + self.label_deadline
-        ]
-        for trial_id in expired:
-            self._censor(trial_id, Reason.LABEL_DEADLINE)
+        with self.store.transaction() as conn:
+            cutoff = time_us(self.clock()) - delta_us(self.label_deadline)
+            expired = [
+                row[0] for row in conn.execute(
+                    "SELECT t.trial_id FROM trials t LEFT JOIN labels l USING (trial_id)"
+                    " WHERE l.trial_id IS NULL AND t.frozen_us < ?"
+                    " ORDER BY t.frozen_sequence",
+                    (cutoff,),
+                )
+            ]
+            for trial_id in expired:
+                self._censor(trial_id, Reason.LABEL_DEADLINE)
         return expired
 
     def status(self, trial_id: str) -> TrialStatus:
-        if trial_id in self._labels:
-            return TrialStatus.LABELED
-        if trial_id in self._censored:
-            return TrialStatus.CENSORED
-        return TrialStatus.PENDING
+        row = self.store.connection().execute(
+            "SELECT censored FROM labels WHERE trial_id = ?", (trial_id,)
+        ).fetchone()
+        if row is None:
+            return TrialStatus.PENDING
+        return TrialStatus.CENSORED if row[0] else TrialStatus.LABELED
 
     def trial(self, trial_id: str) -> ShadowTrial | None:
-        return self._trials.get(trial_id)
+        row = self.store.connection().execute(
+            "SELECT provenance, partition, proposal_digest, frozen_at, frozen_sequence"
+            " FROM trials WHERE trial_id = ?",
+            (trial_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        provenance, partition, proposal_digest, frozen_at, sequence = row
+        return ShadowTrial(
+            trial_id, Provenance(provenance), PartitionKey(**json.loads(partition)),
+            proposal_digest, datetime.fromisoformat(frozen_at), sequence,
+        )
 
     def counts(self, key: PartitionKey, provenance: Provenance) -> Counts:
-        counts = Counts()
-        for trial in self._counted_trials(key, provenance):
-            counts = replace(counts, frozen=counts.frozen + 1)
-            status = self.status(trial.trial_id)
-            label = self._labels.get(trial.trial_id)
-            if status == TrialStatus.PENDING:
-                counts = replace(counts, pending=counts.pending + 1)
-            elif label == TrialLabel.POSITIVE:
-                counts = replace(counts, positive=counts.positive + 1)
-            elif label == TrialLabel.NEGATIVE:
-                counts = replace(counts, negative=counts.negative + 1)
-            else:
-                counts = replace(counts, inconclusive=counts.inconclusive + 1)
-        return counts
+        return self._tally(key).get(provenance, Counts())
 
-    def _counted_trials(self, key: PartitionKey, provenance: Provenance) -> list[ShadowTrial]:
-        floor = self._epoch_floor.get(key, -1)
-        return [
-            t for t in self._trials.values()
-            if t.partition == key and t.provenance == provenance and t.frozen_sequence > floor
-        ]
+    def _tally(self, key: PartitionKey) -> dict[Provenance, Counts]:
+        """
+        intent: Every provenance's counts for the current epoch, in one query
+        method: A trial with no labels row is pending; a censored row or an INCONCLUSIVE
+                label is inconclusive, exactly as v0.3.1 classified them
+        """
+        rows = self.store.connection().execute(
+            "SELECT t.provenance, COUNT(*),"
+            " SUM(l.trial_id IS NULL),"
+            " SUM(l.label = 'positive'),"
+            " SUM(l.label = 'negative'),"
+            " SUM(l.censored = 1 OR l.label = 'inconclusive')"
+            " FROM trials t LEFT JOIN labels l USING (trial_id)"
+            " WHERE t.partition = ? AND t.frozen_sequence > ?"
+            " GROUP BY t.provenance",
+            (partition_text(key), self._floor(key)),
+        ).fetchall()
+        return {
+            Provenance(p): Counts(frozen, positive or 0, negative or 0, inconclusive or 0,
+                                  pending or 0)
+            for p, frozen, pending, positive, negative, inconclusive in rows
+        }
+
+    def _floor(self, key: PartitionKey) -> int:
+        row = self.store.connection().execute(
+            "SELECT MAX(floor_sequence) FROM epochs WHERE partition = ?",
+            (partition_text(key),),
+        ).fetchone()
+        return -1 if row[0] is None else int(row[0])
 
     def snapshot(
         self,
@@ -345,7 +382,8 @@ class ShadowEvidenceLog:
                     design; what withdraws a token is the snapshot's suspended/valid
                     flags, which retirement, suspension, and declared invalidation set.
         """
-        parts = [self.counts(key, p) for p in COUNTING_PROVENANCE]
+        tally = self._tally(key)
+        parts = [tally.get(p, Counts()) for p in COUNTING_PROVENANCE]
         frozen = sum(c.frozen for c in parts)
         if frozen == 0:
             return None
@@ -366,12 +404,15 @@ class ShadowEvidenceLog:
 
     def _evidence_time(self, key: PartitionKey) -> datetime:
         """Latest label or censor time among counting trials, so re-publishing never freshens."""
-        times = [
-            self._resolved_at.get(t.trial_id, t.frozen_at)
-            for p in COUNTING_PROVENANCE
-            for t in self._counted_trials(key, p)
-        ]
-        return max(times)
+        marks = ",".join("?" for _ in COUNTING_PROVENANCE)
+        row = self.store.connection().execute(
+            "SELECT COALESCE(l.resolved_at, t.frozen_at)"
+            " FROM trials t LEFT JOIN labels l USING (trial_id)"
+            f" WHERE t.partition = ? AND t.frozen_sequence > ? AND t.provenance IN ({marks})"
+            " ORDER BY COALESCE(l.resolved_us, t.frozen_us) DESC, t.frozen_sequence LIMIT 1",
+            (partition_text(key), self._floor(key), *(p.value for p in COUNTING_PROVENANCE)),
+        ).fetchone()
+        return datetime.fromisoformat(row[0])
 
     def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime) -> bool:
         """
@@ -392,6 +433,7 @@ class ShadowEvidenceLog:
     def replay(
         cls,
         ledger: EventLedger,
+        into: Store,
         label_deadline: timedelta = timedelta(days=1),
         clock: Callable[[], datetime] = utcnow,
     ) -> ShadowEvidenceLog:
@@ -399,38 +441,59 @@ class ShadowEvidenceLog:
         intent: Rebuild the log from the ledger alone, to show counts are reproducible
         constraint: Refuses a ledger whose chain does not verify. Quarantine and review
                     events are skipped because they never changed evidence.
+        constraint: `into` must be a different, empty database: the rebuilt trials keep the
+                    source ledger's sequence numbers, and mixing them with another log's
+                    rows would pool two histories. The rebuilt log's own ledger is `into`'s.
         """
         if not ledger.verify():
             raise ValueError("ledger chain does not verify")
-        log = cls(EventLedger(), label_deadline, clock)
-        for event in ledger.events:
-            payload = event.payload
-            if event.event_type == "shadow.frozen":
-                key = PartitionKey(**payload["partition"])
-                log._trials[event.aggregate_id] = ShadowTrial(
-                    event.aggregate_id,
-                    Provenance(payload["provenance"]),
-                    key,
-                    payload["proposal_digest"],
-                    datetime.fromisoformat(payload["frozen_at"]),
-                    event.sequence,
-                )
-            elif event.event_type == "shadow.labeled":
-                log._labels[event.aggregate_id] = TrialLabel(payload["label"])
-                log._resolved_at[event.aggregate_id] = datetime.fromisoformat(payload["labeled_at"])
-            elif event.event_type == "shadow.censored":
-                log._censored.add(event.aggregate_id)
-                log._resolved_at[event.aggregate_id] = event.occurred_at
-            elif event.event_type == "shadow.epoch_opened":
-                log._epoch_floor[PartitionKey(**payload["partition"])] = event.sequence
+        conn = into.connection()
+        if any(
+            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+            for table in ("trials", "labels", "epochs", "ledger")
+        ):
+            raise ValueError("replay needs an empty database")
+        log = cls(EventLedger(into), label_deadline, clock)
+        with into.transaction() as conn:
+            for event in ledger.events:
+                payload = event.payload
+                if event.event_type == "shadow.frozen":
+                    frozen_at = datetime.fromisoformat(payload["frozen_at"])
+                    key = PartitionKey(**payload["partition"])
+                    conn.execute(
+                        "INSERT INTO trials VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (event.aggregate_id, payload["provenance"], partition_text(key),
+                         payload["proposal_digest"], time_text(frozen_at), time_us(frozen_at),
+                         event.sequence),
+                    )
+                elif event.event_type == "shadow.labeled":
+                    when = datetime.fromisoformat(payload["labeled_at"])
+                    conn.execute(
+                        "INSERT INTO labels VALUES (?, ?, 0, ?, ?)",
+                        (event.aggregate_id, payload["label"], time_text(when), time_us(when)),
+                    )
+                elif event.event_type == "shadow.censored":
+                    conn.execute(
+                        "INSERT INTO labels VALUES (?, NULL, 1, ?, ?)",
+                        (event.aggregate_id, time_text(event.occurred_at),
+                         time_us(event.occurred_at)),
+                    )
+                elif event.event_type == "shadow.epoch_opened":
+                    key = PartitionKey(**payload["partition"])
+                    conn.execute(
+                        "INSERT INTO epochs VALUES (?, ?)", (partition_text(key), event.sequence)
+                    )
         return log
 
     def _censor(self, trial_id: str, reason: Reason) -> None:
-        event = self.ledger.append(
-            "shadow.censored", trial_id, "controller", {"reason": reason.value}, self.clock()
-        )
-        self._censored.add(trial_id)
-        self._resolved_at[trial_id] = event.occurred_at
+        with self.store.transaction() as conn:
+            event = self.ledger.append(
+                "shadow.censored", trial_id, "controller", {"reason": reason.value}, self.clock()
+            )
+            conn.execute(
+                "INSERT INTO labels VALUES (?, NULL, 1, ?, ?)",
+                (trial_id, time_text(event.occurred_at), time_us(event.occurred_at)),
+            )
 
     def _quarantine(self, trial_id: str, reason: Reason) -> Result:
         self.ledger.append("shadow.quarantined", trial_id, "controller", {"reason": reason.value})

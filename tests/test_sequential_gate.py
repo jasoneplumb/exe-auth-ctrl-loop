@@ -12,6 +12,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from fractions import Fraction
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop import (
     AuthorityController,
     EvidenceSnapshot,
@@ -178,7 +180,7 @@ class PolicyIntegrationTests(unittest.TestCase):
         # 100/100 at alpha=.05 clears .90, but n_min=200 must still block in the controller
         now = datetime(2026, 10, 1, tzinfo=timezone.utc)
         key = PartitionKey("o", "m", "p", "a", "m", "e", "t", "pol1", "env", "c", "b", "low")
-        store = EvidenceStore()
+        store = EvidenceStore(scratch_store())
         store.put(EvidenceSnapshot("e", 1, key, 100, 0, now, now))
         proposal = Proposal("p", "i", "t", {}, .9, frozenset(), key, "o")
         policy = Policy("pol1", {"low": .90}, 200, timedelta(days=30), 0.0)

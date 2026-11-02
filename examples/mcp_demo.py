@@ -9,7 +9,9 @@ Future: Swap the shared secret for an asymmetric scheme so servers verify withou
 """
 
 import random
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any, Mapping
 
 from exe_auth_ctrl_loop.authority import (
@@ -28,6 +30,7 @@ from exe_auth_ctrl_loop.mcp import (
     build_call_meta,
     verify_call_meta,
 )
+from exe_auth_ctrl_loop.store import Store
 
 NOW = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
 # constraint: a literal secret is demo-only. In production the gateway and server hold it
@@ -89,7 +92,10 @@ proposal = Proposal(
     {"order_id": 4815, "usd": 24.00}, .97,
     frozenset({"refund:create"}), key, "openai",
 )
-evidence = EvidenceStore()
+# Authority state is durable since v3: evidence lives in a database file. A throwaway
+# directory keeps this demo self-contained; a deployment passes a real path.
+_scratch = tempfile.TemporaryDirectory()
+evidence = EvidenceStore(Store(Path(_scratch.name) / "authority.db"))
 evidence.put(EvidenceSnapshot("ev-88", 4, key, 297, 3, NOW - timedelta(days=14), NOW))
 policy = Policy(
     "policy-v5", {"financial-low": .95}, n_min=100,

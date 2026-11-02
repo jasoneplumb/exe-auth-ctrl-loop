@@ -5,7 +5,9 @@ Use pinned model identifiers when collecting evidence; aliases can move.
 """
 
 import os
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -16,6 +18,7 @@ from exe_auth_ctrl_loop.authority import (
 )
 from exe_auth_ctrl_loop.executor import ClaudeExecutionAgent
 from exe_auth_ctrl_loop.providers import OpenAIProposalGenerator
+from exe_auth_ctrl_loop.store import Store
 from exe_auth_ctrl_loop.tools import ToolDefinition, ToolRegistry
 
 
@@ -64,7 +67,10 @@ bundle = generator.generate(
 )
 print({"bundle": bundle.bundle_id, "readiness": bundle.readiness.value})
 
-evidence = EvidenceStore()
+# Authority state is durable since v3: evidence lives in a database file. A throwaway
+# directory keeps this demo self-contained; a deployment passes a real path.
+_scratch = tempfile.TemporaryDirectory()
+evidence = EvidenceStore(Store(Path(_scratch.name) / "authority.db"))
 for proposal in bundle.proposals:
     # Illustrative seeded evidence only. Production evidence must come from adjudicated outcomes.
     evidence.put(EvidenceSnapshot(

@@ -1,7 +1,9 @@
 """Offline example of the deterministic authority and gateway path."""
 
 import random
+import tempfile
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -13,6 +15,7 @@ from exe_auth_ctrl_loop.authority import (
     Proposal,
     Route,
 )
+from exe_auth_ctrl_loop.store import Store
 
 now = datetime.now(timezone.utc)
 key = PartitionKey(
@@ -26,7 +29,10 @@ proposal = Proposal(
     {"order_id": 4815, "usd": 24.00}, .97,
     frozenset({"refund:create"}), key, "openai",
 )
-evidence = EvidenceStore()
+# Authority state is durable since v3: evidence lives in a database file. A throwaway
+# directory keeps this demo self-contained; a deployment passes a real path.
+_scratch = tempfile.TemporaryDirectory()
+evidence = EvidenceStore(Store(Path(_scratch.name) / "authority.db"))
 evidence.put(EvidenceSnapshot(
     "ev-88", 4, key, 297, 3, now - timedelta(days=14), now,
 ))

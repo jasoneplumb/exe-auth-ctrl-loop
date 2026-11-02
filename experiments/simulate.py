@@ -15,8 +15,11 @@ Future: Everything else is the production code path. If the stack changes, these
 from __future__ import annotations
 
 import random
+import tempfile
+import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from exe_auth_ctrl_loop import (
@@ -43,6 +46,7 @@ from exe_auth_ctrl_loop import (
     Route,
     SequenceBudget,
     ShadowEvidenceLog,
+    Store,
     TrialLabel,
 )
 
@@ -174,7 +178,7 @@ def make_key(prompt_version: str, risk_class: str) -> PartitionKey:
     )
 
 
-def make_risk_policy(cfg: ScenarioConfig) -> RiskPolicy:
+def make_risk_policy(cfg: ScenarioConfig, store: Store) -> RiskPolicy:
     envelopes = (
         RiskEnvelope("create_refund", "low", 0, frozenset({"refund:write"}),
                      (Bound("usd", maximum=100.0, minimum=0.0), OneOf("payee", PAYEES))),
@@ -185,7 +189,12 @@ def make_risk_policy(cfg: ScenarioConfig) -> RiskPolicy:
     if cfg.budget_limit is not None:
         budgets = (SequenceBudget("refund-total", frozenset({"create_refund"}), "partition",
                                   "usd", cfg.budget_limit),)
-    return RiskPolicy("risk-v1", envelopes, budgets)
+    return RiskPolicy("risk-v1", envelopes, budgets, store=store)
+
+
+def _discard(db: Store, directory: tempfile.TemporaryDirectory[str]) -> None:
+    db.close()
+    directory.cleanup()
 
 
 class Simulation:
@@ -199,8 +208,13 @@ class Simulation:
         self.metrics = RunMetrics(cfg.name, cfg.comparator, seed, cfg.horizon)
         self.trace: list[dict[str, Any]] | None = [] if trace else None
 
-        self.ledger = EventLedger()
-        self.store = EvidenceStore()
+        # One database per run, in a throwaway directory removed when the run object is
+        # collected. Every component shares it, as the lifecycle requires.
+        directory = tempfile.TemporaryDirectory()
+        self.db = Store(Path(directory.name) / "run.db")
+        weakref.finalize(self, _discard, self.db, directory)
+        self.ledger = EventLedger(self.db)
+        self.store = EvidenceStore(self.db)
         self.shadow = ShadowEvidenceLog(
             self.ledger, timedelta(minutes=cfg.label_deadline), self.clock
         )
@@ -210,7 +224,7 @@ class Simulation:
             token_ttl=timedelta(minutes=cfg.token_ttl),
             alpha=cfg.alpha, estimator=cfg.estimator,
         )
-        self.risk = make_risk_policy(cfg)
+        self.risk = make_risk_policy(cfg, self.db)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(seed * 7919 + 1), self.clock, guards=(self.risk,)
         )

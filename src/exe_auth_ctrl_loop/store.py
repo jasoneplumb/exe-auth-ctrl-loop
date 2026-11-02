@@ -18,6 +18,7 @@ import sqlite3
 import threading
 from contextlib import contextmanager
 from dataclasses import asdict, is_dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterator
 
 # constraint: the tables whose rows are history. UPDATE and DELETE on them are refused by
@@ -71,6 +72,7 @@ _SCHEMA_V1 = (
         partition TEXT NOT NULL,
         proposal_digest TEXT NOT NULL,
         frozen_at TEXT NOT NULL,
+        frozen_us INTEGER NOT NULL,
         frozen_sequence INTEGER NOT NULL
     )""",
     # constraint: one row per trial, so a trial is labelled or censored at most once by
@@ -80,6 +82,7 @@ _SCHEMA_V1 = (
         label TEXT,
         censored INTEGER NOT NULL,
         resolved_at TEXT NOT NULL,
+        resolved_us INTEGER NOT NULL,
         CHECK ((censored = 1) = (label IS NULL))
     )""",
     """CREATE TABLE epochs (
@@ -117,8 +120,11 @@ _SCHEMA_V1 = (
         tool_name TEXT NOT NULL,
         token_id TEXT NOT NULL
     )""",
-    "CREATE INDEX risk_charges_scope ON risk_charges (policy_version, budget_id, scope_key)",
-    "CREATE INDEX risk_history_partition ON risk_history (policy_version, partition)",
+    # constraint: charges are keyed by budget and scope, not policy version; they survive
+    # RiskPolicy.update() exactly as the v0.3.1 in-memory totals did
+    "CREATE INDEX risk_charges_scope ON risk_charges (budget_id, scope_key)",
+    "CREATE INDEX risk_history_partition ON risk_history (partition)",
+    "CREATE INDEX trials_partition ON trials (partition, frozen_sequence)",
     *(
         statement
         for table in APPEND_ONLY_TABLES
@@ -138,6 +144,32 @@ MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1,)
 
 class StoreError(RuntimeError):
     """The database cannot be used: wrong path kind, newer schema, or closed."""
+
+
+def time_text(value: datetime) -> str:
+    """Exact text form of a timestamp; parsed back with datetime.fromisoformat."""
+    return value.isoformat()
+
+
+def time_us(value: datetime) -> int:
+    """
+    intent: An integer that orders timestamps correctly in SQL
+    constraint: ISO strings with different UTC offsets do not sort by instant, so every
+                ordering query uses this column instead. A naive datetime is read as UTC,
+                which is how every clock in this package reports a naive time, if any.
+    """
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return delta_us(aware - datetime(1970, 1, 1, tzinfo=timezone.utc))
+
+
+def delta_us(delta: timedelta) -> int:
+    """A duration in whole microseconds, exactly (no float rounding)."""
+    return (delta.days * 86_400 + delta.seconds) * 1_000_000 + delta.microseconds
+
+
+def canonical_json(value: Any) -> str:
+    """The encoding digest() hashes: sorted keys, no whitespace, str() for the rest."""
+    return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
 
 
 def partition_text(key: Any) -> str:
