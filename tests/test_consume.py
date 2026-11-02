@@ -10,6 +10,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from _support import forge_token
+
 from exe_auth_ctrl_loop.authority import (
     Decision,
     ExecutionGateway,
@@ -213,6 +215,17 @@ class TransitionTests(StoreCase):
             gateway.execute(token.token_id, p, lambda _: "ok")
         self.assertEqual(self.state(token.token_id), "issued")
 
+    def test_a_transition_from_the_wrong_state_is_loud(self):
+        token, _ = self.issue(1)
+        with self.assertRaisesRegex(RuntimeError, "not in state 'consumed'"):
+            self.gateway._advance(token.token_id, "consumed", "handler_started")
+        self.assertEqual(self.state(token.token_id), "issued")
+
+    def test_forging_refuses_a_column_tokens_do_not_have(self):
+        token, _ = self.issue(1)
+        with self.assertRaisesRegex(ValueError, "not token columns"):
+            forge_token(self.store, token.token_id, alowed_effects="[]")
+
     def test_handler_states_are_recorded(self):
         token, p = self.issue(1)
         seen = []
@@ -278,6 +291,36 @@ class RestartTests(StoreCase):
         with self.assertRaisesRegex(PermissionError, "consumed"):
             gateway.execute(token.token_id, p, ran.append)
         self.assertEqual(ran, [])
+
+    BEFORE_START = textwrap.dedent("""
+        import os, sys
+        from exe_auth_ctrl_loop.authority import ExecutionGateway
+        from exe_auth_ctrl_loop.store import Store
+        namespace = {}
+        exec(sys.argv[3], namespace)
+        gateway = ExecutionGateway(store=Store(sys.argv[1]))
+        advance = gateway._advance
+        def dies_before_start(token_id, current, target):
+            if target == "handler_started":
+                os._exit(4)  # after the consume committed, before handler_started is written
+            advance(token_id, current, target)
+        gateway._advance = dies_before_start
+        gateway.execute(sys.argv[2], namespace["make"](1), lambda p: print("HANDLER RAN"))
+    """)
+
+    def test_a_crash_before_the_handler_starts_is_reported_as_unrun(self):
+        token, p = self.issue(1)
+        done = subprocess.run(
+            [sys.executable, "-c", self.BEFORE_START, str(self.path), token.token_id, PROPOSALS],
+            capture_output=True, text=True, timeout=60,
+        )
+        self.assertEqual(done.returncode, 4, done.stderr)
+        self.assertNotIn("HANDLER RAN", done.stdout)
+        gateway = self.reopen()
+        self.assertEqual(gateway.consumed_unrun(), [token.token_id])
+        self.assertEqual(gateway.effect_unknown(), [])
+        with self.assertRaisesRegex(PermissionError, "consumed"):
+            gateway.execute(token.token_id, p, lambda _: "again")
 
     def test_effect_unknown_is_empty_when_every_handler_reported(self):
         token, p = self.issue(1)

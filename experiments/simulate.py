@@ -239,7 +239,7 @@ class Simulation:
             self.gateway = ExecutionGateway(
                 self.clock, evidence=self.store, current_policy=lambda: self.policy,
                 guards=(self.manager, self.risk),
-            store=self.store.store,
+                store=self.store.store,
             )
         self.prompt_version = "prop-p1"
         self.key = make_key(self.prompt_version, "low")

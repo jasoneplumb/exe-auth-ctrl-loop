@@ -601,10 +601,27 @@ class ExecutionGateway:
         effect: A token in `handler_started` was consumed and its handler was entered but
                 never reported back -- the process stopped mid-effect. Its effect may or may
                 not have happened, and it is never re-run.
+        context: With consumed_unrun() this covers every residue a crash can leave after a
+                 consume commits. Both also list operations still in flight in a live
+                 process, so read them when no redemption is running, or twice.
         """
+        return self._in_state("handler_started")
+
+    def consumed_unrun(self) -> list[str]:
+        """
+        intent: The authorized operations that were spent but never started
+        effect: A token left in `consumed` had its consume committed, but the process
+                stopped before `handler_started` was written, which happens before the
+                handler is called. So the handler was not entered and the effect did not
+                happen: unlike effect_unknown(), this is known. The token is spent and is
+                never re-run; the operation needs a fresh decision.
+        """
+        return self._in_state("consumed")
+
+    def _in_state(self, state: str) -> list[str]:
         return [
             row[0] for row in self.store.connection().execute(
-                "SELECT token_id FROM tokens WHERE state = 'handler_started' ORDER BY rowid"
+                "SELECT token_id FROM tokens WHERE state = ? ORDER BY rowid", (state,)
             )
         ]
 
@@ -798,11 +815,21 @@ class ExecutionGateway:
             )
 
     def _advance(self, token_id: str, current: str, target: str) -> None:
+        """
+        constraint: Loud on a mismatch. A transition that finds the token in another state
+                    means the state machine and this call disagree, and a silent no-op
+                    would leave effect_unknown() or consumed_unrun() reporting the wrong
+                    thing.
+        """
         with self.store.transaction() as conn:
-            conn.execute(
+            moved = conn.execute(
                 "UPDATE tokens SET state = ? WHERE token_id = ? AND state = ?",
                 (target, token_id, current),
-            )
+            ).rowcount
+            if moved != 1:
+                raise RuntimeError(
+                    f"token {token_id} is not in state {current!r}; cannot move to {target!r}"
+                )
 
 
 _TOKEN_COLUMNS = (

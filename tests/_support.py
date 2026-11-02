@@ -63,11 +63,15 @@ def forge_token(store: Store, token_id: str, **columns: object) -> None:
     Values are given as stored (e.g. allowed_effects as a JSON list).
     """
     with store.transaction() as conn:
+        known = {row[1] for row in conn.execute("PRAGMA table_info(tokens)")}
+        unknown = set(columns) - known
+        if unknown:
+            raise ValueError(f"not token columns: {sorted(unknown)}")
         (sql,) = conn.execute(
             "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'tokens_fixed'"
         ).fetchone()
         conn.execute("DROP TRIGGER tokens_fixed")
-        assignments = ", ".join(f"{name} = ?" for name in columns)
+        assignments = ", ".join(f'"{name}" = ?' for name in columns)
         conn.execute(
             f"UPDATE tokens SET {assignments} WHERE token_id = ?", (*columns.values(), token_id)
         )
