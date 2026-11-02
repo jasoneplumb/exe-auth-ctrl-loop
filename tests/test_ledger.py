@@ -1,11 +1,13 @@
 import unittest
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop.ledger import EventLedger
 
 
 class LedgerTests(unittest.TestCase):
     def test_hash_chain_verifies(self):
-        ledger = EventLedger()
+        ledger = EventLedger(scratch_store())
         ledger.append("proposal.created", "p-1", "openai", {"digest": "a"})
         ledger.append("decision.recorded", "p-1", "controller", {"route": "autonomous"})
         self.assertTrue(ledger.verify())

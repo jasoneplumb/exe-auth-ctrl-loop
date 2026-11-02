@@ -12,6 +12,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop import mcp
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -96,7 +98,7 @@ class CallMetaTests(unittest.TestCase):
             .96, frozenset({"refund:write"}), self.key, "openai",
         )
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(scratch_store())
         self.store.put(EvidenceSnapshot("e1", 1, self.key, 99, 1, NOW - timedelta(days=2), NOW))
         self.gateway = ExecutionGateway(lambda: NOW)
 

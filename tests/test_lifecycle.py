@@ -5,6 +5,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop import (
     AuthorityController,
     EventLedger,
@@ -44,9 +46,10 @@ class Clock:
 class LifecycleTests(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
-        self.ledger = EventLedger()
+        self.db = scratch_store()
+        self.ledger = EventLedger(self.db)
         self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock

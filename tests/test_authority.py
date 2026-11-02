@@ -3,6 +3,8 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
     EvidenceSnapshot,
@@ -32,7 +34,7 @@ class AuthorityTests(unittest.TestCase):
             .96, frozenset({"refund:write"}), self.key, "openai",
         )
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(scratch_store())
 
     def controller(self, seed=1):
         return AuthorityController(self.store, self.policy, random.Random(seed), lambda: NOW)

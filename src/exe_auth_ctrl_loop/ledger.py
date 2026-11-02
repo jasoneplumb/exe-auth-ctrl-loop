@@ -7,19 +7,22 @@ Context: pipeline.py appends proposal and execution events, and wires the execut
         audit-selection claim rests on, together with a trusted RNG and controller.
 Pattern: Hash chain -- each event covers the previous event's hash, so altering any earlier
         entry invalidates every entry after it
-Future: In-memory and single-process. verify() proves internal consistency only: a party
-        who can rewrite the whole chain, or drop its tail, produces a chain that verifies.
-        anchor()/verify_anchor() show what an externally held head hash would add; they
-        are a demonstration, not part of this prototype's guarantee.
+Future: Durable since v3 Step 02: events are rows of the append-only `ledger` table, so a
+        restart keeps them and UPDATE/DELETE are refused by the database. verify() still
+        proves internal consistency only -- someone who can write the file with the
+        triggers dropped can rewrite the chain or drop its tail and produce a chain that
+        verifies (C22). The keyed chain and the anchor table are v3 Step 08.
 """
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Mapping
 
 from .authority import Decision, Proposal, digest, utcnow
+from .store import Store, canonical_json, time_text
 
 
 @dataclass(frozen=True)
@@ -34,15 +37,63 @@ class LedgerEvent:
     event_hash: str
 
 
+def _body(
+    sequence: int,
+    event_type: str,
+    aggregate_id: str,
+    actor: str,
+    occurred_at: datetime,
+    payload: Mapping[str, Any],
+    previous_hash: str,
+) -> dict[str, Any]:
+    return {
+        "sequence": sequence,
+        "event_type": event_type,
+        "aggregate_id": aggregate_id,
+        "actor": actor,
+        "occurred_at": occurred_at.isoformat(),
+        "payload": payload,
+        "previous_hash": previous_hash,
+    }
+
+
+def _event(row: tuple[Any, ...]) -> LedgerEvent:
+    sequence, event_type, aggregate_id, actor, occurred_at, payload, previous, event_hash = row
+    return LedgerEvent(
+        sequence=sequence,
+        event_type=event_type,
+        aggregate_id=aggregate_id,
+        actor=actor,
+        occurred_at=datetime.fromisoformat(occurred_at),
+        payload=json.loads(payload),
+        previous_hash=previous,
+        event_hash=event_hash,
+    )
+
+
+_COLUMNS = (
+    "sequence, event_type, aggregate_id, actor, occurred_at, payload, previous_hash, event_hash"
+)
+
+
 class EventLedger:
     """
     intent: Append-only history of what was decided and what ran
     constraint: No update or delete method exists, and none should be added -- the value of
-                the chain is that the only legal operation is append
+                the chain is that the only legal operation is append. The table's triggers
+                refuse UPDATE and DELETE from any other path too.
     """
 
-    def __init__(self) -> None:
-        self.events: list[LedgerEvent] = []
+    def __init__(self, store: Store) -> None:
+        self.store = store
+
+    @property
+    def events(self) -> list[LedgerEvent]:
+        """Every event, in sequence order, read from the database (a fresh list each call)."""
+        rows = self.store.connection().execute(
+            f"SELECT {_COLUMNS} FROM ledger ORDER BY sequence"
+        ).fetchall()
+        return [_event(row) for row in rows]
 
     def append(
         self,
@@ -54,33 +105,34 @@ class EventLedger:
     ) -> LedgerEvent:
         """
         intent: Add one event and link it to everything that came before
-        method: Hash the event body together with the previous event's hash
+        method: Hash the event body together with the previous event's hash. The read of
+                the head and the insert are one transaction, so two appenders (threads or
+                processes) cannot both link to the same predecessor.
         effect: Editing event 3 changes its hash, which breaks the link event 4 recorded --
                 so tampering is detectable at verify() rather than silent
+        constraint: The payload is stored in exactly the canonical encoding digest() hashes,
+                    so the event returned here equals the one read back later, and verify()
+                    re-derives the same hash from the stored form.
         """
         when = occurred_at or utcnow()
-        previous = self.events[-1].event_hash if self.events else "GENESIS"
-        body = {
-            "sequence": len(self.events),
-            "event_type": event_type,
-            "aggregate_id": aggregate_id,
-            "actor": actor,
-            "occurred_at": when.isoformat(),
-            "payload": payload,
-            "previous_hash": previous,
-        }
-        event = LedgerEvent(
-            sequence=len(self.events),
-            event_type=event_type,
-            aggregate_id=aggregate_id,
-            actor=actor,
-            occurred_at=when,
-            payload=dict(payload),
-            previous_hash=previous,
-            event_hash=digest(body),
+        encoded = canonical_json(dict(payload))
+        with self.store.transaction() as conn:
+            head = conn.execute(
+                "SELECT sequence, event_hash FROM ledger ORDER BY sequence DESC LIMIT 1"
+            ).fetchone()
+            sequence, previous = (head[0] + 1, head[1]) if head else (0, "GENESIS")
+            stored = json.loads(encoded)
+            event_hash = digest(
+                _body(sequence, event_type, aggregate_id, actor, when, stored, previous)
+            )
+            conn.execute(
+                f"INSERT INTO ledger ({_COLUMNS}) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (sequence, event_type, aggregate_id, actor, time_text(when), encoded,
+                 previous, event_hash),
+            )
+        return LedgerEvent(
+            sequence, event_type, aggregate_id, actor, when, stored, previous, event_hash
         )
-        self.events.append(event)
-        return event
 
     def verify(self) -> bool:
         """
@@ -91,15 +143,10 @@ class EventLedger:
         """
         previous = "GENESIS"
         for event in self.events:
-            body = {
-                "sequence": event.sequence,
-                "event_type": event.event_type,
-                "aggregate_id": event.aggregate_id,
-                "actor": event.actor,
-                "occurred_at": event.occurred_at.isoformat(),
-                "payload": event.payload,
-                "previous_hash": previous,
-            }
+            body = _body(
+                event.sequence, event.event_type, event.aggregate_id, event.actor,
+                event.occurred_at, event.payload, previous,
+            )
             if event.previous_hash != previous or event.event_hash != digest(body):
                 return False
             previous = event.event_hash
@@ -139,10 +186,10 @@ class EventLedger:
         constraint: Demonstration only. The value is meaningful if and only if it is held
                     outside the controller's trust domain; in this process it proves nothing.
         """
-        if not self.events:
-            return (-1, "GENESIS")
-        head = self.events[-1]
-        return (head.sequence, head.event_hash)
+        head = self.store.connection().execute(
+            "SELECT sequence, event_hash FROM ledger ORDER BY sequence DESC LIMIT 1"
+        ).fetchone()
+        return (-1, "GENESIS") if head is None else (head[0], head[1])
 
     def verify_anchor(self, sequence: int, event_hash: str) -> bool:
         """
@@ -155,6 +202,7 @@ class EventLedger:
             return False
         if sequence < 0:
             return True
-        if sequence >= len(self.events):
-            return False
-        return self.events[sequence].event_hash == event_hash
+        row = self.store.connection().execute(
+            "SELECT event_hash FROM ledger WHERE sequence = ?", (sequence,)
+        ).fetchone()
+        return row is not None and row[0] == event_hash

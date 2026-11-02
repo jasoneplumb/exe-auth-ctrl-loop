@@ -13,7 +13,10 @@ it receives; the final line asserts that it was never called.
 """
 
 import random
+import tempfile
 from datetime import datetime, timedelta, timezone
+from itertools import count
+from pathlib import Path
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -26,6 +29,7 @@ from exe_auth_ctrl_loop.authority import (
     ProposalReadiness,
     Route,
 )
+from exe_auth_ctrl_loop.store import Store
 
 now = datetime.now(timezone.utc)
 
@@ -65,8 +69,18 @@ def proposal(proposal_id: str, **overrides: object) -> Proposal:
     return Proposal(**fields)  # type: ignore[arg-type]
 
 
+# Authority state is durable since v3: evidence lives in a database file. Each scenario
+# below gets its own file in a throwaway directory, so no two share a track record.
+_scratch = tempfile.TemporaryDirectory()
+_files = count()
+
+
+def fresh_store() -> EvidenceStore:
+    return EvidenceStore(Store(Path(_scratch.name) / f"scenario-{next(_files)}.db"))
+
+
 def evidence_with(snapshot: EvidenceSnapshot) -> EvidenceStore:
-    store = EvidenceStore()
+    store = fresh_store()
     store.put(snapshot)
     return store
 
@@ -100,7 +114,7 @@ show("stale evidence", stale)
 # Nothing has been recorded for this combination of models, versions, tool,
 # policy, and risk class. An empty store is not a clean record: absence routes
 # to a human rather than to a default.
-missing = controller_for(EvidenceStore()).evaluate(proposal("op-unknown"))
+missing = controller_for(fresh_store()).evaluate(proposal("op-unknown"))
 show("no exact evidence", missing)
 
 # --- 4. An unresolved question in the proposal itself ------------------------

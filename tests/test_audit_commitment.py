@@ -9,6 +9,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from _support import rewrite_events, scratch_store
+
 from exe_auth_ctrl_loop import (
     AuthorityController,
     ClaudeExecutionAgent,
@@ -66,7 +68,7 @@ class RefusingLedger(EventLedger):
 class Harness:
     def __init__(self, audit_rate=0.0, seed=7, ledger=None, approved=(), commit="loop",
                  handler=None):
-        self.ledger = ledger if ledger is not None else EventLedger()
+        self.ledger = ledger if ledger is not None else EventLedger(scratch_store())
         self.handler_calls = []
         self.custom_handler = handler
         self.registry = ToolRegistry()
@@ -89,7 +91,7 @@ class Harness:
             "openai", "m1", "pp1", "anthropic", "claude-pinned", "execution-v1",
             "refund-api-v2", "pol1", "prod1", "bounded_refund", "0.95-1.00", "low",
         )
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(self.ledger.store)
         self.store.put(EvidenceSnapshot("e1", 1, self.key, 99, 1, NOW - timedelta(days=2), NOW))
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), audit_rate)
         self.controller = AuthorityController(
@@ -167,7 +169,7 @@ class EventOrderTests(unittest.TestCase):
 
 class FailClosedTests(unittest.TestCase):
     def test_commit_failure_refuses_the_step_and_issues_no_token(self):
-        h = Harness(ledger=RefusingLedger())
+        h = Harness(ledger=RefusingLedger(scratch_store()))
         run = h.run()
         self.assertEqual(run.status, ExecutionStatus.DENIED)
         step = run.steps[0]
@@ -289,25 +291,25 @@ class AuditDrawTests(unittest.TestCase):
         h = Harness(audit_rate=0.5)
         h.run()
         event = h.committed()[0]
-        h.ledger.events[event.sequence] = replace(
-            event, payload={**event.payload, "audit_draw": 0.999}
-        )
+        events = h.ledger.events
+        events[event.sequence] = replace(event, payload={**event.payload, "audit_draw": 0.999})
+        rewrite_events(h.ledger, events)
         self.assertFalse(h.ledger.verify())
 
 
 class ChainLimitTests(unittest.TestCase):
     def ledger(self, n=4):
-        ledger = EventLedger()
+        ledger = EventLedger(scratch_store())
         for i in range(n):
             ledger.append("e", f"a-{i}", "x", {"i": i})
         return ledger
 
-    def rehash_from(self, ledger, start):
+    def rehash_from(self, events, start):
         """Recompute every hash from `start` on, as anyone holding the chain can."""
         # the body mirrors EventLedger.append/verify; a schema change there must land here
-        previous = ledger.events[start - 1].event_hash if start else "GENESIS"
-        for index in range(start, len(ledger.events)):
-            event = ledger.events[index]
+        previous = events[start - 1].event_hash if start else "GENESIS"
+        for index in range(start, len(events)):
+            event = events[index]
             body = {
                 "sequence": event.sequence,
                 "event_type": event.event_type,
@@ -317,12 +319,14 @@ class ChainLimitTests(unittest.TestCase):
                 "payload": event.payload,
                 "previous_hash": previous,
             }
-            ledger.events[index] = replace(event, previous_hash=previous, event_hash=digest(body))
-            previous = ledger.events[index].event_hash
+            events[index] = replace(event, previous_hash=previous, event_hash=digest(body))
+            previous = events[index].event_hash
 
     def test_interior_edit_is_detected(self):
         ledger = self.ledger()
-        ledger.events[1] = replace(ledger.events[1], payload={"i": 99})
+        events = ledger.events
+        events[1] = replace(events[1], payload={"i": 99})
+        rewrite_events(ledger, events)
         self.assertFalse(ledger.verify())
 
     # The next two pin documented limits (claims matrix C22). A keyed hash or a sequence-gap
@@ -330,16 +334,20 @@ class ChainLimitTests(unittest.TestCase):
     def test_interior_edit_with_a_rehashed_suffix_passes_verify(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        ledger.events[1] = replace(ledger.events[1], payload={"i": 99})
-        self.rehash_from(ledger, 1)
+        events = ledger.events
+        events[1] = replace(events[1], payload={"i": 99})
+        self.rehash_from(events, 1)
+        rewrite_events(ledger, events)
         self.assertTrue(ledger.verify())  # the hash is unkeyed SHA-256
         self.assertFalse(ledger.verify_anchor(*anchor))  # what an external anchor adds
 
     def test_interior_deletion_with_a_rehashed_suffix_passes_verify(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        del ledger.events[1]
-        self.rehash_from(ledger, 1)
+        events = ledger.events
+        del events[1]
+        self.rehash_from(events, 1)
+        rewrite_events(ledger, events)
         self.assertEqual([e.sequence for e in ledger.events], [0, 2, 3])
         self.assertTrue(ledger.verify())  # sequence numbers are hashed, not checked for gaps
         self.assertFalse(ledger.verify_anchor(*anchor))
@@ -347,17 +355,19 @@ class ChainLimitTests(unittest.TestCase):
     def test_truncation_is_not_detected_by_verify_alone(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        del ledger.events[-1]
+        events = ledger.events
+        del events[-1]
+        rewrite_events(ledger, events)
         self.assertTrue(ledger.verify())  # the documented limit
         self.assertFalse(ledger.verify_anchor(*anchor))  # what an external anchor adds
 
     def test_wholesale_rewrite_is_not_detected_by_verify_alone(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        rebuilt = EventLedger()
+        rebuilt = EventLedger(scratch_store())
         for i in range(4):
             rebuilt.append("e", f"a-{i}", "x", {"i": -i})  # different history, fresh chain
-        ledger.events = rebuilt.events
+        rewrite_events(ledger, rebuilt.events)
         self.assertTrue(ledger.verify())
         self.assertFalse(ledger.verify_anchor(*anchor))
 
@@ -369,7 +379,7 @@ class ChainLimitTests(unittest.TestCase):
         self.assertEqual(anchor, (3, ledger.events[3].event_hash))
 
     def test_anchor_on_empty_ledger(self):
-        ledger = EventLedger()
+        ledger = EventLedger(scratch_store())
         self.assertEqual(ledger.anchor(), (-1, "GENESIS"))
         self.assertTrue(ledger.verify_anchor(-1, "GENESIS"))
         self.assertFalse(ledger.verify_anchor(0, "anything"))

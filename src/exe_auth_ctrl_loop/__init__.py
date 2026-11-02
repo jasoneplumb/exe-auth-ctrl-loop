@@ -87,6 +87,7 @@ from .shadow import (
     TrialLabel,
     TrialStatus,
 )
+from .store import Store, StoreError
 from .tools import ToolDefinition, ToolRegistry, ToolValidationError
 
 __version__ = "0.3.1"
@@ -140,6 +141,8 @@ __all__ = [
     "ReviewAction",
     "Route",
     "SequenceBudget",
+    "Store",
+    "StoreError",
     "ShadowEvidenceLog",
     "ShadowTrial",
     "ToolDefinition",

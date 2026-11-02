@@ -5,8 +5,9 @@ Context: The host owns this module. Both model runtimes are upstream of it and n
         reach past it -- providers.py proposes, executor.py requests, this authorizes
 Pattern: Fail-closed accumulation -- reasons are collected, and any reason at all withholds
         autonomy. Nothing here grants on the absence of a check.
-Future: In-process only. A production gateway needs its own service identity, transactional
-        token consumption, and durable evidence storage.
+Future: In-process only. Evidence is durable since v3 Step 02 (store.py); transactional
+        token consumption is Step 03, and a separate gateway service identity remains a
+        production requirement (docs/v3/spec.md O-1).
 """
 
 from __future__ import annotations
@@ -23,6 +24,7 @@ from threading import Lock
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .sequential import beta_mixture_lower_bound
+from .store import Store, partition_text, time_text
 
 
 def utcnow() -> datetime:
@@ -296,25 +298,51 @@ class EvidenceStore:
             enter it
     Pattern: Monotonic versioning -- snapshots are replaced, never mutated, so a decision
             can name the exact evidence version it relied on
-    Future: In-memory. Production needs durable storage and the same version discipline.
+    Future: Durable since v3 Step 02. Every version is a row in the append-only
+            `evidence_snapshots` table and the current snapshot is the highest version, so
+            the version a decision names stays readable after it is superseded.
     """
 
-    def __init__(self) -> None:
-        self._items: dict[PartitionKey, EvidenceSnapshot] = {}
+    def __init__(self, store: Store) -> None:
+        self.store = store
 
     def put(self, snapshot: EvidenceSnapshot) -> None:
         """
         intent: Replace a partition's snapshot while keeping version history meaningful
         constraint: Versions must strictly increase -- a decision records the version it
-                    relied on, and a reused version would make that record ambiguous
+                    relied on, and a reused version would make that record ambiguous. The
+                    check and the insert are one transaction, so two writers cannot both
+                    pass the check with the same version.
         """
-        current = self._items.get(snapshot.key)
-        if current and snapshot.version <= current.version:
-            raise ValueError("evidence version must increase")
-        self._items[snapshot.key] = snapshot
+        with self.store.transaction():
+            current = self.get(snapshot.key)
+            if current and snapshot.version <= current.version:
+                raise ValueError("evidence version must increase")
+            self.store.connection().execute(
+                "INSERT INTO evidence_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    partition_text(snapshot.key), snapshot.version, snapshot.evidence_id,
+                    snapshot.successes, snapshot.failures,
+                    time_text(snapshot.collected_from), time_text(snapshot.collected_until),
+                    int(snapshot.valid), int(snapshot.suspended), snapshot.invalidation_reason,
+                ),
+            )
 
     def get(self, key: PartitionKey) -> EvidenceSnapshot | None:
-        return self._items.get(key)
+        row = self.store.connection().execute(
+            "SELECT version, evidence_id, successes, failures, collected_from,"
+            " collected_until, valid, suspended, invalidation_reason"
+            " FROM evidence_snapshots WHERE partition = ? ORDER BY version DESC LIMIT 1",
+            (partition_text(key),),
+        ).fetchone()
+        if row is None:
+            return None
+        version, evidence_id, successes, failures, start, until, valid, suspended, reason = row
+        return EvidenceSnapshot(
+            evidence_id, version, key, successes, failures,
+            datetime.fromisoformat(start), datetime.fromisoformat(until),
+            bool(valid), bool(suspended), reason,
+        )
 
     def invalidate(self, key: PartitionKey, reason: str) -> None:
         """
@@ -322,12 +350,13 @@ class EvidenceStore:
         effect: A new version with valid=False. The controller withholds autonomy, and a
                 gateway holding this store refuses tokens issued against earlier versions.
         """
-        current = self._items.get(key)
-        if current is None:
-            raise KeyError("partition not found")
-        self.put(replace(
-            current, version=current.version + 1, valid=False, invalidation_reason=reason,
-        ))
+        with self.store.transaction():
+            current = self.get(key)
+            if current is None:
+                raise KeyError("partition not found")
+            self.put(replace(
+                current, version=current.version + 1, valid=False, invalidation_reason=reason,
+            ))
 
     def adjudicate(self, key: PartitionKey, outcome: Outcome, autonomous: bool) -> None:
         """
@@ -344,31 +373,32 @@ class EvidenceStore:
         constraint: PENDING, PARTIAL, and DISPUTED are also dropped -- an ambiguous outcome
                     is not evidence of success or of failure.
         """
-        current = self._items.get(key)
-        if current is None:
-            raise KeyError("partition not found")
-        if outcome.severe:
+        with self.store.transaction():
+            current = self.get(key)
+            if current is None:
+                raise KeyError("partition not found")
+            if outcome.severe:
+                self.put(replace(
+                    current,
+                    version=current.version + 1,
+                    suspended=True,
+                    invalidation_reason="severe_failure",
+                ))
+                # constraint: nothing in this package ever clears `suspended`. Autonomy is
+                # earned over many outcomes and withdrawn by one; restoring it is a human act.
+                return
+            if not autonomous or outcome.status not in {
+                OutcomeStatus.ACCEPTABLE,
+                OutcomeStatus.UNACCEPTABLE,
+            }:
+                return
             self.put(replace(
                 current,
                 version=current.version + 1,
-                suspended=True,
-                invalidation_reason="severe_failure",
+                successes=current.successes + int(outcome.status == OutcomeStatus.ACCEPTABLE),
+                failures=current.failures + int(outcome.status == OutcomeStatus.UNACCEPTABLE),
+                collected_until=outcome.observed_at,
             ))
-            # constraint: nothing in this package ever clears `suspended`. Autonomy is
-            # earned over many outcomes and withdrawn by one; restoring it is a human act.
-            return
-        if not autonomous or outcome.status not in {
-            OutcomeStatus.ACCEPTABLE,
-            OutcomeStatus.UNACCEPTABLE,
-        }:
-            return
-        self.put(replace(
-            current,
-            version=current.version + 1,
-            successes=current.successes + int(outcome.status == OutcomeStatus.ACCEPTABLE),
-            failures=current.failures + int(outcome.status == OutcomeStatus.UNACCEPTABLE),
-            collected_until=outcome.observed_at,
-        ))
 
 
 def wilson_lower_bound(successes: int, total: int, z: float = 1.96) -> float:

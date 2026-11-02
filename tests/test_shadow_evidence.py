@@ -3,6 +3,8 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
+from _support import rewrite_events, scratch_store
+
 from exe_auth_ctrl_loop import (
     AuthorityController,
     EventLedger,
@@ -36,7 +38,7 @@ class Clock:
 class ShadowEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
-        self.ledger = EventLedger()
+        self.ledger = EventLedger(scratch_store())
         self.log = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",
@@ -72,7 +74,7 @@ class ShadowEvidenceTests(unittest.TestCase):
 
     def test_empty_store_qualifies_from_shadow_evidence_alone(self):
         policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
-        store = EvidenceStore()
+        store = EvidenceStore(scratch_store())
         controller = AuthorityController(store, policy, random.Random(1), self.clock)
         proposal = self.proposal(0)
         self.assertEqual(controller.evaluate(proposal).route, Route.HUMAN_APPROVAL)
@@ -213,7 +215,7 @@ class ShadowEvidenceTests(unittest.TestCase):
         self.trial(1)
         self.log.freeze("t-2", self.proposal(2))
         self.clock.now = T0 + timedelta(hours=2)
-        store = EvidenceStore()
+        store = EvidenceStore(scratch_store())
         self.assertTrue(self.log.publish(store, self.key, T0))
         snapshot = store.get(self.key)
         self.assertEqual((snapshot.successes, snapshot.failures), (1, 1))
@@ -247,18 +249,34 @@ class ShadowEvidenceTests(unittest.TestCase):
         self.log.record_human_review("t-6", "rev", ReviewAction.REJECT)
         self.clock.now = T0 + timedelta(hours=2)
         self.log.expire_unlabeled()
-        replayed = ShadowEvidenceLog.replay(self.ledger, timedelta(hours=1), self.clock)
+        replayed = ShadowEvidenceLog.replay(
+            self.ledger, scratch_store(), timedelta(hours=1), self.clock
+        )
         for prov in Provenance:
             self.assertEqual(replayed.counts(self.key, prov), self.log.counts(self.key, prov))
         self.assertEqual(replayed.status("t-6"), TrialStatus.CENSORED)
 
     def test_replay_rejects_tampered_ledger(self):
         self.trial(1)
-        self.ledger.events[0] = replace(
-            self.ledger.events[0], payload={**self.ledger.events[0].payload, "provenance": "x"}
-        )
+        events = self.ledger.events
+        events[0] = replace(events[0], payload={**events[0].payload, "provenance": "x"})
+        rewrite_events(self.ledger, events)
         with self.assertRaises(ValueError):
-            ShadowEvidenceLog.replay(self.ledger)
+            ShadowEvidenceLog.replay(self.ledger, scratch_store())
+
+    def test_replay_refuses_a_database_that_already_has_a_history(self):
+        self.trial(1)
+        target = scratch_store()
+        ShadowEvidenceLog.replay(self.ledger, target)
+        with self.assertRaisesRegex(ValueError, "empty database"):
+            ShadowEvidenceLog.replay(self.ledger, target)
+        with self.assertRaisesRegex(ValueError, "empty database"):
+            ShadowEvidenceLog.replay(self.ledger, self.ledger.store)
+
+    def test_evidence_time_without_counting_trials_is_a_clear_error(self):
+        self.assertIsNone(self.log.snapshot(self.key, T0))
+        with self.assertRaisesRegex(LookupError, "no counting trials"):
+            self.log._evidence_time(self.key)
 
 
 if __name__ == "__main__":

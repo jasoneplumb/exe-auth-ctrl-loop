@@ -9,6 +9,8 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
+from _support import scratch_store
+
 from exe_auth_ctrl_loop import (
     AuthorityController,
     Bound,
@@ -68,12 +70,13 @@ def budgets():
 class RiskBase(unittest.TestCase):
     def setUp(self):
         self.clock = lambda: T0
+        self.db = scratch_store()
         self.risk = RiskPolicy(
             "risk-v1", envelopes(), budgets(),
-            conflicts=frozenset({("create_refund", "cancel_order")}),
+            conflicts=frozenset({("create_refund", "cancel_order")}), store=self.db,
         )
         self.policy = Policy("pol1", {"low": .90, "high": .99}, 30, timedelta(days=30), 0.0)
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(self.db)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock, guards=(self.risk,)
         )
@@ -275,6 +278,20 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(decision.route, Route.DENY)
         self.assertIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
 
+    def test_conflicts_come_from_the_current_policy_not_the_history(self):
+        # The history of tool names is durable; whether a pair conflicts is not.
+        self.seed("low")
+        self.assertEqual(self.run_op(self.proposal(usd=10)), "done")
+        self.risk.update("risk-v2", envelopes(), budgets(), conflicts=frozenset())
+        decision = self.controller.evaluate(self.proposal(tool="cancel_order"))
+        self.assertNotIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
+        self.risk.update(
+            "risk-v3", envelopes(), budgets(),
+            conflicts=frozenset({("create_refund", "cancel_order")}),
+        )
+        decision = self.controller.evaluate(self.proposal(tool="cancel_order"))
+        self.assertIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
+
     def test_budgets_do_not_leak_across_partitions(self):
         # partition-scoped budget only; the per-payee budget is global by design
         self.risk.update("risk-v1", envelopes(), (budgets()[0],))
@@ -385,11 +402,14 @@ class LifecycleInteractionTests(unittest.TestCase):
 
     def setUp(self):
         self.clock = lambda: T0
-        self.ledger = EventLedger()
+        self.db = scratch_store()
+        self.ledger = EventLedger(self.db)
         self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
-        self.store = EvidenceStore()
+        self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90, "high": .90}, 30, timedelta(days=30), 0.0)
-        self.risk = RiskPolicy("risk-v1", envelopes())  # scope only; budgets tested above
+        self.risk = RiskPolicy(  # scope only; budgets tested above
+            "risk-v1", envelopes(), store=self.db,
+        )
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock, guards=(self.risk,)
         )
@@ -473,7 +493,7 @@ class RegistryUnificationTests(unittest.TestCase):
     }
 
     def setUp(self):
-        self.risk = RiskPolicy("risk-v1", envelopes())
+        self.risk = RiskPolicy("risk-v1", envelopes(), store=scratch_store())
         self.calls = []
 
     def tool(self, risk_class):
@@ -526,7 +546,7 @@ class RegistryUnificationTests(unittest.TestCase):
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",
             "refund-api-v2", "pol1", "prod1", "refund", "0.95-1.00", "low",
         )
-        store = EvidenceStore()
+        store = EvidenceStore(scratch_store())
         store.put(EvidenceSnapshot("e", 1, key, 99, 1, T0 - timedelta(days=2), T0))
         mislabeled = Proposal(
             "p-1", "refund", "create_refund", {"order_id": 1, "usd": 500, "payee": "acct-100"},
