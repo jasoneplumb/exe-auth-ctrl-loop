@@ -64,6 +64,15 @@ from .mcp import (
     verify_call_meta,
 )
 from .pipeline import CrossModelAuthorityLoop
+from .principals import (
+    Approval,
+    Grant,
+    GrantScope,
+    Keyring,
+    Principal,
+    PrincipalKind,
+    Principals,
+)
 from .providers import (
     OpenAIProposalGenerator,
     ProposalDraftModel,
@@ -93,6 +102,13 @@ from .tools import HandlerTable, ToolCatalog, ToolDefinition, ToolValidationErro
 __version__ = "0.3.1"
 
 __all__ = [
+    "Principals",
+    "PrincipalKind",
+    "Principal",
+    "Keyring",
+    "GrantScope",
+    "Grant",
+    "Approval",
     "COUNTING_PROVENANCE",
     "EXTENSION_PREFIX",
     "EXTENSION_VERSION",

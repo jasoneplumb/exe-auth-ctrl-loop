@@ -9,6 +9,8 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from _support import principals_for
+
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
     AuthorizationToken,
@@ -62,7 +64,10 @@ class Components:
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         controller = AuthorityController(self.store, self.policy, random.Random(1), clock)
-        self.manager = LifecycleManager(self.shadow, self.store, self.policy, controller, clock)
+        self.principals = principals_for(self.db)
+        self.manager = LifecycleManager(
+            self.shadow, self.store, self.policy, controller, clock, principals=self.principals,
+        )
         self.risk = RiskPolicy("risk-v1", budgets=(BUDGET,), store=self.db)
 
 

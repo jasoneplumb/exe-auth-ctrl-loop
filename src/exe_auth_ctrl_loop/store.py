@@ -209,12 +209,94 @@ _SCHEMA_V3 = (
         BEGIN SELECT RAISE(ABORT, 'decisions is append-only'); END""",
 )
 
+# v3 Step 05: principals, grants, approvals (docs/v3/spec.md §8). Principals change only by
+# deactivation, grants only by revocation, approvals only by rescission; every such change
+# is made through principals.py, which writes its ledger event in the same transaction.
+HOST_PRINCIPALS = ("controller", "execution-gateway", "claude-execution-loop")
+_SCHEMA_V4 = (
+    """CREATE TABLE principals (
+        principal_id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL CHECK (kind IN ('HUMAN', 'SERVICE', 'MODEL', 'ORACLE')),
+        key_id TEXT,
+        active INTEGER NOT NULL
+    )""",
+    """CREATE TRIGGER principals_change BEFORE UPDATE ON principals
+        WHEN NEW.principal_id IS NOT OLD.principal_id OR NEW.kind IS NOT OLD.kind
+          OR NEW.key_id IS NOT OLD.key_id OR NOT (OLD.active = 1 AND NEW.active = 0)
+        BEGIN SELECT RAISE(ABORT, 'a principal changes only by deactivation'); END""",
+    """CREATE TRIGGER principals_no_delete BEFORE DELETE ON principals
+        BEGIN SELECT RAISE(ABORT, 'principals are never deleted'); END""",
+    # effect: the host's own service identities exist by schema, as the root of trust;
+    # every other principal is registered through principals.py with a ledger event
+    *(
+        f"INSERT INTO principals VALUES ('{name}', 'SERVICE', NULL, 1)"
+        for name in HOST_PRINCIPALS
+    ),
+    """CREATE TABLE grants (
+        grant_id TEXT PRIMARY KEY,
+        parent_grant_id TEXT REFERENCES grants (grant_id),
+        grantor TEXT NOT NULL REFERENCES principals (principal_id),
+        grantee TEXT NOT NULL REFERENCES principals (principal_id),
+        scope TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        expires_us INTEGER NOT NULL,
+        revoked INTEGER NOT NULL
+    )""",
+    """CREATE TRIGGER grants_change BEFORE UPDATE ON grants
+        WHEN NEW.grant_id IS NOT OLD.grant_id OR NEW.parent_grant_id IS NOT OLD.parent_grant_id
+          OR NEW.grantor IS NOT OLD.grantor OR NEW.grantee IS NOT OLD.grantee
+          OR NEW.scope IS NOT OLD.scope OR NEW.expires_at IS NOT OLD.expires_at
+          OR NEW.expires_us IS NOT OLD.expires_us OR NOT (OLD.revoked = 0 AND NEW.revoked = 1)
+        BEGIN SELECT RAISE(ABORT, 'a grant changes only by revocation'); END""",
+    """CREATE TRIGGER grants_no_delete BEFORE DELETE ON grants
+        BEGIN SELECT RAISE(ABORT, 'grants are never deleted'); END""",
+    """CREATE TABLE approvals (
+        approval_id TEXT PRIMARY KEY,
+        principal_id TEXT NOT NULL REFERENCES principals (principal_id),
+        proposal_digest TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        rescinded INTEGER NOT NULL
+    )""",
+    """CREATE TRIGGER approvals_change BEFORE UPDATE ON approvals
+        WHEN NEW.approval_id IS NOT OLD.approval_id OR NEW.principal_id IS NOT OLD.principal_id
+          OR NEW.proposal_digest IS NOT OLD.proposal_digest OR NEW.partition IS NOT OLD.partition
+          OR NEW.expires_at IS NOT OLD.expires_at OR NOT (OLD.rescinded = 0 AND NEW.rescinded = 1)
+        BEGIN SELECT RAISE(ABORT, 'an approval changes only by rescission'); END""",
+    """CREATE TRIGGER approvals_no_delete BEFORE DELETE ON approvals
+        BEGIN SELECT RAISE(ABORT, 'approvals are never deleted'); END""",
+    "ALTER TABLE tokens ADD COLUMN grant_id TEXT",
+    "ALTER TABLE tokens ADD COLUMN requesting_principal TEXT",
+    "ALTER TABLE tokens ADD COLUMN approval_id TEXT",
+    # constraint: one approval, one token (owner decision 2026-11-02); NULLs are distinct
+    "CREATE UNIQUE INDEX tokens_approval ON tokens (approval_id)",
+    "DROP TRIGGER tokens_fixed",
+    """CREATE TRIGGER tokens_fixed BEFORE UPDATE ON tokens
+        WHEN NEW.token_id IS NOT OLD.token_id
+          OR NEW.decision_id IS NOT OLD.decision_id
+          OR NEW.proposal_digest IS NOT OLD.proposal_digest
+          OR NEW.allowed_tool IS NOT OLD.allowed_tool
+          OR NEW.allowed_effects IS NOT OLD.allowed_effects
+          OR NEW.partition IS NOT OLD.partition
+          OR NEW.policy_version IS NOT OLD.policy_version
+          OR NEW.evidence_id IS NOT OLD.evidence_id
+          OR NEW.evidence_version IS NOT OLD.evidence_version
+          OR NEW.expires_at IS NOT OLD.expires_at
+          OR NEW.human_approved IS NOT OLD.human_approved
+          OR NEW.grant_id IS NOT OLD.grant_id
+          OR NEW.requesting_principal IS NOT OLD.requesting_principal
+          OR NEW.approval_id IS NOT OLD.approval_id
+          OR (NEW.revocation_reason IS NOT OLD.revocation_reason
+              AND NOT (OLD.state = 'issued' AND NEW.state = 'revoked'))
+        BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
+)
+
 # constraint: every table whose rows are history, across all schema versions
 APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions")
 
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
 
 
 class StoreError(RuntimeError):

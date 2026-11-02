@@ -25,7 +25,8 @@ from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 from .sequential import beta_mixture_lower_bound
 from .store import Store, partition_text, time_text
 
-if TYPE_CHECKING:  # tools.py imports risk.py, which imports this module
+if TYPE_CHECKING:  # these modules import this one
+    from .principals import Approval, Principals
     from .tools import HandlerTable
 
 
@@ -265,6 +266,10 @@ class AuthorizationToken:
     revoked: bool = False
     revocation_reason: str | None = None
     state: str = "issued"
+    # v3 Step 05: who asked, under which grant, and on which approval (if any)
+    grant_id: str | None = None
+    requesting_principal: str | None = None
+    approval_id: str | None = None
 
 
 class ProposalGuard(Protocol):
@@ -580,6 +585,7 @@ class ExecutionGateway:
         *,
         store: Store,
         handlers: HandlerTable,
+        principals: Principals,
     ) -> None:
         """
         intent: Optionally bind the gateway to the live authority state it should re-check
@@ -594,13 +600,18 @@ class ExecutionGateway:
         constraint: `handlers` is required and is the only route to a side effect
                     (docs/v3/spec.md §4). It is given to the gateway and to nothing on the
                     agent side; execute() picks the handler from the consumed token.
+        constraint: `principals` is required (spec §8). It must use the same Store, so a
+                    token, its grant, and its approval are checked and recorded together.
         """
+        if principals.store is not store:
+            raise ValueError("the gateway and its principals must share one Store")
         self.clock = clock
         self.evidence = evidence
         self.current_policy = current_policy
         self.guards = tuple(guards)
         self.store = store
         self.handlers = handlers
+        self.principals = principals
 
     @property
     def tokens(self) -> dict[str, AuthorizationToken]:
@@ -649,7 +660,10 @@ class ExecutionGateway:
         decision: Decision,
         proposal: Proposal,
         policy: Policy,
-        human_approved: bool = False,
+        *,
+        principal_id: str,
+        grant_id: str,
+        approval: Approval | None = None,
     ) -> AuthorizationToken:
         """
         intent: Mint a capability scoped to exactly the decision that justified it
@@ -674,7 +688,16 @@ class ExecutionGateway:
                 is only as good as its justification still is at the moment of use.
         effect: Returns the token as issued. Its state afterwards is in the database:
                 `gateway.token(token_id)` or `gateway.tokens`.
+        constraint: The requesting principal must hold `grant_id`, every grant in its chain
+                    must be live, and every scope in the chain must admit this operation
+                    (spec §8). The token records the grant and the principal, so
+                    Principals.lineage(token_id) answers "on whose authority".
+        constraint: An `approval` replaces v0.3.1's `human_approved=True`. It must be an
+                    active human's valid signature over this proposal's digest and
+                    partition, unexpired and unrescinded, and it is used once: it is
+                    recorded in this transaction and the token's approval_id is unique.
         """
+        human_approved = approval is not None
         if not executable_route(decision.route, human_approved):
             raise PermissionError("decision does not authorize execution")
         if decision.proposal_digest != proposal.proposal_digest:
@@ -709,6 +732,28 @@ class ExecutionGateway:
                 "SELECT 1 FROM tokens WHERE decision_id = ?", (decision.decision_id,)
             ).fetchone():
                 raise PermissionError("decision already has a token")
+            grant_reasons = self.principals.grant_blockers(grant_id, principal_id, proposal)
+            if grant_reasons:
+                raise PermissionError(f"grant does not cover this: {', '.join(grant_reasons)}")
+            if approval is not None:
+                # constraint: these reads and _record_approval's writes use this thread's
+                # one connection (Store is one connection per thread), and _record_approval's
+                # transaction() joins this one (Store.transaction is re-entrant). So the
+                # rescission check, the approval row, and the token row are one atomic
+                # step under the write lock BEGIN IMMEDIATE took: nothing commits between
+                # them, and a failure anywhere below rolls the approval row back too.
+                approval_reasons = self.principals.approval_blockers(approval, proposal)
+                if approval_reasons:
+                    raise PermissionError(f"approval refused: {', '.join(approval_reasons)}")
+                if conn.execute(
+                    "SELECT 1 FROM tokens WHERE approval_id = ?", (approval.approval_id,)
+                ).fetchone():
+                    raise PermissionError("approval already used")
+                self.principals._record_approval(approval)  # gateway-only (see principals)
+            token = replace(
+                token, grant_id=grant_id, requesting_principal=principal_id,
+                approval_id=approval.approval_id if approval is not None else None,
+            )
             conn.execute(
                 f"INSERT INTO tokens ({_TOKEN_COLUMNS}) VALUES ({_TOKEN_PLACEHOLDERS})",
                 (
@@ -716,7 +761,8 @@ class ExecutionGateway:
                     token.allowed_tool, json.dumps(sorted(token.allowed_effects)),
                     partition_text(token.partition), token.policy_version, token.evidence_id,
                     token.evidence_version, time_text(token.expires_at),
-                    int(token.human_approved), "issued", None,
+                    int(token.human_approved), "issued", None, token.grant_id,
+                    token.requesting_principal, token.approval_id,
                 ),
             )
         return token
@@ -827,6 +873,16 @@ class ExecutionGateway:
             if token.evidence_id is not None and not token.human_approved:
                 if snapshot is None or snapshot.evidence_id != token.evidence_id:
                     reasons.append("EVIDENCE_WITHDRAWN")
+        # constraint: authority from the principal side is re-read too: a revoked, expired,
+        # or narrowed grant chain, a deactivated party, or a rescinded approval refuses the
+        # token here, even before v3 Step 06 revokes tokens at the moment of the change
+        if token.grant_id is not None and token.requesting_principal is not None:
+            reasons.extend(
+                self.principals.grant_blockers(token.grant_id, token.requesting_principal,
+                                               proposal)
+            )
+        if token.approval_id is not None and self.principals.rescinded(token.approval_id):
+            reasons.append("APPROVAL_RESCINDED")
         for guard in self.guards:
             reasons.extend(guard.redemption_blockers(token, proposal))
         return tuple(dict.fromkeys(reasons))
@@ -868,14 +924,15 @@ class ExecutionGateway:
 _TOKEN_COLUMNS = (
     "token_id, decision_id, proposal_digest, allowed_tool, allowed_effects, partition,"
     " policy_version, evidence_id, evidence_version, expires_at, human_approved, state,"
-    " revocation_reason"
+    " revocation_reason, grant_id, requesting_principal, approval_id"
 )
 _TOKEN_PLACEHOLDERS = ", ".join("?" for _ in _TOKEN_COLUMNS.split(","))
 
 
 def _token(row: tuple[Any, ...]) -> AuthorizationToken:
     (token_id, decision_id, proposal_digest, allowed_tool, effects, partition, policy_version,
-     evidence_id, evidence_version, expires_at, human_approved, state, reason) = row
+     evidence_id, evidence_version, expires_at, human_approved, state, reason, grant_id,
+     requesting_principal, approval_id) = row
     return AuthorizationToken(
         token_id=token_id,
         decision_id=decision_id,
@@ -892,4 +949,7 @@ def _token(row: tuple[Any, ...]) -> AuthorizationToken:
         revoked=state == "revoked",
         revocation_reason=reason,
         state=state,
+        grant_id=grant_id,
+        requesting_principal=requesting_principal,
+        approval_id=approval_id,
     )

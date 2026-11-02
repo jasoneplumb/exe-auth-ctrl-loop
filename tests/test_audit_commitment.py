@@ -9,7 +9,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from _support import rewrite_events, scratch_store
+from _support import AGENT, approve, gateway_store, rewrite_events, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -100,7 +100,8 @@ class Harness:
             self.store, self.policy, random.Random(seed), lambda: NOW
         )
         self.gateway = ExecutionGateway(
-            lambda: NOW, evidence=self.store, store=self.store.store, handlers=self.handlers
+            lambda: NOW, evidence=self.store,
+            **gateway_store(self.store.store), handlers=self.handlers
         )
         self.proposal = Proposal(
             "p-1", "refund order", "create_refund", {"order_id": 1, "usd": 24}, .96,
@@ -112,13 +113,20 @@ class Harness:
         self.agent = ClaudeExecutionAgent(
             "claude-pinned", "execution-v1", self.controller, self.gateway, self.catalog,
             FakeClaude([tool_use("create_refund", "p-1", order_id=1, usd=24), final_text()]),
+            **AGENT,
         )
-        self.approved = approved
+        self.approvals = tuple(approve(self.proposal) for pid in approved if pid == "p-1")
         if commit == "loop":
             self.loop = CrossModelAuthorityLoop(
                 proposer=None, executor=self.agent, ledger=self.ledger,
                 policy_version="pol1", environment_version="prod1",
             )
+        # v3 Step 05: registering the test principals writes ledger events during setup;
+        # assertions about what a run records compare from here
+        self.setup_events = len(self.ledger.events)
+
+    def run_events(self):
+        return self.ledger.events[self.setup_events:]
 
     def _handle(self, args):
         # What the ledger looked like at the instant the side effect happened
@@ -128,7 +136,7 @@ class Harness:
         return {"receipt": "refund-1"}
 
     def run(self):
-        return self.loop.execute(self.bundle, approved_proposal_ids=self.approved)
+        return self.loop.execute(self.bundle, approvals=self.approvals)
 
     def committed(self):
         return [e for e in self.ledger.events if e.event_type == "authority.decision.committed"]
@@ -185,7 +193,7 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(h.gateway.tokens, {})
         # the refusal is still recorded by the loop after the fact
         self.assertEqual(
-            [e.event_type for e in h.ledger.events],
+            [e.event_type for e in h.run_events()],
             ["execution.step.recorded", "execution.run.completed"],
         )
 
@@ -222,7 +230,7 @@ class FailClosedTests(unittest.TestCase):
         self.assertEqual(step.decision.route, Route.AUTONOMOUS)  # the decision itself was fine
         self.assertEqual(h.handler_calls, [])
         self.assertEqual(h.gateway.tokens, {})
-        self.assertEqual(h.ledger.events, [])
+        self.assertEqual(h.run_events(), [])
 
 
 class AuditDrawTests(unittest.TestCase):
@@ -313,7 +321,7 @@ class ChainLimitTests(unittest.TestCase):
     def ledger(self, n=4):
         ledger = EventLedger(scratch_store())
         for i in range(n):
-            ledger.append("e", f"a-{i}", "x", {"i": i})
+            ledger.append("e", f"a-{i}", "controller", {"i": i})
         return ledger
 
     def rehash_from(self, events, start):
@@ -378,7 +386,7 @@ class ChainLimitTests(unittest.TestCase):
         anchor = ledger.anchor()
         rebuilt = EventLedger(scratch_store())
         for i in range(4):
-            rebuilt.append("e", f"a-{i}", "x", {"i": -i})  # different history, fresh chain
+            rebuilt.append("e", f"a-{i}", "controller", {"i": -i})  # different history, fresh chain
         rewrite_events(ledger, rebuilt.events)
         self.assertTrue(ledger.verify())
         self.assertFalse(ledger.verify_anchor(*anchor))
@@ -386,7 +394,7 @@ class ChainLimitTests(unittest.TestCase):
     def test_anchor_holds_for_an_intact_and_extended_chain(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        ledger.append("e", "a-4", "x", {"i": 4})
+        ledger.append("e", "a-4", "controller", {"i": 4})
         self.assertTrue(ledger.verify_anchor(*anchor))
         self.assertEqual(anchor, (3, ledger.events[3].event_hash))
 

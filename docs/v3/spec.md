@@ -94,7 +94,9 @@ Rules (in addition to v2 §3 rules 1–6):
 - `Grant(grant_id, parent_grant_id, grantor, grantee, scope, expires_at)`. `scope` = permitted tools, effects, partitions, budget ceilings. A grant MUST be refused unless its scope is a subset of its parent's and its expiry is not later than its parent's; root grants MUST be created only by a `HUMAN` principal (Step 05).
 - Every token records `grant_id` and the requesting principal; `lineage(token_id)` returns the grant chain to its root.
 - Every change to who may do what is exactly one of: `principal.registered`, `principal.deactivated`, `grant.created`, `grant.revoked`, `approval.recorded`, `approval.rescinded`. Permission changes without an event MUST NOT be possible through the API (Step 05).
-- `Approval` (a `HUMAN` principal's MAC over decision id and proposal digest) replaces `human_approved: bool`, and `release()` MUST require a verified `HUMAN` principal (Step 05).
+- `Approval` replaces `human_approved: bool`: a `HUMAN` principal's MAC over the proposal digest, partition, approval id, and expiry, usable for one token only (unique `approval_id` on tokens). `release()` MUST require a verified `HUMAN` principal's signature over the partition, its current epoch, and the reason (Step 05). Amended 2026-11-02 by owner decision: the spec said "decision id", but a human approves before the run that makes the decision, so the decision id does not yet exist; single use gives the binding's purpose.
+- Signing keys are held by the host in a `Keyring`, never in the database: the agent side reaches the Store through the catalog's risk policy, and §1 forbids it reaching a key. The host's own SERVICE principals (`controller`, `execution-gateway`, `claude-execution-loop`) exist by schema as the root of trust; every other principal is registered with an event.
+- "Budget ceilings" in a grant's scope are per-operation ceilings on named numeric arguments (e.g. `usd ≤ 100`), checked at issue and narrowed on delegation. Cumulative budgets remain `RiskPolicy`'s.
 
 ## 9. Statistics (pointer)
 

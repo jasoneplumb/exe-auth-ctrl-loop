@@ -18,6 +18,13 @@ from exe_auth_ctrl_loop.authority import (
 )
 from exe_auth_ctrl_loop.executor import ClaudeExecutionAgent
 from exe_auth_ctrl_loop.ledger import EventLedger
+from exe_auth_ctrl_loop.principals import (
+    GrantScope,
+    Keyring,
+    PrincipalKind,
+    Principals,
+    root_grant_payload,
+)
 from exe_auth_ctrl_loop.providers import OpenAIProposalGenerator
 from exe_auth_ctrl_loop.store import Store
 from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
@@ -95,14 +102,29 @@ policy = Policy(
     max_evidence_age=timedelta(days=30),
     audit_rate=0.0,
 )
+# Who acts, and on whose authority (v3 Step 05): a human operator delegates this tool to
+# the agent. The key is an example-only secret; a deployment supplies its own.
+keyring = Keyring({"k-operator": b"example-only-secret"})
+principals = Principals(evidence.store, keyring)
+principals.register("operator", PrincipalKind.HUMAN, by="controller", key_id="k-operator")
+principals.register("agent", PrincipalKind.MODEL, by="controller")
+scope = GrantScope(tools=frozenset({"record_refund_request"}))
+grant_expiry = datetime(2100, 1, 1, tzinfo=timezone.utc)
+principals.grant_root(
+    "operator", "agent", scope, grant_expiry,
+    keyring.sign("k-operator", root_grant_payload("g-1", "operator", "agent", scope, grant_expiry)),
+    grant_id="g-1",
+)
 executor = ClaudeExecutionAgent(
     model=anthropic_model,
     prompt_version="execution-prompt-v1",
     authority=AuthorityController(evidence, policy),
-    gateway=ExecutionGateway(store=evidence.store, handlers=handlers),
+    gateway=ExecutionGateway(store=evidence.store, handlers=handlers, principals=principals),
     catalog=catalog,
     # every decision is committed to the ledger before the gateway will issue for it
     commit=EventLedger(evidence.store).commit_decision,
+    principal_id="agent",
+    grant_id="g-1",
 )
 run = executor.run(bundle)
 print({

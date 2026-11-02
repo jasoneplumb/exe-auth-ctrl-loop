@@ -82,7 +82,7 @@ across an MCP `tools/call`.
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
 | **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). 203 tests pass offline against fake provider clients. Fifteen seeded simulation scenarios reproduce bit-for-bit on macOS with Python 3.14 (`results/manifest.json`); CI checks only a reduced-size rerun. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
-| **Limitations** | In-process only: the gateway shares an address space with its caller. On `mainline` (v3 Steps 02–03, unreleased), evidence, the ledger, shadow trials, lifecycle records, budget charges, and tokens are durable in one SQLite file and survive a restart, and a token is consumed by one database transaction, so it redeems at most once across threads, processes on one host, and restarts. In the released 0.3.1 all of this is in memory and consumption is serialized by an in-process lock. Only when the gateway is given the live evidence store, policy, and lifecycle is a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy refused at redemption, and a loss of autonomy is seen only after a later decision has recorded it; without them the gateway checks only the token. Human approval and release are not authenticated. The simulation harness wires the components differently from the shipped loop; see [experiments/README.md](experiments/README.md), [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md), the [claims matrix](docs/paper-v2/claims-matrix.md), and the [production trust boundary](#production-trust-boundary). |
+| **Limitations** | In-process only: the gateway shares an address space with its caller. On `mainline` (v3 Steps 02–03, unreleased), evidence, the ledger, shadow trials, lifecycle records, budget charges, and tokens are durable in one SQLite file and survive a restart, and a token is consumed by one database transaction, so it redeems at most once across threads, processes on one host, and restarts. In the released 0.3.1 all of this is in memory and consumption is serialized by an in-process lock. Only when the gateway is given the live evidence store, policy, and lifecycle is a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy refused at redemption, and a loss of autonomy is seen only after a later decision has recorded it; without them the gateway checks only the token. Human approval and release are authenticated on `mainline` (v3 Step 05, unreleased: a human principal's HMAC signature, keys held by the host) and not in the released 0.3.1. The simulation harness wires the components differently from the shipped loop; see [experiments/README.md](experiments/README.md), [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md), the [claims matrix](docs/paper-v2/claims-matrix.md), and the [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
 
@@ -351,13 +351,20 @@ python -m experiments.run --all --output results
 ## Human approval
 
 When a decision routes to `human_approval`, `ClaudeExecutionAgent.run()`
-returns without invoking the handler. A reviewed caller can restart with the
-exact proposal ID in `approved_proposal_ids`. Denials, draft states, and
-clarification requests cannot be overridden by that mechanism; they require a
-corrected proposal or policy change. The approval is not authenticated: whoever
-calls `run()` with that list is treated as the reviewer, and the token records
-only a `human_approved` flag. A lifecycle release likewise accepts any non-empty
-actor name.
+returns without invoking the handler. On `mainline` (v3 Step 05, unreleased) a
+reviewer approves with a signed `Approval`: a registered human principal's HMAC
+over the proposal's digest and partition, with an expiry. The caller passes it
+to `run(approvals=...)`; the gateway verifies it, records it, and lets it back
+exactly one token. An approval for another proposal or partition, an expired or
+rescinded one, a reused one, or one signed by anyone but an active human is
+refused. A lifecycle release likewise needs a human's signature over the
+partition, its current epoch, and the reason. Every token records the principal
+that asked and the grant it acted under, traceable to a human's root grant
+(`Principals.lineage`). Denials, draft states, and clarification requests cannot
+be overridden by approval; they require a corrected proposal or policy change.
+In the released 0.3.1 the approval is not authenticated: whoever calls `run()`
+with `approved_proposal_ids` is treated as the reviewer, and a release accepts
+any non-empty actor name.
 
 The loop does not freeze human-routed proposals as shadow trials. A host that
 wants a partition to earn evidence from an empty store must freeze each one with

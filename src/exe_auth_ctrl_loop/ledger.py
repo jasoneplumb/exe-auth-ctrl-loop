@@ -117,6 +117,16 @@ class EventLedger:
         when = occurred_at or utcnow()
         encoded = canonical_json(dict(payload))
         with self.store.transaction() as conn:
+            # constraint: the actor is an active registered principal (spec §8, v3 Step 05),
+            # checked in the same transaction as the append, so a deactivation committed
+            # first is seen. The host's own service principals exist by schema.
+            known = conn.execute(
+                "SELECT active FROM principals WHERE principal_id = ?", (actor,)
+            ).fetchone()
+            if known is None or not known[0]:
+                raise PermissionError(
+                    f"ledger actor {actor!r} is not an active registered principal"
+                )
             head = conn.execute(
                 "SELECT sequence, event_hash FROM ledger ORDER BY sequence DESC LIMIT 1"
             ).fetchone()

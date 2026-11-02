@@ -11,7 +11,15 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from _support import AdapterHandlers, forge_token, issue, run, scratch_store
+from _support import (
+    AdapterHandlers,
+    forge_token,
+    gateway_store,
+    issue,
+    principals_for,
+    run,
+    scratch_store,
+)
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -73,7 +81,7 @@ class GatewayBase(unittest.TestCase):
         )
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy
-        , store=self.store.store, handlers=AdapterHandlers())
+        , **gateway_store(self.store.store), handlers=AdapterHandlers())
         self.handler = Handler()
 
     def proposal(self, **kw):
@@ -167,7 +175,7 @@ class LiveStateInvalidationTests(GatewayBase):
 
     def test_gateway_without_live_state_keeps_v1_semantics(self):
         self.gateway = ExecutionGateway(
-            self.clock, store=scratch_store(), handlers=AdapterHandlers()
+            self.clock, **gateway_store(scratch_store()), handlers=AdapterHandlers()
         )
         token = self.autonomous_token()
         self.store.invalidate(self.key, "x")
@@ -274,7 +282,7 @@ class ConcurrencyTests(GatewayBase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(ParkingGuard(),),
-            store=self.store.store, handlers=AdapterHandlers(),
+            **gateway_store(self.store.store), handlers=AdapterHandlers(),
         )
         token = self.autonomous_token()
         outcomes: list[str] = []
@@ -400,12 +408,13 @@ class LifecycleGuardTests(unittest.TestCase):
             self.store, self.policy, random.Random(1), self.clock
         )
         self.manager = LifecycleManager(
-            self.shadow, self.store, self.policy, self.controller, self.clock
+            self.shadow, self.store, self.policy, self.controller, self.clock,
+            principals=principals_for(self.store.store),
         )
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.manager.policy,
             guards=(self.manager,),
-            store=self.store.store, handlers=AdapterHandlers(),
+            **gateway_store(self.store.store), handlers=AdapterHandlers(),
         )
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",

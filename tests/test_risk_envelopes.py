@@ -9,7 +9,15 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from _support import AdapterHandlers, issue, run, scratch_store
+from _support import (
+    AGENT,
+    AdapterHandlers,
+    gateway_store,
+    issue,
+    principals_for,
+    run,
+    scratch_store,
+)
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -84,7 +92,7 @@ class RiskBase(unittest.TestCase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(self.risk,),
-            store=self.store.store,
+            **gateway_store(self.store.store),
             handlers=AdapterHandlers(),
         )
         self.calls = 0
@@ -417,7 +425,8 @@ class LifecycleInteractionTests(unittest.TestCase):
             self.store, self.policy, random.Random(1), self.clock, guards=(self.risk,)
         )
         self.manager = LifecycleManager(
-            self.shadow, self.store, self.policy, self.controller, self.clock
+            self.shadow, self.store, self.policy, self.controller, self.clock,
+            principals=principals_for(self.store.store),
         )
         self.counter = 0
 
@@ -539,7 +548,7 @@ class RegistryUnificationTests(unittest.TestCase):
             "create_refund", lambda args: self.calls.append(args) or {"ok": True}
         )
         gateway = ExecutionGateway(
-            lambda: T0, evidence=store, guards=(self.risk,), store=store.store,
+            lambda: T0, evidence=store, guards=(self.risk,), **gateway_store(store.store),
             handlers=handlers,
         )
         client = _FakeClaude([
@@ -548,7 +557,7 @@ class RegistryUnificationTests(unittest.TestCase):
         ])
         return ClaudeExecutionAgent(
             "m2", "ep1", controller, gateway, registry, client,
-            commit=EventLedger(store.store).commit_decision,
+            commit=EventLedger(store.store).commit_decision, **AGENT,
         )
 
     def test_executor_refuses_a_proposal_whose_class_the_registry_rejects(self):

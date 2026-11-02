@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from _support import scratch_store
+from _support import AGENT, approve, gateway_store, scratch_store
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -136,12 +136,12 @@ class ProviderIntegrationTests(unittest.TestCase):
         )
         authority = AuthorityController(store, policy, clock=lambda: NOW)
         gateway = ExecutionGateway(
-            clock=lambda: NOW, store=store.store, handlers=self.handlers
+            clock=lambda: NOW, **gateway_store(store.store), handlers=self.handlers
         )
         return ClaudeExecutionAgent(
             "claude-model-pinned", "execution-v1", authority, gateway,
             self.catalog, FakeClaude(claude_responses),
-            commit=EventLedger(store.store).commit_decision,
+            commit=EventLedger(store.store).commit_decision, **AGENT,
         )
 
     def test_openai_structured_output_becomes_versioned_proposal(self):
@@ -193,7 +193,7 @@ class ProviderIntegrationTests(unittest.TestCase):
             tool_use("create_refund", proposal.proposal_id, order_id=7, usd=24),
             final_text(),
         ], evidence=False)
-        run = agent.run(bundle, approved_proposal_ids={proposal.proposal_id})
+        run = agent.run(bundle, approvals=[approve(proposal)])
         self.assertEqual(run.status, ExecutionStatus.COMPLETED)
         self.assertEqual(len(self.receipts), 1)
         self.assertTrue(run.steps[0].decision.route == Route.HUMAN_APPROVAL)
