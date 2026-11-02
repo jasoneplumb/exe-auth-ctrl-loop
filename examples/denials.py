@@ -140,7 +140,7 @@ granted = controller_for(authorized_store).evaluate(original)
 show("authorized (before edit)", granted)
 assert granted.route == Route.AUTONOMOUS, granted.reason_codes
 
-gateway = ExecutionGateway()
+gateway = ExecutionGateway(store=fresh_store().store)
 token = gateway.issue(granted, original, POLICY)
 edited = proposal("op-mutated", parameters={"order_id": 4815, "usd": 2400.00})
 try:

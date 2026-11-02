@@ -94,7 +94,7 @@ executor = ClaudeExecutionAgent(
     model=anthropic_model,
     prompt_version="execution-prompt-v1",
     authority=AuthorityController(evidence, policy),
-    gateway=ExecutionGateway(),
+    gateway=ExecutionGateway(store=evidence.store),
     registry=registry,
 )
 run = executor.run(bundle)

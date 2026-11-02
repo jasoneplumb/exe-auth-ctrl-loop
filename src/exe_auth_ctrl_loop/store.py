@@ -137,9 +137,65 @@ _SCHEMA_V1 = (
     ),
 )
 
+# v3 Step 03: capabilities (docs/v3/spec.md §3). A token row is current state, not history,
+# so it is not append-only; instead its legal transitions are enforced here, and every
+# column but the state and the revocation reason is fixed at issue.
+TOKEN_STATES = (
+    "issued", "revoked", "consumed", "handler_started", "handler_completed", "handler_failed",
+)
+_TOKEN_TRANSITIONS = (
+    ("issued", "revoked"),
+    ("issued", "consumed"),
+    ("consumed", "handler_started"),
+    ("handler_started", "handler_completed"),
+    ("handler_started", "handler_failed"),
+)
+_SCHEMA_V2 = (
+    f"""CREATE TABLE tokens (
+        token_id TEXT PRIMARY KEY,
+        decision_id TEXT NOT NULL UNIQUE,
+        proposal_digest TEXT NOT NULL,
+        allowed_tool TEXT NOT NULL,
+        allowed_effects TEXT NOT NULL,
+        partition TEXT NOT NULL,
+        policy_version TEXT NOT NULL,
+        evidence_id TEXT,
+        evidence_version INTEGER,
+        expires_at TEXT NOT NULL,
+        human_approved INTEGER NOT NULL,
+        state TEXT NOT NULL CHECK (state IN ({", ".join(f"'{s}'" for s in TOKEN_STATES)})),
+        revocation_reason TEXT
+    )""",
+    "CREATE INDEX tokens_state ON tokens (state)",
+    # constraint: a same-state update is also refused, so an UPDATE that loses its
+    # `WHERE state = 'issued'` condition fails loudly instead of re-consuming a token
+    f"""CREATE TRIGGER tokens_transition BEFORE UPDATE OF state ON tokens
+        WHEN NOT ({" OR ".join(
+            f"(OLD.state = '{a}' AND NEW.state = '{b}')" for a, b in _TOKEN_TRANSITIONS
+        )})
+        BEGIN SELECT RAISE(ABORT, 'illegal token transition'); END""",
+    """CREATE TRIGGER tokens_fixed BEFORE UPDATE ON tokens
+        WHEN NEW.token_id IS NOT OLD.token_id
+          OR NEW.decision_id IS NOT OLD.decision_id
+          OR NEW.proposal_digest IS NOT OLD.proposal_digest
+          OR NEW.allowed_tool IS NOT OLD.allowed_tool
+          OR NEW.allowed_effects IS NOT OLD.allowed_effects
+          OR NEW.partition IS NOT OLD.partition
+          OR NEW.policy_version IS NOT OLD.policy_version
+          OR NEW.evidence_id IS NOT OLD.evidence_id
+          OR NEW.evidence_version IS NOT OLD.evidence_version
+          OR NEW.expires_at IS NOT OLD.expires_at
+          OR NEW.human_approved IS NOT OLD.human_approved
+          OR (NEW.revocation_reason IS NOT OLD.revocation_reason
+              AND NOT (OLD.state = 'issued' AND NEW.state = 'revoked'))
+        BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
+    """CREATE TRIGGER tokens_no_delete BEFORE DELETE ON tokens
+        BEGIN SELECT RAISE(ABORT, 'tokens are never deleted'); END""",
+)
+
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1,)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2)
 
 
 class StoreError(RuntimeError):

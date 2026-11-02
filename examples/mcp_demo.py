@@ -107,7 +107,7 @@ decision = controller.evaluate(proposal)
 print({"route": decision.route.value, "reasons": decision.reason_codes})
 assert decision.route == Route.AUTONOMOUS, "seeded evidence should authorize this operation"
 
-gateway = ExecutionGateway(lambda: NOW)
+gateway = ExecutionGateway(lambda: NOW, store=evidence.store)
 token = gateway.issue(decision, proposal, policy)
 meta = build_call_meta(decision, proposal, token, SHARED_SECRET)
 request = build_request(

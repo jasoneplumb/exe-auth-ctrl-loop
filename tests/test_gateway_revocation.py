@@ -11,7 +11,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from _support import scratch_store
+from _support import forge_token, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -73,7 +73,7 @@ class GatewayBase(unittest.TestCase):
         )
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy
-        )
+        , store=self.store.store)
         self.handler = Handler()
 
     def proposal(self, **kw):
@@ -104,7 +104,7 @@ class GatewayBase(unittest.TestCase):
             self.gateway.execute(token.token_id, proposal or self.proposal(), self.handler)
         self.assertIn(fragment, str(ctx.exception))
         self.assertEqual(self.handler.calls, 0)
-        self.assertFalse(token.used)
+        self.assertFalse(self.gateway.token(token.token_id).used)
 
 
 class LiveStateInvalidationTests(GatewayBase):
@@ -166,7 +166,7 @@ class LiveStateInvalidationTests(GatewayBase):
         self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
 
     def test_gateway_without_live_state_keeps_v1_semantics(self):
-        self.gateway = ExecutionGateway(self.clock)
+        self.gateway = ExecutionGateway(self.clock, store=scratch_store())
         token = self.autonomous_token()
         self.store.invalidate(self.key, "x")
         self.policy = replace(self.policy, version="pol2")
@@ -195,7 +195,9 @@ class HumanApprovalTests(GatewayBase):
     def test_revoked_human_grant_is_refused(self):
         token = self.human_token()
         self.gateway.revoke(token.token_id, "approver rescinded")
-        self.assertEqual(token.revocation_reason, "approver rescinded")
+        self.assertEqual(
+            self.gateway.token(token.token_id).revocation_reason, "approver rescinded"
+        )
         with self.assertRaises(PermissionError):
             self.gateway.execute(token.token_id, self.proposal(), self.handler)
         self.assertEqual(self.handler.calls, 0)
@@ -236,7 +238,7 @@ class ScopeAndExpiryTests(GatewayBase):
         # Same digest cannot carry different effects, so exercise the scope check directly
         # by issuing for a narrower proposal and forging a token with wider effects.
         token = self.autonomous_token()
-        token.allowed_effects = frozenset()
+        forge_token(self.store.store, token.token_id, allowed_effects="[]")
         self.assert_denied(token, "effect exceeds")
 
     def test_expiry_boundary(self):
@@ -270,6 +272,7 @@ class ConcurrencyTests(GatewayBase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(ParkingGuard(),),
+            store=self.store.store,
         )
         token = self.autonomous_token()
         outcomes: list[str] = []
@@ -366,7 +369,9 @@ class ConcurrencyTests(GatewayBase):
             t.join()
         # exactly one of: handler ran (then revoke landed after), or denied (revoke first)
         self.assertEqual(self.handler.calls, 1 if outcome == ["ok"] else 0)
-        self.assertTrue(token.revoked)
+        # v3: a token the handler consumed cannot become revoked (spec §3: no transition
+        # leaves a terminal state); the revoke that loses the race changes nothing
+        self.assertEqual(self.gateway.token(token.token_id).revoked, outcome != ["ok"])
 
     def test_handler_failure_does_not_refund_the_token(self):
         token = self.autonomous_token()
@@ -376,7 +381,7 @@ class ConcurrencyTests(GatewayBase):
 
         with self.assertRaises(RuntimeError):
             self.gateway.execute(token.token_id, self.proposal(), failing)
-        self.assertTrue(token.used)
+        self.assertTrue(self.gateway.token(token.token_id).used)
         with self.assertRaises(PermissionError):
             self.gateway.execute(token.token_id, self.proposal(), self.handler)
 
@@ -398,6 +403,7 @@ class LifecycleGuardTests(unittest.TestCase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.manager.policy,
             guards=(self.manager,),
+            store=self.store.store,
         )
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",

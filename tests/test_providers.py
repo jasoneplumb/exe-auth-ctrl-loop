@@ -133,7 +133,7 @@ class ProviderIntegrationTests(unittest.TestCase):
             "policy-v1", {"low": .95}, 100, timedelta(days=30), 0.0,
         )
         authority = AuthorityController(store, policy, clock=lambda: NOW)
-        gateway = ExecutionGateway(clock=lambda: NOW)
+        gateway = ExecutionGateway(clock=lambda: NOW, store=scratch_store())
         return ClaudeExecutionAgent(
             "claude-model-pinned", "execution-v1", authority, gateway,
             self.registry, FakeClaude(claude_responses),

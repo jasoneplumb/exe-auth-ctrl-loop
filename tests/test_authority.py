@@ -51,7 +51,7 @@ class AuthorityTests(unittest.TestCase):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
         self.assertEqual(decision.route, Route.AUTONOMOUS)
-        gateway = ExecutionGateway(lambda: NOW)
+        gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
         token = gateway.issue(decision, self.proposal, self.policy)
         self.assertEqual(gateway.execute(token.token_id, self.proposal, lambda p: "done"), "done")
         self.assertEqual(token.allowed_tool, "create_refund")
@@ -60,7 +60,7 @@ class AuthorityTests(unittest.TestCase):
     def test_token_is_single_use(self):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
-        gateway = ExecutionGateway(lambda: NOW)
+        gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
         token = gateway.issue(decision, self.proposal, self.policy)
         gateway.execute(token.token_id, self.proposal, lambda p: None)
         with self.assertRaises(PermissionError):
@@ -69,7 +69,7 @@ class AuthorityTests(unittest.TestCase):
     def test_changed_tool_is_rejected(self):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
-        gateway = ExecutionGateway(lambda: NOW)
+        gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
         token = gateway.issue(decision, self.proposal, self.policy)
         changed = replace(self.proposal, tool_name="delete_order")
         with self.assertRaises(PermissionError):
@@ -88,7 +88,8 @@ class AuthorityTests(unittest.TestCase):
         decision = self.controller().evaluate(self.proposal)
         self.assertEqual(decision.route, Route.AUDIT)
         # an audit executes unattended; the route marks it for labelling afterwards
-        token = ExecutionGateway(lambda: NOW).issue(decision, self.proposal, self.policy)
+        gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
+        token = gateway.issue(decision, self.proposal, self.policy)
         self.assertFalse(token.human_approved)
 
     def test_draft_requests_revision(self):
