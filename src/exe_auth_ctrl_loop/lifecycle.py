@@ -11,7 +11,7 @@ Future: Durable since v3 Step 02: each partition's record is a row of the `lifec
         writes, so a restart keeps suspensions and lineage flags (closes L4). As a
         RedemptionGuard this manager also refuses an already-issued token once its
         partition leaves AUTONOMOUS, is retired, or inherits a suspension; the gateway asks
-        it under the consume lock (docs/v2/gateway-redemption.md).
+        it inside the consume transaction (docs/v3/spec.md §3).
 """
 
 from __future__ import annotations

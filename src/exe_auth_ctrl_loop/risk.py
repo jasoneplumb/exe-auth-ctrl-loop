@@ -8,12 +8,12 @@ Context: The 12-field partition key carries a risk class, and evidence never poo
         and borrow the low-risk track record (docs/v2/risk-envelopes.md).
 Pattern: Envelopes, not key explosion. An envelope is a versioned predicate over the
         arguments of one tool; the lowest-ranked envelope that admits the arguments names
-        the risk class. Budgets charge at redemption, under the gateway's lock.
+        the risk class. Budgets charge at redemption, in the consume transaction.
 Future: Durable since v3 Step 02: charges and the per-partition sequence history are rows
         of append-only tables in the policy's Store, so a restart keeps every charge and
-        several policy objects over one database share one account. Charging is still
-        settled under the gateway's lock; making it part of the consume transaction is
-        v3 Step 03.
+        several policy objects over one database share one account. Since Step 03 a
+        charge is written in the gateway's consume transaction when the policy and the
+        gateway share a Store, so a charge and a consume commit together or not at all.
 """
 
 from __future__ import annotations
@@ -183,7 +183,7 @@ class RiskPolicy:
             what already happened" -- independent of any track record
     context: Attached to AuthorityController as a ProposalGuard, so a scope or budget
              violation routes to DENY; and to ExecutionGateway as a RedemptionGuard, so
-             the same checks run again under the consume lock against the policy that is
+             the same checks run again in the consume transaction against the policy that is
              current *then*, and budgets are charged only when a side effect is committed.
     constraint: Classification reads arguments and the registry-derived tool name only.
                 It never reads the model's confidence, its stated risk class, or any
@@ -292,11 +292,12 @@ class RiskPolicy:
     def commit(self, token: AuthorizationToken, proposal: Proposal) -> None:
         """
         RedemptionGuard: charge budgets for an operation the gateway has just consumed
-        constraint: Called inside the gateway lock, after the token is marked used and
-                    after every guard returned no blockers, so a charge never lands for
-                    an operation that did not run and two redemptions never both charge.
-                    Must not raise: every amount() read here was already read, for the
+        constraint: Called inside the gateway's consume transaction, after the token is
+                    consumed and every guard returned no blockers, so a charge never lands
+                    for an operation that was refused and two redemptions never both charge.
+                    Should not raise: every amount() read here was already read, for the
                     same proposal and budgets, in redemption_blockers() a moment earlier.
+                    If it does, the transaction rolls back and the token stays unspent.
         """
         with self.store.transaction() as conn:
             for budget in self.budgets:

@@ -97,7 +97,7 @@ class Harness:
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(seed), lambda: NOW
         )
-        self.gateway = ExecutionGateway(lambda: NOW, evidence=self.store)
+        self.gateway = ExecutionGateway(lambda: NOW, evidence=self.store, store=self.store.store)
         self.proposal = Proposal(
             "p-1", "refund order", "create_refund", {"order_id": 1, "usd": 24}, .96,
             frozenset({"refund:write"}), self.key, "openai",

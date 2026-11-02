@@ -5,9 +5,9 @@ Context: The host owns this module. Both model runtimes are upstream of it and n
         reach past it -- providers.py proposes, executor.py requests, this authorizes
 Pattern: Fail-closed accumulation -- reasons are collected, and any reason at all withholds
         autonomy. Nothing here grants on the absence of a check.
-Future: In-process only. Evidence is durable since v3 Step 02 (store.py); transactional
-        token consumption is Step 03, and a separate gateway service identity remains a
-        production requirement (docs/v3/spec.md O-1).
+Future: One process, durable state: evidence since v3 Step 02 and transactional token
+        consumption since Step 03 (store.py). A separate gateway service identity remains
+        a production requirement (docs/v3/spec.md O-1).
 """
 
 from __future__ import annotations
@@ -20,7 +20,6 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from threading import Lock
 from typing import Any, Callable, Mapping, Protocol, Sequence
 
 from .sequential import beta_mixture_lower_bound
@@ -246,9 +245,12 @@ class AuthorizationToken:
     evidence_version: int | None
     expires_at: datetime
     human_approved: bool
+    # effect: as returned by issue() these describe the token at issue. The current
+    # values are in the database: ExecutionGateway.token() or .tokens.
     used: bool = False
     revoked: bool = False
     revocation_reason: str | None = None
+    state: str = "issued"
 
 
 class ProposalGuard(Protocol):
@@ -267,12 +269,13 @@ class RedemptionGuard(Protocol):
     intent: Let shared authority state veto a token at the moment it is spent, and learn
             when it was spent
     context: The lifecycle manager and the risk policy implement this; the gateway asks
-             every guard inside its consume lock, so a veto and a consume cannot
-             interleave, and calls commit() only once the token is consumed
+             every guard inside its consume transaction, so a veto and a consume cannot
+             interleave, and calls commit() in the same transaction once the token is
+             consumed
     constraint: Must not call back into the gateway. redemption_blockers() is read-only;
-                commit() is the one place a guard may record that an effect happened, and
-                it must not raise -- it runs after the token is consumed, so anything that
-                could refuse the operation belongs in redemption_blockers().
+                commit() is the one place a guard may record that an effect happened.
+                Anything that could refuse the operation belongs in redemption_blockers();
+                if commit() raises, the consume is rolled back with it.
     """
 
     def redemption_blockers(
@@ -548,8 +551,10 @@ class ExecutionGateway:
             presenting a token this gateway issued.
     Pattern: Capability, not permission check -- the token names one tool, one effect set,
             one proposal digest, one use, and a short expiry.
-    Future: Tokens are in-process objects. Across a network they must be signed or held
-            server-side, and consumed transactionally rather than under a thread lock.
+    Future: Since v3 Step 03 tokens are rows of the `tokens` table and are consumed by one
+            database transaction, so single use holds across threads, processes on one
+            host, and restarts (docs/v3/spec.md §3). Across hosts they must still be signed
+            or held server-side (Step 07 for MCP).
     """
 
     def __init__(
@@ -558,6 +563,8 @@ class ExecutionGateway:
         evidence: EvidenceStore | None = None,
         current_policy: Callable[[], Policy] | None = None,
         guards: Sequence[RedemptionGuard] = (),
+        *,
+        store: Store,
     ) -> None:
         """
         intent: Optionally bind the gateway to the live authority state it should re-check
@@ -566,16 +573,40 @@ class ExecutionGateway:
                 or a newly prohibited effect. Each guard (e.g. LifecycleManager) can veto
                 on its own grounds. Without any of them the gateway behaves as v0.2.0 did:
                 expiry and explicit revocation only.
+        constraint: `store` is required and holds the tokens. Guards that write (a budget
+                    charge) should use the same Store, so their write commits with the
+                    consume; on another Store it commits separately.
         """
         self.clock = clock
         self.evidence = evidence
         self.current_policy = current_policy
         self.guards = tuple(guards)
-        self.tokens: dict[str, AuthorizationToken] = {}
-        # constraint: one lock serializes every check-and-consume. Correct for threads in
-        # one process; it says nothing across processes or a restart. See
-        # docs/v2/gateway-redemption.md.
-        self._lock = Lock()
+        self.store = store
+
+    @property
+    def tokens(self) -> dict[str, AuthorizationToken]:
+        """Every token, with its current state, read from the database (a fresh dict)."""
+        rows = self.store.connection().execute(f"SELECT {_TOKEN_COLUMNS} FROM tokens").fetchall()
+        return {row[0]: _token(row) for row in rows}
+
+    def token(self, token_id: str) -> AuthorizationToken | None:
+        row = self.store.connection().execute(
+            f"SELECT {_TOKEN_COLUMNS} FROM tokens WHERE token_id = ?", (token_id,)
+        ).fetchone()
+        return None if row is None else _token(row)
+
+    def effect_unknown(self) -> list[str]:
+        """
+        intent: The tokens an operator must triage by hand (spec §3 rule 3)
+        effect: A token in `handler_started` was consumed and its handler was entered but
+                never reported back -- the process stopped mid-effect. Its effect may or may
+                not have happened, and it is never re-run.
+        """
+        return [
+            row[0] for row in self.store.connection().execute(
+                "SELECT token_id FROM tokens WHERE state = 'handler_started' ORDER BY rowid"
+            )
+        ]
 
     def issue(
         self,
@@ -595,9 +626,14 @@ class ExecutionGateway:
         constraint: A human signature overrides a route, never a prohibition: prohibited
                     effects are refused here even with human_approved=True, and if a live
                     policy provider is attached the policy passed in must be the current one
+        constraint: One decision, one token, ever (spec §3 rule 4): a second request for a
+                    decision that already has a token row is refused whatever that row's
+                    state, here and by the unique constraint on `decision_id`
         effect: The token names its partition and the evidence id and version it was
                 judged on. execute() re-reads the live state against them, so a grant
                 is only as good as its justification still is at the moment of use.
+        effect: Returns the token as issued. Its state afterwards is in the database:
+                `gateway.token(token_id)` or `gateway.tokens`.
         """
         allowed = decision.route in {Route.AUTONOMOUS, Route.AUDIT} or (
             human_approved and decision.route == Route.HUMAN_APPROVAL
@@ -623,7 +659,21 @@ class ExecutionGateway:
             expires_at=self.clock() + policy.token_ttl,
             human_approved=human_approved,
         )
-        self.tokens[token.token_id] = token
+        with self.store.transaction() as conn:
+            if conn.execute(
+                "SELECT 1 FROM tokens WHERE decision_id = ?", (decision.decision_id,)
+            ).fetchone():
+                raise PermissionError("decision already has a token")
+            conn.execute(
+                f"INSERT INTO tokens ({_TOKEN_COLUMNS}) VALUES ({_TOKEN_PLACEHOLDERS})",
+                (
+                    token.token_id, token.decision_id, token.proposal_digest,
+                    token.allowed_tool, json.dumps(sorted(token.allowed_effects)),
+                    partition_text(token.partition), token.policy_version, token.evidence_id,
+                    token.evidence_version, time_text(token.expires_at),
+                    int(token.human_approved), "issued", None,
+                ),
+            )
         return token
 
     def execute(
@@ -634,19 +684,30 @@ class ExecutionGateway:
     ) -> Any:
         """
         intent: Spend a capability once, on the operation it was issued for
-        method: Re-check identity, liveness, and scope at the moment of use rather than
-                trusting that issuance is still valid
+        method: One transaction. Consume first, with `UPDATE ... WHERE state = 'issued'`
+                affecting exactly one row; then re-check identity, liveness, and scope at
+                the moment of use; then let guards settle (budget charges). Any refusal
+                raises inside the transaction, which rolls the consume back.
         effect: Every mismatch raises PermissionError, so a caller cannot distinguish
                 "expired" from "wrong tool" by control flow and act on the difference
-        constraint: The linearization point is `token.used = True` inside the lock. Every
-                    check, including the live-state checks, happens before it under the
-                    same lock, so no state change can slip between a check and the consume
-                    and no second redeemer can observe used=False. The handler runs after
-                    the lock is released; a handler failure does not refund the token.
+        constraint: The linearization point is the commit of that transaction. The
+                    conditional update is the single-use guard: a second redeemer, in this
+                    process or another, either waits on the write lock and then finds no
+                    row in state `issued`, or is refused by the transition trigger. No
+                    Python-side check of the state stands in for it.
+        constraint: The handler runs after the commit, between `handler_started` and
+                    `handler_completed` or `handler_failed`, each written in its own
+                    transaction. A failing handler does not refund the token; a process
+                    that stops inside the handler leaves `handler_started`, which
+                    effect_unknown() reports and nothing re-runs.
         """
-        with self._lock:
-            token = self.tokens.get(token_id)
-            if token is None or token.used or token.revoked:
+        with self.store.transaction() as conn:
+            token = self.token(token_id)
+            consumed = conn.execute(
+                "UPDATE tokens SET state = 'consumed' WHERE token_id = ? AND state = 'issued'",
+                (token_id,),
+            ).rowcount
+            if token is None or consumed != 1:
                 raise PermissionError("missing, consumed, or revoked token")
             if self.clock() >= token.expires_at:
                 raise PermissionError("expired token")
@@ -659,18 +720,19 @@ class ExecutionGateway:
             blockers = self.redemption_blockers(token, proposal)
             if blockers:
                 raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
-            token.used = True
-            # effect: budgets are charged here, still under the lock and only for a token
-            # that was actually consumed, so a charge and a consume are one event
-            # constraint: guard.commit() must not raise. It is the settlement of an
-            # operation already consumed; a failure here would leave the token spent with
-            # the effect unapplied and no retry path. A guard must do its checking in
-            # redemption_blockers(), which runs before the consume -- RiskPolicy does:
-            # the same budget.amount() call that could raise in commit() has already run
-            # there for every limit-based budget.
+            # effect: budgets are charged in the consume transaction, so a charge and a
+            # consume commit together or not at all. A guard's commit() that raises now
+            # rolls the consume back too, instead of leaving a spent token unsettled.
             for guard in self.guards:
                 guard.commit(token, proposal)
-        return adapter(proposal)
+        self._advance(token_id, "consumed", "handler_started")
+        try:
+            result = adapter(proposal)
+        except BaseException:
+            self._advance(token_id, "handler_started", "handler_failed")
+            raise
+        self._advance(token_id, "handler_started", "handler_completed")
+        return result
 
     def redemption_blockers(
         self, token: AuthorizationToken, proposal: Proposal
@@ -722,9 +784,52 @@ class ExecutionGateway:
     def revoke(self, token_id: str, reason: str = "revoked") -> None:
         """
         intent: Withdraw one grant explicitly, e.g. when a human approval is rescinded
-        constraint: Taken under the consume lock so a revoke and a redeem cannot interleave
+        constraint: One transaction, serialized with every consume by the write lock, so a
+                    revoke and a redeem are ordered and never interleave. Revoking a token
+                    that is no longer `issued` changes nothing: there is no grant left.
         """
-        with self._lock:
-            token = self.tokens[token_id]
-            token.revoked = True
-            token.revocation_reason = reason
+        with self.store.transaction() as conn:
+            if self.token(token_id) is None:
+                raise KeyError(token_id)
+            conn.execute(
+                "UPDATE tokens SET state = 'revoked', revocation_reason = ?"
+                " WHERE token_id = ? AND state = 'issued'",
+                (reason, token_id),
+            )
+
+    def _advance(self, token_id: str, current: str, target: str) -> None:
+        with self.store.transaction() as conn:
+            conn.execute(
+                "UPDATE tokens SET state = ? WHERE token_id = ? AND state = ?",
+                (target, token_id, current),
+            )
+
+
+_TOKEN_COLUMNS = (
+    "token_id, decision_id, proposal_digest, allowed_tool, allowed_effects, partition,"
+    " policy_version, evidence_id, evidence_version, expires_at, human_approved, state,"
+    " revocation_reason"
+)
+_TOKEN_PLACEHOLDERS = ", ".join("?" for _ in _TOKEN_COLUMNS.split(","))
+
+
+def _token(row: tuple[Any, ...]) -> AuthorizationToken:
+    (token_id, decision_id, proposal_digest, allowed_tool, effects, partition, policy_version,
+     evidence_id, evidence_version, expires_at, human_approved, state, reason) = row
+    return AuthorizationToken(
+        token_id=token_id,
+        decision_id=decision_id,
+        proposal_digest=proposal_digest,
+        allowed_tool=allowed_tool,
+        allowed_effects=frozenset(json.loads(effects)),
+        partition=PartitionKey(**json.loads(partition)),
+        policy_version=policy_version,
+        evidence_id=evidence_id,
+        evidence_version=evidence_version,
+        expires_at=datetime.fromisoformat(expires_at),
+        human_approved=bool(human_approved),
+        used=state in {"consumed", "handler_started", "handler_completed", "handler_failed"},
+        revoked=state == "revoked",
+        revocation_reason=reason,
+        state=state,
+    )

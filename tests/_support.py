@@ -54,3 +54,21 @@ def rewrite_events(ledger: EventLedger, events: Sequence[LedgerEvent]) -> None:
         )
         for sql in triggers:
             conn.execute(sql)
+
+
+def forge_token(store: Store, token_id: str, **columns: object) -> None:
+    """
+    Overwrite fields of a stored token that are fixed at issue, as someone with write
+    access to the database file can: drop the `tokens_fixed` trigger, update, restore it.
+    Values are given as stored (e.g. allowed_effects as a JSON list).
+    """
+    with store.transaction() as conn:
+        (sql,) = conn.execute(
+            "SELECT sql FROM sqlite_master WHERE type = 'trigger' AND name = 'tokens_fixed'"
+        ).fetchone()
+        conn.execute("DROP TRIGGER tokens_fixed")
+        assignments = ", ".join(f"{name} = ?" for name in columns)
+        conn.execute(
+            f"UPDATE tokens SET {assignments} WHERE token_id = ?", (*columns.values(), token_id)
+        )
+        conn.execute(sql)

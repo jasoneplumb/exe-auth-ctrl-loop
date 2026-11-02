@@ -46,17 +46,21 @@ handler before the decision is committed to the ledger.
 Also in scope: any way to redeem a token after its partition was suspended,
 its evidence invalidated, its policy version replaced, or its lifecycle state
 left `AUTONOMOUS`, when the gateway was constructed with that live state; and
-any way for two redemptions of one token to reach a handler twice within a
-single process.
+any way for two redemptions of one token to reach a handler twice, in one
+process or in several sharing the database (on `mainline`, v3 Step 03; in the
+released 0.3.1, within a single process).
 
 ## Known limitations of the prototype gateway
 
-- Check-and-consume is serialized by a `threading.Lock`. This is correct for
-  threads in one process and makes no claim across processes, machines, or a
-  restart. Production needs a transactional consume in a durable store before
-  the handler is reached.
-- The handler runs after the token is consumed and outside the lock. A handler
-  that fails does not refund the token; the operation needs a fresh decision.
+- On `mainline` (v3 Step 03, unreleased), check-and-consume is one SQLite
+  `BEGIN IMMEDIATE` transaction whose single-use guard is a conditional update,
+  so it holds across threads, processes on one host, and restarts. It makes no
+  claim across hosts. The released 0.3.1 serializes it with a `threading.Lock`
+  and makes no claim beyond one process.
+- The handler runs after the consume commits. A handler that fails does not
+  refund the token; the operation needs a fresh decision. A process that stops
+  inside a handler leaves the token in `handler_started`, which
+  `ExecutionGateway.effect_unknown()` reports and nothing re-runs.
 - Live checks at redemption cover only the state the gateway was given. A
   gateway constructed without an evidence store, policy provider, or lifecycle
   guard behaves as v0.2.0 did: expiry and explicit revocation only.

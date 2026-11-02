@@ -50,7 +50,7 @@ print({
 })
 
 if decision.route == Route.AUTONOMOUS:
-    gateway = ExecutionGateway()
+    gateway = ExecutionGateway(store=evidence.store)
     token = gateway.issue(decision, proposal, policy)
     receipt = gateway.execute(
         token.token_id,

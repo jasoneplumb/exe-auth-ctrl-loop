@@ -100,7 +100,7 @@ class CallMetaTests(unittest.TestCase):
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         self.store = EvidenceStore(scratch_store())
         self.store.put(EvidenceSnapshot("e1", 1, self.key, 99, 1, NOW - timedelta(days=2), NOW))
-        self.gateway = ExecutionGateway(lambda: NOW)
+        self.gateway = ExecutionGateway(lambda: NOW, store=scratch_store())
 
     def authorize(self, audit_rate=0.0, human_approved=False):
         policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), audit_rate)

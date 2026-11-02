@@ -123,7 +123,7 @@ class LifecycleTests(unittest.TestCase):
              ("UNESTABLISHED", "QUALIFYING", "TRIAL_ADMITTED"),
              ("QUALIFYING", "AUTONOMOUS", "GATE_MET")],
         )
-        gateway = ExecutionGateway(self.clock)
+        gateway = ExecutionGateway(self.clock, store=scratch_store())
         token = gateway.issue(decision, self.proposal(), self.policy)
         self.assertEqual(gateway.execute(token.token_id, self.proposal(), lambda p: "ok"), "ok")
 
@@ -261,7 +261,7 @@ class LifecycleTests(unittest.TestCase):
 
     def test_retired_partition_token_is_refused_without_the_lifecycle_guard(self):
         # a gateway holding only the store, not the manager as a guard
-        gateway = ExecutionGateway(self.clock, evidence=self.store)
+        gateway = ExecutionGateway(self.clock, evidence=self.store, store=self.store.store)
         decision = self.autonomous()
         token = gateway.issue(decision, self.proposal(), self.policy)
         self.manager.on_churn(self.key, self.make_key(tool="refund-api-v3"))

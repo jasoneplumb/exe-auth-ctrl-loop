@@ -234,11 +234,12 @@ class Simulation:
         if cfg.comparator == "legacy_wilson_seeded":
             # The v0.2.0 path: bare controller, hand-seeded evidence, no lifecycle, no live
             # redemption checks. Not a bootstrap; a demonstration of the old behaviour.
-            self.gateway = ExecutionGateway(self.clock)
+            self.gateway = ExecutionGateway(self.clock, store=self.db)
         else:
             self.gateway = ExecutionGateway(
                 self.clock, evidence=self.store, current_policy=lambda: self.policy,
                 guards=(self.manager, self.risk),
+            store=self.store.store,
             )
         self.prompt_version = "prop-p1"
         self.key = make_key(self.prompt_version, "low")

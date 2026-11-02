@@ -324,14 +324,14 @@ run; do not route around it."""
                 error="authorization withdrawn before redemption",
             )
         except Exception as exc:
-            # Three ways here. (1) The handler raised: the token was consumed first, the
-            # effect is unknown. (2) A guard's commit() raised, which its contract forbids:
-            # the token was consumed, the effect never ran. (3) A guard's
-            # redemption_blockers() raised unexpectedly, before the consume: the token is
-            # NOT spent. In every case the proposal is marked executed so it cannot be
-            # retried in this run, and the failure is a step rather than an exception out
-            # of run(); the step cannot tell (3) from (1), so it claims nothing about the
-            # token beyond that this run will not present it again.
+            # Two ways here. (1) The handler raised: the token was consumed and committed
+            # first, its state is `handler_failed`, the effect is unknown. (2) A guard's
+            # redemption_blockers() or commit() raised unexpectedly inside the consume
+            # transaction: it rolled back and the token is NOT spent. In both cases the
+            # proposal is marked executed so it cannot be retried in this run, and the
+            # failure is a step rather than an exception out of run(); the step cannot
+            # tell (2) from (1), so it claims nothing about the token beyond that this
+            # run will not present it again. The token's state in the store can.
             executed.add(proposal_id)
             return ExecutionStep(
                 proposal_id=proposal_id,

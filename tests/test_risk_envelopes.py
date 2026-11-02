@@ -83,6 +83,7 @@ class RiskBase(unittest.TestCase):
         self.gateway = ExecutionGateway(
             self.clock, evidence=self.store, current_policy=lambda: self.policy,
             guards=(self.risk,),
+            store=self.store.store,
         )
         self.calls = 0
         self.counter = 0
@@ -532,7 +533,9 @@ class RegistryUnificationTests(unittest.TestCase):
         controller = AuthorityController(
             store, policy, random.Random(1), lambda: T0, guards=(self.risk,)
         )
-        gateway = ExecutionGateway(lambda: T0, evidence=store, guards=(self.risk,))
+        gateway = ExecutionGateway(
+            lambda: T0, evidence=store, guards=(self.risk,), store=store.store
+        )
         client = _FakeClaude([
             _tool_use("create_refund", proposal.proposal_id, **proposal.parameters),
             SimpleNamespace(content=[SimpleNamespace(type="text", text="done")]),
