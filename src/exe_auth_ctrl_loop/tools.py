@@ -5,8 +5,11 @@ Context: authority.py reads risk and effects from here; executor.py validates ev
         against it before a decision is even sought
 Pattern: Single source of truth. A model's claim about a tool is compared to this registry
         and discarded on mismatch, never merged into it.
-Future: Handlers are plain callables in-process; production puts them behind a service
-        identity the model runtimes cannot address.
+Future: Since v3 Step 04 the facts and the handlers are separate objects. ToolCatalog is
+        what the agent side may hold; HandlerTable is held by ExecutionGateway alone, and
+        the gateway picks the handler from the token. Handlers are still plain callables in
+        one process; production puts them behind a service identity the model runtimes
+        cannot address (docs/v3/spec.md §4, O-1).
 """
 
 from __future__ import annotations
@@ -37,7 +40,6 @@ class ToolDefinition:
     version: str
     task_category: str
     risk_class: str | RiskClassifier | None
-    handler: ToolHandler
 
     def classify_risk(self, parameters: Mapping[str, Any]) -> str:
         """
@@ -55,9 +57,10 @@ class ToolDefinition:
         return self.risk_class
 
 
-class ToolRegistry:
+class ToolCatalog:
     """
-    Host-owned tool metadata and handlers; model-supplied metadata is not trusted.
+    Host-owned tool metadata; model-supplied metadata is not trusted. Holds no handlers
+    and cannot run a tool: that is HandlerTable, which only the gateway holds.
 
     constraint: Risk has one classifier per registry. With `risk` attached, every tool
                 defers to it (risk envelopes in risk.py) and must register with
@@ -130,15 +133,11 @@ class ToolRegistry:
             rendered = "; ".join(error.message for error in errors)
             raise ToolValidationError(f"invalid {name} parameters: {rendered}")
 
-    def execute(self, name: str, parameters: Mapping[str, Any]) -> Any:
-        self.validate(name, parameters)
-        return self.get(name).handler(parameters)
-
     def public_catalog(self) -> list[dict[str, Any]]:
         """
         intent: Show the proposing model what exists without showing it anything it could
                 use to claim authority
-        constraint: Deliberately omits `version`, `risk_class`, and `handler`. The host
+        constraint: Deliberately omits `version` and `risk_class`. The host
                     resolves those itself, so a model cannot propose a risk class or a tool
                     version and have the claim believed.
         """
@@ -191,3 +190,40 @@ class ToolRegistry:
             })
         return tools
 
+
+
+class HandlerTable:
+    """
+    intent: The only place a tool's side effect can be reached from
+    context: Constructed by the host and given to ExecutionGateway, nowhere else
+             (docs/v3/spec.md §4). The gateway calls invoke() with the tool named in the
+             token it just consumed, so which handler runs is decided by the authorization,
+             not by whoever asked.
+    constraint: Every handler belongs to a tool in the catalog, and invoke() validates the
+                arguments against that tool's schema immediately before the call, as
+                ToolRegistry.execute did at v0.3.1.
+    """
+
+    def __init__(self, catalog: ToolCatalog) -> None:
+        self.catalog = catalog
+        self._handlers: dict[str, ToolHandler] = {}
+
+    def register(self, name: str, handler: ToolHandler) -> None:
+        self.catalog.get(name)  # raises for a tool the catalog does not know
+        if name in self._handlers:
+            raise ValueError(f"handler already registered: {name}")
+        self._handlers[name] = handler
+
+    def resolve(self, name: str, parameters: Mapping[str, Any]) -> Callable[[], Any]:
+        """
+        intent: Everything that could refuse the call, before anything is spent
+        effect: Validates the arguments and finds the handler, raising ToolValidationError
+                for either; returns the call itself, to be made once the token is consumed
+        """
+        self.catalog.validate(name, parameters)
+        try:
+            handler = self._handlers[name]
+        except KeyError as exc:
+            raise ToolValidationError(f"no handler registered for {name}") from exc
+        frozen = dict(parameters)
+        return lambda: handler(frozen)

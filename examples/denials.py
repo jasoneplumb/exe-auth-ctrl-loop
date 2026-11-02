@@ -29,7 +29,9 @@ from exe_auth_ctrl_loop.authority import (
     ProposalReadiness,
     Route,
 )
+from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.store import Store
+from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
 now = datetime.now(timezone.utc)
 
@@ -46,12 +48,33 @@ POLICY = Policy(
 
 # The only path to a side effect. If any case below reached it, this list would
 # not be empty at the end of the run.
-effects_performed: list[str] = []
+effects_performed: list[dict[str, object]] = []
 
 
-def handler(proposal: Proposal) -> dict[str, object]:
-    effects_performed.append(proposal.proposal_id)
-    return {"receipt": "refund-9001", "parameters": dict(proposal.parameters)}
+def handler(arguments: dict[str, object]) -> dict[str, object]:
+    effects_performed.append(dict(arguments))
+    return {"receipt": "refund-9001", "parameters": dict(arguments)}
+
+
+# The host's tool catalog and handler table. The catalog describes the tool; the
+# handler table, given to the gateway alone, is the only route to its effect.
+catalog = ToolCatalog()
+catalog.register(ToolDefinition(
+    name="create_refund",
+    description="Refund one order.",
+    input_schema={
+        "type": "object",
+        "properties": {"order_id": {"type": "integer"}, "usd": {"type": "number"}},
+        "required": ["order_id", "usd"],
+        "additionalProperties": False,
+    },
+    effects=frozenset({"refund:create"}),
+    version="refund-api-v2",
+    task_category="bounded_refund",
+    risk_class="financial-low",
+))
+handlers = HandlerTable(catalog)
+handlers.register("create_refund", handler)
 
 
 def proposal(proposal_id: str, **overrides: object) -> Proposal:
@@ -140,23 +163,25 @@ granted = controller_for(authorized_store).evaluate(original)
 show("authorized (before edit)", granted)
 assert granted.route == Route.AUTONOMOUS, granted.reason_codes
 
-gateway = ExecutionGateway(store=fresh_store().store)
+# The decision goes on the ledger first; the gateway issues only for a committed one.
+EventLedger(authorized_store.store).commit_decision(granted, original)
+gateway = ExecutionGateway(store=authorized_store.store, handlers=handlers)
 token = gateway.issue(granted, original, POLICY)
 edited = proposal("op-mutated", parameters={"order_id": 4815, "usd": 2400.00})
 try:
-    gateway.execute(token.token_id, edited, handler)
+    gateway.execute(token.token_id, edited)
 except PermissionError as exc:
     print(f"{'arguments edited':<28} gateway denied: {exc}")
 
 # --- 6. The same capability spent twice --------------------------------------
 # The unedited call succeeds once. The token is single-use, so the replay of a
 # valid, unexpired, correctly scoped request is refused on identity alone.
-gateway.execute(token.token_id, original, handler)
+gateway.execute(token.token_id, original)
 print(f"{'first use':<28} handler ran: {effects_performed}")
 try:
-    gateway.execute(token.token_id, original, handler)
+    gateway.execute(token.token_id, original)
 except PermissionError as exc:
     print(f"{'replayed capability':<28} gateway denied: {exc}")
 
-assert effects_performed == ["op-mutated"], effects_performed
+assert effects_performed == [{"order_id": 4815, "usd": 24.0}], effects_performed
 print("\nOne effect, from the one request that was authorized and unmodified.")

@@ -23,8 +23,9 @@ from .authority import (
     ProposalBundle,
     ProposalReadiness,
     Route,
+    executable_route,
 )
-from .tools import ToolRegistry, ToolValidationError
+from .tools import ToolCatalog, ToolValidationError
 
 
 class ExecutionStatus(str, Enum):
@@ -73,7 +74,7 @@ run; do not route around it."""
         prompt_version: str,
         authority: AuthorityController,
         gateway: ExecutionGateway,
-        registry: ToolRegistry,
+        catalog: ToolCatalog,
         client: Any | None = None,
         max_turns: int = 12,
         commit: Callable[[Decision, Proposal], Any] | None = None,
@@ -100,7 +101,9 @@ run; do not route around it."""
         self.prompt_version = prompt_version
         self.authority = authority
         self.gateway = gateway
-        self.registry = registry
+        # constraint: the catalog only. The agent holds no handler and no HandlerTable;
+        # the gateway owns those and picks the handler from the token (spec §4).
+        self.catalog = catalog
         self.max_turns = max_turns
         self.commit = commit
 
@@ -133,7 +136,7 @@ run; do not route around it."""
         proposal_ids_by_tool: dict[str, list[str]] = {}
         for proposal in bundle.proposals:
             proposal_ids_by_tool.setdefault(proposal.tool_name, []).append(proposal.proposal_id)
-        tools = self.registry.anthropic_tools(proposal_ids_by_tool)
+        tools = self.catalog.anthropic_tools(proposal_ids_by_tool)
         messages: list[dict[str, Any]] = [{
             "role": "user",
             "content": json.dumps({
@@ -257,9 +260,9 @@ run; do not route around it."""
         if tool_input != dict(proposal.parameters):
             return self._blocked(proposal_id, tool_name, "arguments changed after proposal")
         try:
-            registered = self.registry.get(tool_name)
-            self.registry.validate(tool_name, tool_input)
-            risk_class = self.registry.classify_risk(tool_name, tool_input)
+            registered = self.catalog.get(tool_name)
+            self.catalog.validate(tool_name, tool_input)
+            risk_class = self.catalog.classify_risk(tool_name, tool_input)
         except ToolValidationError as exc:
             return self._blocked(proposal_id, tool_name, str(exc))
         if registered.effects != proposal.requested_effects:
@@ -295,23 +298,22 @@ run; do not route around it."""
                 self.authority.policy,
                 human_approved=human_approved,
             )
-        except PermissionError:
+        except PermissionError as exc:
+            # effect: a route that cannot execute is reported as the route; a refusal of
+            # an executable route (e.g. an uncommitted decision) is reported as itself
+            executable = executable_route(decision.route, human_approved)
             return ExecutionStep(
                 proposal_id=proposal_id,
                 tool_name=tool_name,
-                route=decision.route,
+                route=Route.DENY if executable else decision.route,
                 decision=decision,
                 executed=False,
                 receipt=None,
-                error=f"authority route: {decision.route.value}",
+                error=str(exc) if executable else f"authority route: {decision.route.value}",
             )
 
         try:
-            receipt = self.gateway.execute(
-                token.token_id,
-                proposal,
-                lambda p: self.registry.execute(p.tool_name, p.parameters),
-            )
+            receipt = self.gateway.execute(token.token_id, proposal)
         except PermissionError:
             # withdrawn between issue and redemption (suspension, policy, guard veto)
             return ExecutionStep(

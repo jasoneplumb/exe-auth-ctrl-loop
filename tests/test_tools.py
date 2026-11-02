@@ -1,11 +1,11 @@
 """
-The tool registry validates arguments with the full JSON Schema validator and refuses a
+The tool catalog validates arguments with the full JSON Schema validator and refuses a
 malformed schema at registration. Offline.
 """
 
 import unittest
 
-from exe_auth_ctrl_loop import ToolDefinition, ToolRegistry, ToolValidationError
+from exe_auth_ctrl_loop import ToolCatalog, ToolDefinition, ToolValidationError
 
 
 def lookup_tool(input_schema):
@@ -17,14 +17,13 @@ def lookup_tool(input_schema):
         version="orders-v1",
         task_category="order_lookup",
         risk_class="low",
-        handler=lambda args: "ok",
     )
 
 
 class SchemaValidationTests(unittest.TestCase):
     def test_keywords_beyond_type_and_range_are_enforced(self):
         # the removed fallback validator silently ignored each of these keywords
-        registry = ToolRegistry()
+        registry = ToolCatalog()
         registry.register(lookup_tool({
             "type": "object",
             "properties": {
@@ -59,7 +58,7 @@ class SchemaValidationTests(unittest.TestCase):
         ):
             with self.subTest(where=where):
                 with self.assertRaises(ValueError) as ctx:
-                    ToolRegistry().register(lookup_tool(schema))
+                    ToolCatalog().register(lookup_tool(schema))
                 self.assertIn(f"at {where}:", str(ctx.exception))
 
 

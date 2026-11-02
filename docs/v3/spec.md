@@ -4,7 +4,7 @@ Status: Step 01 contract (final, 2026-11-01). Documentation and fixtures only; n
 
 ## 1. Scope and trust boundary (replaces v2 §1)
 
-- Models produce proposals and requests only. They never grant authority. An object supplied to the agent side MUST NOT contain or reach a handler, the handler table, the token table, or a signing key (Step 04).
+- Models produce proposals and requests only. They never grant authority. An object supplied to the agent side (the execution agent, the proposal generator, the pipeline) MUST NOT contain or reach a handler, the handler table, or a signing key by any route except through `ExecutionGateway` or `AuthorityController`, which are the host's boundary objects and the intended door; and MUST NOT read or change token rows except through the gateway (Step 04). Owner decision 2026-11-02: these two objects are treated as opaque by the reachability test, since any object that can request an effect necessarily references, through them, what performs it.
 - The controller, gateway, lifecycle, evidence intake, and store are one trust domain, the **host**, running in one process over one SQLite database on one host.
 - v3 guarantees are **durable**: they hold across threads, across OS processes sharing the database file, and across restarts. They do not hold across hosts, and they do not hold against code running inside the host process (§4).
 - Separating the host from the agent into different processes or hosts is a production requirement, stated, not provided (O-1).

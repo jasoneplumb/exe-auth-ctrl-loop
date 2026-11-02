@@ -24,6 +24,7 @@ from exe_auth_ctrl_loop.authority import (
     Proposal,
     Route,
 )
+from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.mcp import (
     MetaVerificationError,
     attach_meta,
@@ -31,6 +32,7 @@ from exe_auth_ctrl_loop.mcp import (
     verify_call_meta,
 )
 from exe_auth_ctrl_loop.store import Store
+from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog
 
 NOW = datetime(2026, 8, 19, 12, 0, tzinfo=timezone.utc)
 # constraint: a literal secret is demo-only. In production the gateway and server hold it
@@ -107,7 +109,11 @@ decision = controller.evaluate(proposal)
 print({"route": decision.route.value, "reasons": decision.reason_codes})
 assert decision.route == Route.AUTONOMOUS, "seeded evidence should authorize this operation"
 
-gateway = ExecutionGateway(lambda: NOW, store=evidence.store)
+# The decision goes on the ledger first; the gateway issues only for a committed one.
+EventLedger(evidence.store).commit_decision(decision, proposal)
+# The effect runs on the MCP server, so this host gateway issues but runs no handler of
+# its own: its handler table is empty. (v3 Step 07 makes MCP-bound tokens explicit.)
+gateway = ExecutionGateway(lambda: NOW, store=evidence.store, handlers=HandlerTable(ToolCatalog()))
 token = gateway.issue(decision, proposal, policy)
 meta = build_call_meta(decision, proposal, token, SHARED_SECRET)
 request = build_request(

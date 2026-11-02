@@ -13,8 +13,9 @@ from exe_auth_ctrl_loop.authority import (
     Route,
 )
 from exe_auth_ctrl_loop.executor import ClaudeExecutionAgent, ExecutionStatus
+from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.providers import OpenAIProposalGenerator, ProposalDraftModel
-from exe_auth_ctrl_loop.tools import ToolDefinition, ToolRegistry
+from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
 NOW = datetime(2026, 8, 10, tzinfo=timezone.utc)
 
@@ -65,8 +66,8 @@ def final_text(text="complete"):
 class ProviderIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.receipts = []
-        self.registry = ToolRegistry()
-        self.registry.register(ToolDefinition(
+        self.catalog = ToolCatalog()
+        self.catalog.register(ToolDefinition(
             name="create_refund",
             description="Create one bounded refund.",
             input_schema={
@@ -82,8 +83,9 @@ class ProviderIntegrationTests(unittest.TestCase):
             version="refund-api-v2",
             task_category="bounded_refund",
             risk_class="low",
-            handler=lambda args: self._record(args),
         ))
+        self.handlers = HandlerTable(self.catalog)
+        self.handlers.register("create_refund", self._record)
 
     def _record(self, args):
         receipt = {"receipt_id": "r-1", **args}
@@ -110,7 +112,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         })
         client = FakeOpenAI(draft)
         generator = OpenAIProposalGenerator(
-            "openai-model-pinned", "proposal-v1", self.registry, client,
+            "openai-model-pinned", "proposal-v1", self.catalog, client,
         )
         bundle = generator.generate(
             "Refund duplicate charge",
@@ -133,10 +135,13 @@ class ProviderIntegrationTests(unittest.TestCase):
             "policy-v1", {"low": .95}, 100, timedelta(days=30), 0.0,
         )
         authority = AuthorityController(store, policy, clock=lambda: NOW)
-        gateway = ExecutionGateway(clock=lambda: NOW, store=scratch_store())
+        gateway = ExecutionGateway(
+            clock=lambda: NOW, store=store.store, handlers=self.handlers
+        )
         return ClaudeExecutionAgent(
             "claude-model-pinned", "execution-v1", authority, gateway,
-            self.registry, FakeClaude(claude_responses),
+            self.catalog, FakeClaude(claude_responses),
+            commit=EventLedger(store.store).commit_decision,
         )
 
     def test_openai_structured_output_becomes_versioned_proposal(self):

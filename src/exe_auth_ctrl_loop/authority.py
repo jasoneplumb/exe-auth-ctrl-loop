@@ -20,10 +20,13 @@ from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from typing import Any, Callable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
 
 from .sequential import beta_mixture_lower_bound
 from .store import Store, partition_text, time_text
+
+if TYPE_CHECKING:  # tools.py imports risk.py, which imports this module
+    from .tools import HandlerTable
 
 
 def utcnow() -> datetime:
@@ -48,6 +51,17 @@ class Route(str, Enum):
     CLARIFICATION = "clarification"
     REVISION = "revision"
     DENY = "deny"
+
+
+def executable_route(route: Route, human_approved: bool) -> bool:
+    """
+    intent: The one statement of which routes may become a token
+    effect: AUTONOMOUS and AUDIT issue unattended; HUMAN_APPROVAL only with an approval;
+            DENY, REVISION, and CLARIFICATION never
+    """
+    return route in {Route.AUTONOMOUS, Route.AUDIT} or (
+        human_approved and route == Route.HUMAN_APPROVAL
+    )
 
 
 class ProposalReadiness(str, Enum):
@@ -565,6 +579,7 @@ class ExecutionGateway:
         guards: Sequence[RedemptionGuard] = (),
         *,
         store: Store,
+        handlers: HandlerTable,
     ) -> None:
         """
         intent: Optionally bind the gateway to the live authority state it should re-check
@@ -576,12 +591,16 @@ class ExecutionGateway:
         constraint: `store` is required and holds the tokens. Guards that write (a budget
                     charge) should use the same Store, so their write commits with the
                     consume; on another Store it commits separately.
+        constraint: `handlers` is required and is the only route to a side effect
+                    (docs/v3/spec.md §4). It is given to the gateway and to nothing on the
+                    agent side; execute() picks the handler from the consumed token.
         """
         self.clock = clock
         self.evidence = evidence
         self.current_policy = current_policy
         self.guards = tuple(guards)
         self.store = store
+        self.handlers = handlers
 
     @property
     def tokens(self) -> dict[str, AuthorizationToken]:
@@ -646,16 +665,17 @@ class ExecutionGateway:
         constraint: One decision, one token, ever (spec §3 rule 4): a second request for a
                     decision that already has a token row is refused whatever that row's
                     state, here and by the unique constraint on `decision_id`
+        constraint: Only a committed decision issues (spec §3 rule 1): its id must have a
+                    row in `decisions`, written by EventLedger.commit_decision with its
+                    ledger event, carrying the same proposal digest and route. A Decision
+                    built by hand, or one altered after it was committed, is refused.
         effect: The token names its partition and the evidence id and version it was
                 judged on. execute() re-reads the live state against them, so a grant
                 is only as good as its justification still is at the moment of use.
         effect: Returns the token as issued. Its state afterwards is in the database:
                 `gateway.token(token_id)` or `gateway.tokens`.
         """
-        allowed = decision.route in {Route.AUTONOMOUS, Route.AUDIT} or (
-            human_approved and decision.route == Route.HUMAN_APPROVAL
-        )
-        if not allowed:
+        if not executable_route(decision.route, human_approved):
             raise PermissionError("decision does not authorize execution")
         if decision.proposal_digest != proposal.proposal_digest:
             raise PermissionError("decision is not bound to this proposal")
@@ -677,6 +697,14 @@ class ExecutionGateway:
             human_approved=human_approved,
         )
         with self.store.transaction() as conn:
+            committed = conn.execute(
+                "SELECT proposal_digest, route FROM decisions WHERE decision_id = ?",
+                (decision.decision_id,),
+            ).fetchone()
+            if committed is None:
+                raise PermissionError("decision was not committed to the ledger")
+            if committed != (decision.proposal_digest, decision.route.value):
+                raise PermissionError("decision differs from its committed record")
             if conn.execute(
                 "SELECT 1 FROM tokens WHERE decision_id = ?", (decision.decision_id,)
             ).fetchone():
@@ -693,18 +721,16 @@ class ExecutionGateway:
             )
         return token
 
-    def execute(
-        self,
-        token_id: str,
-        proposal: Proposal,
-        adapter: Callable[[Proposal], Any],
-    ) -> Any:
+    def execute(self, token_id: str, proposal: Proposal) -> Any:
         """
         intent: Spend a capability once, on the operation it was issued for
         method: One transaction. Consume first, with `UPDATE ... WHERE state = 'issued'`
                 affecting exactly one row; then re-check identity, liveness, and scope at
-                the moment of use; then let guards settle (budget charges). Any refusal
-                raises inside the transaction, which rolls the consume back.
+                the moment of use; then resolve the handler for the token's tool and
+                validate the arguments; then let guards settle (budget charges). Any
+                refusal raises inside the transaction, which rolls the consume back.
+        constraint: No caller supplies the handler. It is the HandlerTable's entry for
+                    `token.allowed_tool`, the tool the authorization names (spec §4).
         effect: Every mismatch raises PermissionError, so a caller cannot distinguish
                 "expired" from "wrong tool" by control flow and act on the difference
         constraint: The linearization point is the commit of that transaction. The
@@ -737,6 +763,13 @@ class ExecutionGateway:
             blockers = self.redemption_blockers(token, proposal)
             if blockers:
                 raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
+            # imported here: tools.py imports risk.py, which imports this module
+            from .tools import ToolValidationError
+
+            try:
+                call = self.handlers.resolve(token.allowed_tool, proposal.parameters)
+            except ToolValidationError as exc:  # bad arguments, or no handler for the tool
+                raise PermissionError(f"tool not executable: {exc}") from exc
             # effect: budgets are charged in the consume transaction, so a charge and a
             # consume commit together or not at all. A guard's commit() that raises now
             # rolls the consume back too, instead of leaving a spent token unsettled.
@@ -744,7 +777,7 @@ class ExecutionGateway:
                 guard.commit(token, proposal)
         self._advance(token_id, "consumed", "handler_started")
         try:
-            result = adapter(proposal)
+            result = call()
         except BaseException:
             self._advance(token_id, "handler_started", "handler_failed")
             raise

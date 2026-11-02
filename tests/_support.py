@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from typing import Callable, Sequence
 
 from exe_auth_ctrl_loop.ledger import EventLedger, LedgerEvent
 from exe_auth_ctrl_loop.store import Store, canonical_json, time_text
@@ -76,3 +77,51 @@ def forge_token(store: Store, token_id: str, **columns: object) -> None:
             f"UPDATE tokens SET {assignments} WHERE token_id = ?", (*columns.values(), token_id)
         )
         conn.execute(sql)
+
+
+class AdapterHandlers:
+    """
+    A HandlerTable stand-in for gateway-mechanism tests: run() supplies the handler for the
+    next execute(), called with the proposal, as v0.3.1's `adapter` argument was. It goes
+    through the same resolve() the gateway calls on a real HandlerTable, so consume,
+    rollback, and state transitions are exercised unchanged.
+
+    Adapters receive the Proposal, not the arguments dict, and no schema is checked. Tests
+    of argument validation, a missing handler, or which handler runs use a real
+    HandlerTable (tests/test_boundary.py).
+    """
+
+    def __init__(self) -> None:
+        self._next: tuple[str, object, Callable[[object], object]] | None = None
+
+    def use(self, proposal, adapter: Callable[[object], object]) -> None:
+        self._next = (proposal.tool_name, proposal, adapter)
+
+    def resolve(self, name: str, parameters: object) -> Callable[[], object]:
+        if self._next is None:
+            raise AssertionError("tests must call run(), not gateway.execute(), directly")
+        tool, proposal, adapter = self._next
+        self._next = None
+        if name != tool:
+            raise AssertionError(f"adapter was set up for {tool!r}, gateway resolved {name!r}")
+        return lambda: adapter(proposal)
+
+
+def run(gateway, token_id: str, proposal, adapter):
+    """gateway.execute(token_id, proposal), with `adapter` as the handler that runs."""
+    gateway.handlers.use(proposal, adapter)
+    return gateway.execute(token_id, proposal)
+
+
+def commit(store: Store, decision, proposal) -> None:
+    """Commit a decision to the ledger in `store`, once (a second call is a no-op)."""
+    try:
+        EventLedger(store).commit_decision(decision, proposal)
+    except sqlite3.IntegrityError:
+        pass  # already committed: the primary key refused it and nothing was appended
+
+
+def issue(gateway, decision, proposal, policy, **kwargs):
+    """Commit the decision, as the executor's hook does, then issue against it."""
+    commit(gateway.store, decision, proposal)
+    return gateway.issue(decision, proposal, policy, **kwargs)

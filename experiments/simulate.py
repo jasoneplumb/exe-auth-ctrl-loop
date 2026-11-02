@@ -20,7 +20,7 @@ import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Mapping
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -29,6 +29,7 @@ from exe_auth_ctrl_loop import (
     EvidenceSnapshot,
     EvidenceStore,
     ExecutionGateway,
+    HandlerTable,
     LifecycleManager,
     LifecycleState,
     OneOf,
@@ -47,6 +48,8 @@ from exe_auth_ctrl_loop import (
     SequenceBudget,
     ShadowEvidenceLog,
     Store,
+    ToolCatalog,
+    ToolDefinition,
     TrialLabel,
 )
 
@@ -225,6 +228,15 @@ class Simulation:
             alpha=cfg.alpha, estimator=cfg.estimator,
         )
         self.risk = make_risk_policy(cfg, self.db)
+        # The gateway's handler table, the only route to the (counted) effect. The catalog
+        # schema is permissive; the risk policy's envelopes do the classifying.
+        catalog = ToolCatalog(risk=self.risk)
+        catalog.register(ToolDefinition(
+            "create_refund", "refund", {"type": "object"}, frozenset({"refund:write"}),
+            "refund-api-v2", "refund", None,
+        ))
+        self.handlers = HandlerTable(catalog)
+        self.handlers.register("create_refund", self.handler)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(seed * 7919 + 1), self.clock, guards=(self.risk,)
         )
@@ -234,12 +246,13 @@ class Simulation:
         if cfg.comparator == "legacy_wilson_seeded":
             # The v0.2.0 path: bare controller, hand-seeded evidence, no lifecycle, no live
             # redemption checks. Not a bootstrap; a demonstration of the old behaviour.
-            self.gateway = ExecutionGateway(self.clock, store=self.db)
+            self.gateway = ExecutionGateway(self.clock, store=self.db, handlers=self.handlers)
         else:
             self.gateway = ExecutionGateway(
                 self.clock, evidence=self.store, current_policy=lambda: self.policy,
                 guards=(self.manager, self.risk),
                 store=self.store.store,
+                handlers=self.handlers,
             )
         self.prompt_version = "prop-p1"
         self.key = make_key(self.prompt_version, "low")
@@ -342,9 +355,9 @@ class Simulation:
             return self.controller.evaluate(proposal)
         return self.manager.evaluate(proposal)
 
-    def handler(self, proposal: Proposal) -> dict[str, Any]:
+    def handler(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         self.metrics.handler_calls += 1
-        return {"receipt": proposal.proposal_id}
+        return {"receipt": dict(arguments)}
 
     def redeem_pending(self) -> None:
         """Tokens come due redeem_delay steps after issue; what changed in between shows."""
@@ -352,7 +365,7 @@ class Simulation:
         self.pending_tokens = [item for item in self.pending_tokens if item[0] > self.t]
         for _, token_id, proposal, audited in due:
             try:
-                self.gateway.execute(token_id, proposal, self.handler)
+                self.gateway.execute(token_id, proposal)
             except PermissionError:
                 self.metrics.stale_token_denials += 1
                 continue
@@ -444,6 +457,9 @@ class Simulation:
             self.record_trace("deny", proposal, decision.route, False, None, None,
                               reasons=decision.reason_codes)
         elif decision.route in {Route.AUTONOMOUS, Route.AUDIT}:
+            # Committed before issue, as in the shipped loop: the gateway refuses a
+            # decision with no ledger record (v3 Step 04; closes one L6 difference)
+            self.ledger.commit_decision(decision, proposal)
             try:
                 token = self.gateway.issue(decision, proposal, self.policy)
             except PermissionError:
