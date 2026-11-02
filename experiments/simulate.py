@@ -29,7 +29,9 @@ from exe_auth_ctrl_loop import (
     EvidenceSnapshot,
     EvidenceStore,
     ExecutionGateway,
+    GrantScope,
     HandlerTable,
+    Keyring,
     LifecycleManager,
     LifecycleState,
     OneOf,
@@ -39,6 +41,8 @@ from exe_auth_ctrl_loop import (
     OutcomeStatus,
     PartitionKey,
     Policy,
+    PrincipalKind,
+    Principals,
     Proposal,
     Provenance,
     ReviewAction,
@@ -52,10 +56,15 @@ from exe_auth_ctrl_loop import (
     ToolDefinition,
     TrialLabel,
 )
+from exe_auth_ctrl_loop.principals import release_payload, root_grant_payload
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 PAYEES = frozenset({"acct-100", "acct-200", "acct-300"})
 ORACLE = Oracle("sim-oracle", "1", OracleKind.SANDBOX_REPLAY, "synthetic truth with noise")
+SIM_KEYS = {"operator": "k-operator", "reviewer": "k-reviewer", "sim-oracle": "k-oracle"}
+SIM_AGENT = "agent"
+SIM_GRANT = "g-sim"
+SIM_GRANT_EXPIRY = datetime(2100, 1, 1, tzinfo=timezone.utc)
 
 
 @dataclass(frozen=True)
@@ -217,6 +226,21 @@ class Simulation:
         self.db = Store(Path(directory.name) / "run.db")
         weakref.finalize(self, _discard, self.db, directory)
         self.ledger = EventLedger(self.db)
+        # Principals (v3 Step 05): fixed simulation keys; the operator grants the agent
+        # unrestricted scope, the reviewer and oracle are registered ledger actors
+        self.keyring = Keyring({key_id: f"sim-{key_id}".encode() for key_id in SIM_KEYS.values()})
+        self.principals = Principals(self.db, self.keyring, self.clock)
+        for name, key_id in SIM_KEYS.items():
+            kind = PrincipalKind.ORACLE if name == ORACLE.oracle_id else PrincipalKind.HUMAN
+            self.principals.register(name, kind, by="controller", key_id=key_id)
+        self.principals.register(SIM_AGENT, PrincipalKind.MODEL, by="controller")
+        self.principals.grant_root(
+            "operator", SIM_AGENT, GrantScope(), SIM_GRANT_EXPIRY,
+            self.keyring.sign(SIM_KEYS["operator"], root_grant_payload(
+                SIM_GRANT, "operator", SIM_AGENT, GrantScope(), SIM_GRANT_EXPIRY,
+            )),
+            grant_id=SIM_GRANT,
+        )
         self.store = EvidenceStore(self.db)
         self.shadow = ShadowEvidenceLog(
             self.ledger, timedelta(minutes=cfg.label_deadline), self.clock
@@ -241,18 +265,22 @@ class Simulation:
             self.store, self.policy, random.Random(seed * 7919 + 1), self.clock, guards=(self.risk,)
         )
         self.manager = LifecycleManager(
-            self.shadow, self.store, self.policy, self.controller, self.clock
+            self.shadow, self.store, self.policy, self.controller, self.clock,
+            principals=self.principals,
         )
         if cfg.comparator == "legacy_wilson_seeded":
             # The v0.2.0 path: bare controller, hand-seeded evidence, no lifecycle, no live
             # redemption checks. Not a bootstrap; a demonstration of the old behaviour.
-            self.gateway = ExecutionGateway(self.clock, store=self.db, handlers=self.handlers)
+            self.gateway = ExecutionGateway(
+                self.clock, store=self.db, handlers=self.handlers, principals=self.principals
+            )
         else:
             self.gateway = ExecutionGateway(
                 self.clock, evidence=self.store, current_policy=lambda: self.policy,
                 guards=(self.manager, self.risk),
                 store=self.store.store,
                 handlers=self.handlers,
+                principals=self.principals,
             )
         self.prompt_version = "prop-p1"
         self.key = make_key(self.prompt_version, "low")
@@ -461,7 +489,9 @@ class Simulation:
             # decision with no ledger record (v3 Step 04; closes one L6 difference)
             self.ledger.commit_decision(decision, proposal)
             try:
-                token = self.gateway.issue(decision, proposal, self.policy)
+                token = self.gateway.issue(
+                    decision, proposal, self.policy, principal_id=SIM_AGENT, grant_id=SIM_GRANT
+                )
             except PermissionError:
                 self.metrics.issue_denials += 1
                 self.record_trace("issue_denied", proposal, decision.route, False, None, None)
@@ -500,7 +530,12 @@ class Simulation:
         if cfg.release_after is None or self.suspended_at is None:
             return
         if self.t - self.suspended_at >= cfg.release_after:
-            self.manager.release(self.key, "operator", "simulated post-incident review")
+            reason = "simulated post-incident review"
+            record = self.manager.record(self.key)
+            epoch = record.epoch if record is not None else 0
+            self.manager.release(self.key, "operator", reason, self.keyring.sign(
+                SIM_KEYS["operator"], release_payload(self.key, epoch, reason)
+            ))
             self.metrics.releases += 1
             self.suspended_at = None
 

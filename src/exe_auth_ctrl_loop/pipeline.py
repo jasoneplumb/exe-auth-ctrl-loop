@@ -16,6 +16,7 @@ from typing import Any, Iterable, Mapping
 from .authority import Decision, Proposal, ProposalBundle, Route
 from .executor import ClaudeExecutionAgent, ExecutionRun
 from .ledger import EventLedger
+from .principals import Approval
 from .providers import OpenAIProposalGenerator
 from .shadow import Provenance, ShadowEvidenceLog
 
@@ -91,7 +92,7 @@ class CrossModelAuthorityLoop:
     def execute(
         self,
         bundle: ProposalBundle,
-        approved_proposal_ids: Iterable[str] = (),
+        approvals: Iterable[Approval] = (),
     ) -> ExecutionRun:
         """
         intent: Run the bundle and chain one ledger event per step, refused steps included
@@ -101,7 +102,7 @@ class CrossModelAuthorityLoop:
         """
         run = self.executor.run(
             bundle,
-            approved_proposal_ids=approved_proposal_ids,
+            approvals=approvals,
         )
         for step in run.steps:
             self.ledger.append(

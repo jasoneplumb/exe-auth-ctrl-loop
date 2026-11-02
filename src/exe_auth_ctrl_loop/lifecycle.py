@@ -34,6 +34,7 @@ from .authority import (
     digest,
     utcnow,
 )
+from .principals import Principals, release_payload
 from .shadow import Provenance, ShadowEvidenceLog
 from .store import partition_text
 
@@ -99,6 +100,7 @@ class LifecycleManager:
         policy: Policy,
         controller: AuthorityController,
         clock: Callable[[], datetime] = utcnow,
+        principals: Principals | None = None,
     ) -> None:
         # constraint: one database for the record, the evidence it publishes, and the
         # ledger events it writes, so a transition and its record commit together or not
@@ -111,6 +113,9 @@ class LifecycleManager:
         self.policy = policy
         self.controller = controller
         self.clock = clock
+        # constraint: release() verifies a human signature through this; without it,
+        # release() refuses, so an unauthenticated release cannot happen by omission
+        self.principals = principals
 
     def record(self, key: PartitionKey) -> PartitionRecord | None:
         """A copy of the stored record; changing it changes nothing in the database."""
@@ -234,19 +239,24 @@ class LifecycleManager:
         self._move(key, record, E.SEVERE_FAILURE, reasons)
         self._sync_store(key, record)
 
-    def release(self, key: PartitionKey, actor: str, reason: str) -> None:
+    def release(self, key: PartitionKey, actor: str, reason: str, mac: str) -> None:
         """
-        intent: The documented restoration step: a named human, a stated reason, a new epoch
+        intent: The documented restoration step: a verified human, a stated reason, a new
+                epoch
         effect: SUSPENDED goes to QUALIFYING, never AUTONOMOUS. Evidence counting restarts
                 from zero, so requalification needs fresh admissible trials.
         constraint: Also the only way to clear lineage_suspended on a successor partition.
+        constraint: `actor` must be an active HUMAN principal and `mac` that human's
+                    signature over principals.release_payload(key, epoch, reason) for the
+                    partition's current epoch, so a signed release cannot be replayed at a
+                    later suspension (spec §8; closes L9's "any non-empty actor name").
         """
         if not actor or not reason:
             raise ValueError("release requires a named actor and a reason")
         with self.db.transaction():
-            self._release(key, actor, reason)
+            self._release(key, actor, reason, mac)
 
-    def _release(self, key: PartitionKey, actor: str, reason: str) -> None:
+    def _release(self, key: PartitionKey, actor: str, reason: str, mac: str) -> None:
         record = self._load(key)
         if record is None or (
             record.state != LifecycleState.SUSPENDED and not record.lineage_suspended
@@ -254,6 +264,10 @@ class LifecycleManager:
             raise ValueError("partition is not suspended")
         if record.retired:
             raise ValueError("retired partition cannot be released")
+        if self.principals is None or not self.principals.verify_human(
+            actor, release_payload(key, record.epoch, reason), mac
+        ):
+            raise PermissionError("release needs a valid signature from an active human")
         self.shadow.open_epoch(key)
         record.epoch += 1
         record.lineage_suspended = False

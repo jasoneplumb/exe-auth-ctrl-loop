@@ -45,6 +45,14 @@ interpreter (`gc.get_objects()`, frames) and reach any object, including the
 handler table. Only running the gateway in a separate process closes that;
 v3 does not (docs/v3/spec.md O-1).
 
+On `mainline` (v3 Step 05, unreleased) also in scope: any way to obtain a token
+without holding a live grant whose scope admits the operation, to delegate a
+grant broader or longer-lived than its parent, to use an approval or a release
+not signed by an active human principal, to use one approval for two tokens,
+or to change a principal, grant, or approval without a ledger event. Out of
+scope: anyone holding the host's signing keys, which are HMAC secrets the host
+holds (stronger keys are a production requirement).
+
 Also in scope: any way for a human review to create, alter, discard, or relabel
 a frozen shadow trial; any path to `AUTONOMOUS` other than `QUALIFYING` on a
 met gate; any way to clear a suspension without a recorded human release; any

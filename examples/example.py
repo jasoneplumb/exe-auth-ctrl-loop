@@ -16,6 +16,13 @@ from exe_auth_ctrl_loop.authority import (
     Route,
 )
 from exe_auth_ctrl_loop.ledger import EventLedger
+from exe_auth_ctrl_loop.principals import (
+    GrantScope,
+    Keyring,
+    PrincipalKind,
+    Principals,
+    root_grant_payload,
+)
 from exe_auth_ctrl_loop.store import Store
 from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
@@ -73,11 +80,25 @@ handlers.register(
     "create_refund", lambda args: {"receipt": "refund-9001", "parameters": dict(args)}
 )
 
+# Who acts, and on whose authority (v3 Step 05): a human operator delegates this tool to
+# the agent. The key is an example-only secret; a deployment supplies its own.
+keyring = Keyring({"k-operator": b"example-only-secret"})
+principals = Principals(evidence.store, keyring)
+principals.register("operator", PrincipalKind.HUMAN, by="controller", key_id="k-operator")
+principals.register("agent", PrincipalKind.MODEL, by="controller")
+scope = GrantScope(tools=frozenset({"create_refund"}))
+grant_expiry = datetime(2100, 1, 1, tzinfo=timezone.utc)
+principals.grant_root(
+    "operator", "agent", scope, grant_expiry,
+    keyring.sign("k-operator", root_grant_payload("g-1", "operator", "agent", scope, grant_expiry)),
+    grant_id="g-1",
+)
+
 if decision.route == Route.AUTONOMOUS:
     # The decision goes on the ledger first; the gateway issues only for a committed one.
     EventLedger(evidence.store).commit_decision(decision, proposal)
-    gateway = ExecutionGateway(store=evidence.store, handlers=handlers)
-    token = gateway.issue(decision, proposal, policy)
+    gateway = ExecutionGateway(store=evidence.store, handlers=handlers, principals=principals)
+    token = gateway.issue(decision, proposal, policy, principal_id="agent", grant_id="g-1")
     # No handler is passed: the gateway runs the one the token names.
     receipt = gateway.execute(token.token_id, proposal)
     print(receipt)

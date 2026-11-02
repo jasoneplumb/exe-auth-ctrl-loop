@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from _support import scratch_store
+from _support import AGENT, gateway_store, scratch_store
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -123,10 +123,10 @@ class Loop:
         self.store = EvidenceStore(db)
         self.store.put(EvidenceSnapshot("e1", 1, key(), 99, 1, NOW - timedelta(days=1), NOW))
         self.controller = AuthorityController(self.store, POLICY, random.Random(1), lambda: NOW)
-        self.gateway = ExecutionGateway(lambda: NOW, store=db, handlers=self.handlers)
+        self.gateway = ExecutionGateway(lambda: NOW, **gateway_store(db), handlers=self.handlers)
         self.agent = ClaudeExecutionAgent(
             "m2", "ep1", self.controller, self.gateway, self.catalog, client=object()
-        )
+        , **AGENT)
         self.proposer = OpenAIProposalGenerator("m1", "pp1", self.catalog, client=object())
         self.pipeline = CrossModelAuthorityLoop(
             proposer=self.proposer, executor=self.agent, ledger=self.ledger,
@@ -144,7 +144,7 @@ class Loop:
     def authorize(self, p: Proposal):
         decision = self.controller.evaluate(p)
         self.ledger.commit_decision(decision, p)
-        return decision, self.gateway.issue(decision, p, POLICY)
+        return decision, self.gateway.issue(decision, p, POLICY, **AGENT)
 
 
 class CatalogAndHandlerTableTests(unittest.TestCase):
@@ -248,24 +248,24 @@ class CommittedDecisionTests(unittest.TestCase):
 
     def test_an_uncommitted_decision_is_refused(self):
         with self.assertRaisesRegex(PermissionError, "not committed"):
-            self.loop.gateway.issue(self.decision, self.p, POLICY)
+            self.loop.gateway.issue(self.decision, self.p, POLICY, **AGENT)
         self.assertEqual(self.loop.gateway.tokens, {})
 
     def test_a_decision_built_by_hand_is_refused(self):
         forged = replace(self.decision, decision_id="forged")
         with self.assertRaisesRegex(PermissionError, "not committed"):
-            self.loop.gateway.issue(forged, self.p, POLICY)
+            self.loop.gateway.issue(forged, self.p, POLICY, **AGENT)
 
     def test_a_decision_altered_after_commit_is_refused(self):
         held = replace(self.decision, route=Route.HUMAN_APPROVAL)
         self.loop.ledger.commit_decision(held, self.p)
         promoted = replace(held, route=Route.AUTONOMOUS)
         with self.assertRaisesRegex(PermissionError, "differs from its committed record"):
-            self.loop.gateway.issue(promoted, self.p, POLICY)
+            self.loop.gateway.issue(promoted, self.p, POLICY, **AGENT)
 
     def test_a_committed_decision_issues(self):
         self.loop.ledger.commit_decision(self.decision, self.p)
-        token = self.loop.gateway.issue(self.decision, self.p, POLICY)
+        token = self.loop.gateway.issue(self.decision, self.p, POLICY, **AGENT)
         self.assertEqual(token.decision_id, self.decision.decision_id)
 
     def test_a_decision_is_committed_once(self):

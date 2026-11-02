@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import secrets
 import sqlite3
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Sequence
 
 from exe_auth_ctrl_loop.ledger import EventLedger, LedgerEvent
+from exe_auth_ctrl_loop.principals import (
+    Approval,
+    GrantScope,
+    Keyring,
+    PrincipalKind,
+    Principals,
+    approval_payload,
+    release_payload,
+    root_grant_payload,
+)
 from exe_auth_ctrl_loop.store import Store, canonical_json, time_text
 
 # Every store opened through scratch_store(), closed after each test by conftest.py.
@@ -121,7 +133,73 @@ def commit(store: Store, decision, proposal) -> None:
         pass  # already committed: the primary key refused it and nothing was appended
 
 
-def issue(gateway, decision, proposal, policy, **kwargs):
-    """Commit the decision, as the executor's hook does, then issue against it."""
+def issue(gateway, decision, proposal, policy, human_approved: bool = False):
+    """
+    Commit the decision, as the executor's hook does, then issue against it as the test
+    agent under the test root grant; human_approved=True attaches a fresh signed approval.
+    """
     commit(gateway.store, decision, proposal)
-    return gateway.issue(decision, proposal, policy, **kwargs)
+    principals_for(gateway.store)
+    return gateway.issue(
+        decision, proposal, policy, **AGENT,
+        approval=approve(proposal) if human_approved else None,
+    )
+
+
+# -- principals (v3 Step 05) ----------------------------------------------------------------
+
+FAR = datetime(2100, 1, 1, tzinfo=timezone.utc)
+HUMANS = {"alice": "k-alice", "rev": "k-rev", "operator": "k-operator"}
+ORACLES = {"constraint-v1": "k-constraint", "reviewer": "k-reviewer", "sim-oracle": "k-sim"}
+MODELS = ("agent", "openai")
+ROOT_GRANT = "g-root"
+AGENT = {"principal_id": "agent", "grant_id": ROOT_GRANT}
+TEST_KEYRING = Keyring({
+    key_id: f"test-secret-{key_id}".encode() for key_id in (*HUMANS.values(), *ORACLES.values())
+})
+
+
+def principals_for(store: Store) -> Principals:
+    """
+    The test identities in `store`, registered once (idempotent): three humans, three
+    oracles, two models, and a root grant from alice to agent with unrestricted scope.
+    """
+    principals = Principals(store, TEST_KEYRING)
+    if principals.principal("alice") is None:
+        for name, key_id in HUMANS.items():
+            principals.register(name, PrincipalKind.HUMAN, by="controller", key_id=key_id)
+        for name, key_id in ORACLES.items():
+            principals.register(name, PrincipalKind.ORACLE, by="controller", key_id=key_id)
+        for name in MODELS:
+            principals.register(name, PrincipalKind.MODEL, by="controller")
+        scope = GrantScope()
+        mac = TEST_KEYRING.sign(
+            HUMANS["alice"], root_grant_payload(ROOT_GRANT, "alice", "agent", scope, FAR)
+        )
+        principals.grant_root("alice", "agent", scope, FAR, mac, grant_id=ROOT_GRANT)
+    return principals
+
+
+def gateway_store(store: Store) -> dict[str, object]:
+    """`store=` and `principals=` for ExecutionGateway, guaranteed to share one Store."""
+    return {"store": store, "principals": principals_for(store)}
+
+
+def approve(proposal, human: str = "alice", expires_at: datetime = FAR) -> Approval:
+    """A signed, single-use approval of `proposal` by a test human."""
+    approval_id = f"ap-{secrets.token_hex(8)}"
+    payload = approval_payload(
+        approval_id, human, proposal.proposal_digest, proposal.partition, expires_at
+    )
+    mac = TEST_KEYRING.sign(HUMANS[human], payload) if human in HUMANS else ""
+    return Approval(approval_id, human, proposal.proposal_digest, proposal.partition,
+                    expires_at, mac)
+
+
+def release(manager, key, actor: str, reason: str) -> None:
+    """manager.release(...), signed by `actor` over the partition's current epoch."""
+    record = manager.record(key)
+    epoch = record.epoch if record is not None else 0
+    mac = (TEST_KEYRING.sign(HUMANS[actor], release_payload(key, epoch, reason))
+           if actor in HUMANS else "")
+    manager.release(key, actor, reason, mac)

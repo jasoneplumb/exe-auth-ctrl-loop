@@ -3,7 +3,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from _support import AdapterHandlers, issue, run, scratch_store
+from _support import AdapterHandlers, gateway_store, issue, run, scratch_store
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -51,7 +51,9 @@ class AuthorityTests(unittest.TestCase):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
         self.assertEqual(decision.route, Route.AUTONOMOUS)
-        gateway = ExecutionGateway(lambda: NOW, store=scratch_store(), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(
+            lambda: NOW, **gateway_store(scratch_store()), handlers=AdapterHandlers()
+        )
         token = issue(gateway, decision, self.proposal, self.policy)
         self.assertEqual(run(gateway, token.token_id, self.proposal, lambda p: "done"), "done")
         self.assertEqual(token.allowed_tool, "create_refund")
@@ -60,7 +62,9 @@ class AuthorityTests(unittest.TestCase):
     def test_token_is_single_use(self):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
-        gateway = ExecutionGateway(lambda: NOW, store=scratch_store(), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(
+            lambda: NOW, **gateway_store(scratch_store()), handlers=AdapterHandlers()
+        )
         token = issue(gateway, decision, self.proposal, self.policy)
         run(gateway, token.token_id, self.proposal, lambda p: None)
         with self.assertRaises(PermissionError):
@@ -69,7 +73,9 @@ class AuthorityTests(unittest.TestCase):
     def test_changed_tool_is_rejected(self):
         self.mature_evidence()
         decision = self.controller().evaluate(self.proposal)
-        gateway = ExecutionGateway(lambda: NOW, store=scratch_store(), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(
+            lambda: NOW, **gateway_store(scratch_store()), handlers=AdapterHandlers()
+        )
         token = issue(gateway, decision, self.proposal, self.policy)
         changed = replace(self.proposal, tool_name="delete_order")
         with self.assertRaises(PermissionError):
@@ -88,7 +94,9 @@ class AuthorityTests(unittest.TestCase):
         decision = self.controller().evaluate(self.proposal)
         self.assertEqual(decision.route, Route.AUDIT)
         # an audit executes unattended; the route marks it for labelling afterwards
-        gateway = ExecutionGateway(lambda: NOW, store=scratch_store(), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(
+            lambda: NOW, **gateway_store(scratch_store()), handlers=AdapterHandlers()
+        )
         token = issue(gateway, decision, self.proposal, self.policy)
         self.assertFalse(token.human_approved)
 

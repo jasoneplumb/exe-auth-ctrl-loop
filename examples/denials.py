@@ -30,6 +30,13 @@ from exe_auth_ctrl_loop.authority import (
     Route,
 )
 from exe_auth_ctrl_loop.ledger import EventLedger
+from exe_auth_ctrl_loop.principals import (
+    GrantScope,
+    Keyring,
+    PrincipalKind,
+    Principals,
+    root_grant_payload,
+)
 from exe_auth_ctrl_loop.store import Store
 from exe_auth_ctrl_loop.tools import HandlerTable, ToolCatalog, ToolDefinition
 
@@ -164,9 +171,22 @@ show("authorized (before edit)", granted)
 assert granted.route == Route.AUTONOMOUS, granted.reason_codes
 
 # The decision goes on the ledger first; the gateway issues only for a committed one.
+# Who acts, and on whose authority (v3 Step 05): a human operator delegates this tool to
+# the agent. The key is an example-only secret; a deployment supplies its own.
+keyring = Keyring({"k-operator": b"example-only-secret"})
+principals = Principals(authorized_store.store, keyring)
+principals.register("operator", PrincipalKind.HUMAN, by="controller", key_id="k-operator")
+principals.register("agent", PrincipalKind.MODEL, by="controller")
+scope = GrantScope(tools=frozenset({"create_refund"}))
+grant_expiry = datetime(2100, 1, 1, tzinfo=timezone.utc)
+principals.grant_root(
+    "operator", "agent", scope, grant_expiry,
+    keyring.sign("k-operator", root_grant_payload("g-1", "operator", "agent", scope, grant_expiry)),
+    grant_id="g-1",
+)
 EventLedger(authorized_store.store).commit_decision(granted, original)
-gateway = ExecutionGateway(store=authorized_store.store, handlers=handlers)
-token = gateway.issue(granted, original, POLICY)
+gateway = ExecutionGateway(store=authorized_store.store, handlers=handlers, principals=principals)
+token = gateway.issue(granted, original, POLICY, principal_id="agent", grant_id="g-1")
 edited = proposal("op-mutated", parameters={"order_id": 4815, "usd": 2400.00})
 try:
     gateway.execute(token.token_id, edited)

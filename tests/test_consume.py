@@ -10,7 +10,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from _support import AdapterHandlers, forge_token, issue, run
+from _support import AdapterHandlers, forge_token, gateway_store, issue, run
 
 from exe_auth_ctrl_loop.authority import (
     Decision,
@@ -34,7 +34,7 @@ PROPOSALS = textwrap.dedent("""
 SUPPORT = textwrap.dedent(f"""
     import sys
     sys.path.insert(0, {str(Path(__file__).resolve().parent)!r})
-    from _support import AdapterHandlers, run
+    from _support import AdapterHandlers, gateway_store, run
 """)
 
 namespace: dict = {}
@@ -58,7 +58,7 @@ class StoreCase(unittest.TestCase):
         self.path = Path(tmp.name) / "authority.db"
         self.store = Store(self.path)
         self.addCleanup(self.store.close)
-        self.gateway = ExecutionGateway(store=self.store, handlers=AdapterHandlers())
+        self.gateway = ExecutionGateway(**gateway_store(self.store), handlers=AdapterHandlers())
 
     def issue(self, i: int):
         p = make(i)
@@ -78,7 +78,7 @@ class CrossProcessRedemptionTests(StoreCase):
         make = namespace["make"]
         path, ids_file, start = sys.argv[1:4]
         store = Store(path)
-        gateway = ExecutionGateway(store=store, handlers=AdapterHandlers())
+        gateway = ExecutionGateway(**gateway_store(store), handlers=AdapterHandlers())
         ids = json.load(open(ids_file))
         while not os.path.exists(start):
             time.sleep(0.001)
@@ -151,7 +151,8 @@ class OneTokenPerDecisionTests(StoreCase):
                 conn.execute(
                     "INSERT INTO tokens SELECT 'other', decision_id, proposal_digest,"
                     " allowed_tool, allowed_effects, partition, policy_version, evidence_id,"
-                    " evidence_version, expires_at, human_approved, 'issued', NULL"
+                    " evidence_version, expires_at, human_approved, 'issued', NULL,"
+                    " grant_id, requesting_principal, NULL"
                     " FROM tokens WHERE token_id = ?",
                     (token.token_id,),
                 )
@@ -217,7 +218,7 @@ class TransitionTests(StoreCase):
                 raise RuntimeError("settlement failed")
 
         gateway = ExecutionGateway(
-            guards=(Breaks(),), store=self.store, handlers=AdapterHandlers()
+            guards=(Breaks(),), **gateway_store(self.store), handlers=AdapterHandlers()
         )
         token, p = self.issue(1)
         with self.assertRaisesRegex(RuntimeError, "settlement failed"):
@@ -260,7 +261,7 @@ class RestartTests(StoreCase):
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(store=Store(sys.argv[1]), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(**gateway_store(Store(sys.argv[1])), handlers=AdapterHandlers())
         def handler(proposal):
             os._exit(3)  # the process dies inside the effect
         run(gateway, sys.argv[2], namespace["make"](1), handler)
@@ -270,7 +271,7 @@ class RestartTests(StoreCase):
         self.store.close()
         self.store = Store(self.path)
         self.addCleanup(self.store.close)
-        return ExecutionGateway(store=self.store, handlers=AdapterHandlers())
+        return ExecutionGateway(**gateway_store(self.store), handlers=AdapterHandlers())
 
     def test_consumed_stays_consumed(self):
         token, p = self.issue(1)
@@ -307,7 +308,7 @@ class RestartTests(StoreCase):
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(store=Store(sys.argv[1]), handlers=AdapterHandlers())
+        gateway = ExecutionGateway(**gateway_store(Store(sys.argv[1])), handlers=AdapterHandlers())
         advance = gateway._advance
         def dies_before_start(token_id, current, target):
             if target == "handler_started":

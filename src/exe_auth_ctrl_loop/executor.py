@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
 
 from .authority import (
     AuthorityController,
@@ -26,6 +26,9 @@ from .authority import (
     executable_route,
 )
 from .tools import ToolCatalog, ToolValidationError
+
+if TYPE_CHECKING:  # principals.py imports authority.py and ledger.py, not this module
+    from .principals import Approval
 
 
 class ExecutionStatus(str, Enum):
@@ -78,14 +81,19 @@ run; do not route around it."""
         client: Any | None = None,
         max_turns: int = 12,
         commit: Callable[[Decision, Proposal], Any] | None = None,
+        *,
+        principal_id: str,
+        grant_id: str,
     ) -> None:
         """
         intent: Hold the host-side pieces the loop needs, and the commit hook that records
                 a decision before it is acted on
         constraint: `commit` is called after evaluate() and before issue(); if it raises,
                     the step is refused. CrossModelAuthorityLoop sets it to its ledger's
-                    commit_decision. An agent run without one records nothing, which is
-                    allowed for tests and offline demos and documented as such.
+                    commit_decision. Without one nothing is committed, and since v3 Step 04
+                    the gateway then refuses every token: such an agent cannot execute.
+        constraint: `principal_id` is the execution model's principal and `grant_id` the
+                    grant it acts under (spec §8). Every token it obtains records both.
         """
         if not model or not prompt_version:
             raise ValueError("pin an execution model and prompt version")
@@ -106,12 +114,14 @@ run; do not route around it."""
         self.catalog = catalog
         self.max_turns = max_turns
         self.commit = commit
+        self.principal_id = principal_id
+        self.grant_id = grant_id
 
     def run(
         self,
         bundle: ProposalBundle,
         *,
-        approved_proposal_ids: Iterable[str] = (),
+        approvals: Iterable[Approval] = (),
     ) -> ExecutionRun:
         """
         intent: Drive one bundle to completion, or stop at the first thing not authorized
@@ -121,6 +131,9 @@ run; do not route around it."""
                 later one, so a partial plan cannot be assembled out of the allowed parts.
         constraint: Draft and clarification-needed bundles return before the model is called
                     at all -- an incomplete proposal is never shown an execution surface
+        constraint: `approvals` are signed human approvals (principals.Approval), matched to
+                    a proposal by the digest they sign. The gateway verifies each and uses
+                    it once; an approval for a different proposal matches nothing.
         """
         if bundle.readiness == ProposalReadiness.DRAFT:
             return ExecutionRun(bundle.bundle_id, ExecutionStatus.NEEDS_REVISION, "", ())
@@ -130,7 +143,7 @@ run; do not route around it."""
             )
 
         proposals = {proposal.proposal_id: proposal for proposal in bundle.proposals}
-        approved = frozenset(approved_proposal_ids)
+        approved = {approval.proposal_digest: approval for approval in approvals}
         executed: set[str] = set()
         steps: list[ExecutionStep] = []
         proposal_ids_by_tool: dict[str, list[str]] = {}
@@ -234,7 +247,7 @@ run; do not route around it."""
         tool_name: str,
         tool_input: dict[str, Any],
         proposals: Mapping[str, Proposal],
-        approved: frozenset[str],
+        approved: Mapping[str, Approval],
         executed: set[str],
     ) -> ExecutionStep:
         """
@@ -290,13 +303,16 @@ run; do not route around it."""
                     receipt=None,
                     error=f"decision not committed to ledger: {exc}",
                 )
-        human_approved = proposal_id in approved
+        approval = approved.get(proposal.proposal_digest)
+        human_approved = approval is not None
         try:
             token = self.gateway.issue(
                 decision,
                 proposal,
                 self.authority.policy,
-                human_approved=human_approved,
+                principal_id=self.principal_id,
+                grant_id=self.grant_id,
+                approval=approval,
             )
         except PermissionError as exc:
             # effect: a route that cannot execute is reported as the route; a refusal of

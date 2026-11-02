@@ -3,7 +3,7 @@ import unittest
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 
-from _support import rewrite_events, scratch_store
+from _support import principals_for, rewrite_events, scratch_store
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -39,6 +39,7 @@ class ShadowEvidenceTests(unittest.TestCase):
     def setUp(self):
         self.clock = Clock()
         self.ledger = EventLedger(scratch_store())
+        principals_for(self.ledger.store)  # the oracle and reviewer are ledger actors
         self.log = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
         self.key = PartitionKey(
             "openai", "m1", "pp1", "anthropic", "m2", "ep1",
