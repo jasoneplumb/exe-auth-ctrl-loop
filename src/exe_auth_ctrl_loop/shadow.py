@@ -382,11 +382,16 @@ class ShadowEvidenceLog:
                     design; what withdraws a token is the snapshot's suspended/valid
                     flags, which retirement, suspension, and declared invalidation set.
         """
-        tally = self._tally(key)
-        parts = [tally.get(p, Counts()) for p in COUNTING_PROVENANCE]
-        frozen = sum(c.frozen for c in parts)
-        if frozen == 0:
-            return None
+        # constraint: the counts and the evidence time are read in one transaction, so a
+        # label committed between the two reads cannot make collected_until describe a
+        # trial the counts do not include
+        with self.store.transaction():
+            tally = self._tally(key)
+            parts = [tally.get(p, Counts()) for p in COUNTING_PROVENANCE]
+            frozen = sum(c.frozen for c in parts)
+            if frozen == 0:
+                return None
+            collected_until = self._evidence_time(key)
         successes = sum(c.positive for c in parts)
         failures = sum(c.negative + c.inconclusive for c in parts)
         # constraint: pending trials are excluded from n until labeled or expired; they stay
@@ -399,7 +404,7 @@ class ShadowEvidenceLog:
             successes=successes,
             failures=failures,
             collected_from=collected_from,
-            collected_until=self._evidence_time(key),
+            collected_until=collected_until,
         )
 
     def _evidence_time(self, key: PartitionKey) -> datetime:
@@ -412,6 +417,11 @@ class ShadowEvidenceLog:
             " ORDER BY COALESCE(l.resolved_us, t.frozen_us) DESC, t.frozen_sequence LIMIT 1",
             (partition_text(key), self._floor(key), *(p.value for p in COUNTING_PROVENANCE)),
         ).fetchone()
+        if row is None:
+            # constraint: a precondition, not a state: snapshot() returns None before
+            # asking when there are no counting trials. Raised, not asserted, so -O
+            # cannot turn a wrong call into a TypeError.
+            raise LookupError("no counting trials in the current epoch")
         return datetime.fromisoformat(row[0])
 
     def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime) -> bool:
@@ -447,14 +457,15 @@ class ShadowEvidenceLog:
         """
         if not ledger.verify():
             raise ValueError("ledger chain does not verify")
-        conn = into.connection()
-        if any(
-            conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-            for table in ("trials", "labels", "epochs", "ledger")
-        ):
-            raise ValueError("replay needs an empty database")
         log = cls(EventLedger(into), label_deadline, clock)
         with into.transaction() as conn:
+            # constraint: checked under the same write lock as the inserts, so two
+            # replays into one database cannot both find it empty
+            if any(
+                conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
+                for table in ("trials", "labels", "epochs", "ledger")
+            ):
+                raise ValueError("replay needs an empty database")
             for event in ledger.events:
                 payload = event.payload
                 if event.event_type == "shadow.frozen":

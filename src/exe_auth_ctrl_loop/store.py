@@ -232,10 +232,15 @@ class Store:
             # suspension survives power loss, which NORMAL does not promise
             conn.execute("PRAGMA synchronous=FULL")
             conn.execute("PRAGMA foreign_keys=ON")
+            # constraint: registered and re-checked under the lock close() takes, so a
+            # connection opened while close() runs is closed, never left behind it
+            with self._registry_lock:
+                if self._closed:
+                    conn.close()
+                    raise StoreError("store is closed")
+                self._connections.append(conn)
             self._local.connection = conn
             self._local.depth = 0
-            with self._registry_lock:
-                self._connections.append(conn)
         return conn
 
     @contextmanager

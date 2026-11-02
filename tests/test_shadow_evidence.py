@@ -264,6 +264,20 @@ class ShadowEvidenceTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ShadowEvidenceLog.replay(self.ledger, scratch_store())
 
+    def test_replay_refuses_a_database_that_already_has_a_history(self):
+        self.trial(1)
+        target = scratch_store()
+        ShadowEvidenceLog.replay(self.ledger, target)
+        with self.assertRaisesRegex(ValueError, "empty database"):
+            ShadowEvidenceLog.replay(self.ledger, target)
+        with self.assertRaisesRegex(ValueError, "empty database"):
+            ShadowEvidenceLog.replay(self.ledger, self.ledger.store)
+
+    def test_evidence_time_without_counting_trials_is_a_clear_error(self):
+        self.assertIsNone(self.log.snapshot(self.key, T0))
+        with self.assertRaisesRegex(LookupError, "no counting trials"):
+            self.log._evidence_time(self.key)
+
 
 if __name__ == "__main__":
     unittest.main()

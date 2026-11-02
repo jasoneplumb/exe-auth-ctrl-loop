@@ -198,6 +198,9 @@ class RiskPolicy:
     version: str
     envelopes: tuple[RiskEnvelope, ...] = ()
     budgets: tuple[SequenceBudget, ...] = ()
+    # effect: conflicts are read from the current policy at every check, against the
+    # durable history of tool names. Removing a pair in update() stops it blocking at the
+    # next check; the history itself is never cleared, so re-adding the pair blocks again.
     conflicts: frozenset[tuple[str, str]] = frozenset()
     # constraint: keyword-only and required. A policy with no store would keep charges in
     # memory, which v3 removes (docs/v3/spec.md §2 rule 5, O-7).

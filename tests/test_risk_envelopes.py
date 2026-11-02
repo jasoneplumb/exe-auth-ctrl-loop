@@ -278,6 +278,20 @@ class SequenceBudgetTests(RiskBase):
         self.assertEqual(decision.route, Route.DENY)
         self.assertIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
 
+    def test_conflicts_come_from_the_current_policy_not_the_history(self):
+        # The history of tool names is durable; whether a pair conflicts is not.
+        self.seed("low")
+        self.assertEqual(self.run_op(self.proposal(usd=10)), "done")
+        self.risk.update("risk-v2", envelopes(), budgets(), conflicts=frozenset())
+        decision = self.controller.evaluate(self.proposal(tool="cancel_order"))
+        self.assertNotIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
+        self.risk.update(
+            "risk-v3", envelopes(), budgets(),
+            conflicts=frozenset({("create_refund", "cancel_order")}),
+        )
+        decision = self.controller.evaluate(self.proposal(tool="cancel_order"))
+        self.assertIn("CONFLICTING_ACTION:create_refund", decision.reason_codes)
+
     def test_budgets_do_not_leak_across_partitions(self):
         # partition-scoped budget only; the per-payee budget is global by design
         self.risk.update("risk-v1", envelopes(), (budgets()[0],))
