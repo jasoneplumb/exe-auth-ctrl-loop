@@ -4,7 +4,7 @@
 
 **Step objective:** Synchronous invalidation (serves F4, closes L12, changes C13/C14; see `docs/v3/plan.md` §4).
 
-**Branch / SHA:** `feat/v3-step-06-revocation` from `mainline` @ `1cf34e4`; Step 06 commit follows this report. Issue #34.
+**Branch / SHA:** `feat/v3-step-06-revocation` from `mainline` @ `1cf34e4`; Step 06 `6edb9ce`, PR #35 review fixes follow. Issue #34.
 
 **Reviewer:** (pending, one person decides)
 
@@ -24,10 +24,10 @@
 | 6c. A policy-version change emits one `POLICY_CHANGED` event (no per-partition `PARTITION_RETIRED`), retires every partition on the old version, and records lineage edges for their successors | PASS | `test_policy_change_is_one_event_retiring_every_old_partition` (two partitions; exactly one `POLICY_CHANGED` record and no `PARTITION_RETIRED` record; both retired; both edges point at the `pol2` key) |
 | 6d. `GATE_LOST` revokes evidence-based tokens and leaves approval-based tokens of the same partition redeemable | PASS | `test_gate_lost_revokes_evidence_based_tokens_only` (the approval-based token stays `issued` and redeems); `test_oracle_change_opens_epoch_and_revokes_evidence_based_tokens` likewise for RV-04 |
 | 7. Global gate passes | PASS | below |
-| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 15 files; 336 passed, 0 skipped, 85 subtests; three offline examples exit 0 and `denials.py` still matches the README |
-| Mutation check (v3 plan §5 rule) | PASS | Each fails `test_revocation.py`: `revoke()` changes no state (13 failures); gate loss does not revoke (1); `evidence_only` ignored (2); no gate recompute at redemption (2); no lineage inheritance (1) |
+| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 15 files; 337 passed, 0 skipped, 85 subtests (after the PR #35 review fixes); three offline examples exit 0 and `denials.py` still matches the README |
+| Mutation check (v3 plan §5 rule) | PASS | Each fails `test_revocation.py`: `revoke()` changes no state (13 failures); gate loss does not revoke (1); `evidence_only` ignored (2); no gate recompute at redemption (2); no lineage inheritance (1); a deferred cross-partition callback dropped instead (1, `test_censoring_another_partitions_trials_revokes_its_tokens_at_once`) |
 
-**Experiment reproduction (owner decision above):** canonical hash `4cc7a0e38ed7d60dd064fbf8b62fa6f3b04864c9b8c6aaa1fd131d6ea6785ea6`, against `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a` in `results/manifest.json`.
+**Experiment reproduction (owner decision above):** canonical hash `4cc7a0e38ed7d60dd064fbf8b62fa6f3b04864c9b8c6aaa1fd131d6ea6785ea6` at `6edb9ce` and again after the PR #35 review fixes, against `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a` in `results/manifest.json`.
 
 | What changed | Detail |
 |---|---|
@@ -40,7 +40,7 @@ So, measured: synchronous invalidation changes *when* authority is withdrawn, no
 
 **Design and statistical assumptions:**
 - **One record type for every revocation.** Each revoking event appends one `authority.revoked` record (event, revoked tokens, effect-unknown tokens, details) in the event's transaction. For RV-11…RV-13 this is in addition to the permission event, so `test_principals.py`'s "exactly one event of its type" now counts permission events only (its criterion's wording).
-- **RV-03 plumbing.** The shadow log calls listeners inside the label (or censor) transaction; `LifecycleManager` registers itself and re-walks the partition, and the `GATE_LOST_OUTCOME` transition revokes. The fixture names `shadow.py` as the recorder: the revocation is triggered there and committed in its transaction.
+- **RV-03 plumbing.** The shadow log calls listeners inside the label (or censor) transaction; `LifecycleManager` registers itself and re-walks the partition, and the `GATE_LOST_OUTCOME` transition revokes. A re-walk can censor other partitions' overdue trials; their callbacks are deferred and walked before the listener returns, in the same transaction (found in the PR #35 review: they were being dropped, leaving that partition's revocation to its next refresh, with redemption still refusing). The fixture names `shadow.py` as the recorder: the revocation is triggered there and committed in its transaction.
 - **RV-04 API.** `LifecycleManager.change_oracle(key, oracle_id, oracle_version, by=)` opens a new epoch (counts reset), adds the `ORACLE_CHANGED` transition (AUTONOMOUS → QUALIFYING; other states unchanged), and revokes evidence-based tokens. Binding labels to the epoch's oracle is Step 08.
 - **RV-07/RV-08 API.** `revocation.PolicyAuthority` is the host's one holder of the current policy (`current_policy=authority.current`). A policy object swapped by assignment is still caught lazily at refresh and at redemption, as before.
 - **RV-09/RV-10.** Tokens now store their proposal (schema v5), so `RiskPolicy.update()` can ask the new rules about each outstanding token of the tools it governs. One update is one event: `ENVELOPE_CHANGED` if the envelopes changed, else `BUDGET_TIGHTENED`.

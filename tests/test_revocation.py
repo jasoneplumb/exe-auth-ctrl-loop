@@ -315,6 +315,22 @@ class RevokingEventTests(World):
         self.assert_revoked(approved_by_rev, p2, "PRINCIPAL_DEACTIVATED")
 
 
+class ListenerTests(World):
+    """PR #35 review: a re-walk that resolves another partition's trials revokes there too."""
+
+    def test_censoring_another_partitions_trials_revokes_its_tokens_at_once(self):
+        other = key("cancel")
+        self.earn(other)
+        token, p = self.token(1, k=other)
+        for n in range(10):  # pending trials on the other partition, never labelled
+            pending = self.proposal(2000 + n, k=other)
+            self.assertTrue(self.shadow.freeze(f"pending-{n}", pending, Provenance.SHADOW).accepted)
+        self.clock.now = T0 + timedelta(hours=2)  # past the label deadline, evidence fresh
+        self.label(self.key, TrialLabel.POSITIVE)  # this partition's walk censors them
+        self.assertEqual(self.manager.record(other).state, LifecycleState.QUALIFYING)
+        self.assert_revoked(token, p, "GATE_LOST")
+
+
 class NotRevokingTests(World):
     """The fixture's deliberate non-events."""
 

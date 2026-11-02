@@ -17,7 +17,7 @@ import json
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Sequence
 
-from .authority import AuthorizationToken, Policy, Proposal, select_tokens
+from .authority import AuthorizationToken, Policy, Proposal, _select_tokens
 from .ledger import EventLedger
 from .store import Store
 
@@ -81,7 +81,7 @@ def revoke(
         condition += " AND approval_id IS NULL"
     with store.transaction() as conn:
         scoped = [
-            token for token, proposal in select_tokens(conn, condition, params)
+            token for token, proposal in _select_tokens(conn, condition, params)
             if refuses is None or refuses(token, proposal)
         ]
         revoked = tuple(t.token_id for t in scoped if t.state == "issued")
@@ -134,7 +134,9 @@ class PolicyAuthority:
             if policy.version != old.version:
                 retired: list[str] = []
                 for manager in self.managers:
-                    retired.extend(manager.retire_policy_version(old.version, policy))
+                    # private to this method: it retires without revoking, because the
+                    # single POLICY_CHANGED revoke below covers every partition at once
+                    retired.extend(manager._retire_policy_version(old.version, policy))
                 result: Revocation | None = revoke(
                     self.store, "POLICY_CHANGED", "policy_version = ?", (old.version,),
                     details={"from": old.version, "to": policy.version,

@@ -127,6 +127,7 @@ class LifecycleManager:
         # effect: a label admitted by the shadow log moves this partition's state in the
         # label's own transaction, so a bound that falls revokes at once (RV-03)
         self._in_label = False
+        self._deferred: set[PartitionKey] = set()
         shadow.listeners.append(self._on_label)
 
     def record(self, key: PartitionKey) -> PartitionRecord | None:
@@ -348,9 +349,12 @@ class LifecycleManager:
                        (f"ORACLE:{oracle_id}@{oracle_version}", f"BY:{by}"))
             self._sync_store(key, record)
 
-    def retire_policy_version(self, old_version: str, policy: Policy) -> list[str]:
+    def _retire_policy_version(self, old_version: str, policy: Policy) -> list[str]:
         """
         intent: Retire every partition on a superseded policy version at once (RV-07)
+        constraint: Private to revocation.PolicyAuthority.change(), which revokes in the same
+                    transaction. Called alone it would retire partitions and leave their
+                    tokens issued.
         effect: Each is retired and its evidence invalidated, and a lineage edge is recorded
                 to the key it becomes under the new version, so a suspension passes on.
                 Revocation is the caller's single POLICY_CHANGED event
@@ -404,16 +408,26 @@ class LifecycleManager:
 
     def _on_label(self, key: PartitionKey) -> None:
         """Shadow-log listener: re-walk this partition's state inside the label's transaction."""
+        # constraint: a re-walk can resolve other partitions' trials (expire_unlabeled
+        # censors overdue trials of every partition), and those callbacks arrive here while
+        # the walk is in progress. They are deferred, not dropped, and walked before this
+        # call returns, still inside the label's transaction, so each partition's GATE_LOST
+        # revocation is as synchronous as the first's (PR #35 review).
         if self._in_label:
-            return
-        record = self._load(key)
-        if record is None or record.retired or record.state == LifecycleState.SUSPENDED:
+            self._deferred.add(key)
             return
         self._in_label = True
         try:
-            self._refresh(key)
+            self._deferred.add(key)
+            while self._deferred:
+                pending = self._deferred.pop()
+                record = self._load(pending)
+                if (record is not None and not record.retired
+                        and record.state != LifecycleState.SUSPENDED):
+                    self._refresh(pending)
         finally:
             self._in_label = False
+            self._deferred.clear()
 
     def _suspended_predecessors(self, key: PartitionKey) -> list[str]:
         rows = self.db.connection().execute(

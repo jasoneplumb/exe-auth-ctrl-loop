@@ -16,7 +16,7 @@ import json
 import math
 import random
 import secrets
-from dataclasses import dataclass, replace
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
@@ -157,7 +157,7 @@ def proposal_json(proposal: Proposal) -> str:
         "proposal_id": proposal.proposal_id, "intent": proposal.intent,
         "tool_name": proposal.tool_name, "parameters": dict(proposal.parameters),
         "confidence": proposal.confidence, "requested_effects": sorted(proposal.requested_effects),
-        "partition": proposal.partition.__dict__, "proposer": proposal.proposer,
+        "partition": asdict(proposal.partition), "proposer": proposal.proposer,
         "readiness": proposal.readiness.value, "preconditions": list(proposal.preconditions),
         "success_criteria": list(proposal.success_criteria),
         "assumptions": list(proposal.assumptions),
@@ -995,13 +995,14 @@ def _token(row: tuple[Any, ...]) -> AuthorizationToken:
     )
 
 
-def select_tokens(
+def _select_tokens(
     conn: Any, where: str, params: Sequence[Any] = (),
 ) -> list[tuple[AuthorizationToken, Proposal | None]]:
     """
     intent: Tokens matching a SQL condition, each with the proposal it was issued for
-    context: revocation.py uses this to find the tokens in a revoking event's scope;
-             `where` is written by this package, never taken from input
+    context: revocation.py uses this to find the tokens in a revoking event's scope
+    constraint: Private: `where` is interpolated into SQL. Every caller passes a fragment
+                written in this package, never anything taken from input.
     """
     rows = conn.execute(f"SELECT {_TOKEN_COLUMNS} FROM tokens WHERE {where}", tuple(params))
     return [
