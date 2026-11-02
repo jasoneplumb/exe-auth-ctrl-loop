@@ -66,8 +66,8 @@ def final_text(text="complete"):
 class ProviderIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.receipts = []
-        self.registry = ToolCatalog()
-        self.registry.register(ToolDefinition(
+        self.catalog = ToolCatalog()
+        self.catalog.register(ToolDefinition(
             name="create_refund",
             description="Create one bounded refund.",
             input_schema={
@@ -84,7 +84,7 @@ class ProviderIntegrationTests(unittest.TestCase):
             task_category="bounded_refund",
             risk_class="low",
         ))
-        self.handlers = HandlerTable(self.registry)
+        self.handlers = HandlerTable(self.catalog)
         self.handlers.register("create_refund", self._record)
 
     def _record(self, args):
@@ -112,7 +112,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         })
         client = FakeOpenAI(draft)
         generator = OpenAIProposalGenerator(
-            "openai-model-pinned", "proposal-v1", self.registry, client,
+            "openai-model-pinned", "proposal-v1", self.catalog, client,
         )
         bundle = generator.generate(
             "Refund duplicate charge",
@@ -140,7 +140,7 @@ class ProviderIntegrationTests(unittest.TestCase):
         )
         return ClaudeExecutionAgent(
             "claude-model-pinned", "execution-v1", authority, gateway,
-            self.registry, FakeClaude(claude_responses),
+            self.catalog, FakeClaude(claude_responses),
             commit=EventLedger(store.store).commit_decision,
         )
 

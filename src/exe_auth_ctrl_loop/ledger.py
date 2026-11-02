@@ -166,6 +166,9 @@ class EventLedger:
         constraint: A decision is committed once; a second commit of the same id fails on
                     the table's primary key and appends nothing.
         """
+        # constraint: atomic because Store.transaction() is re-entrant on a thread: the
+        # append inside _append_decision joins this transaction on the same connection, so
+        # a failed INSERT below rolls the ledger event back with it
         with self.store.transaction() as conn:
             event = self._append_decision(decision, proposal)
             conn.execute(

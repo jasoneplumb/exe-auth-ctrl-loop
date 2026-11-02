@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 from pathlib import Path
 from typing import Callable, Sequence
@@ -83,21 +84,26 @@ class AdapterHandlers:
     A HandlerTable stand-in for gateway-mechanism tests: run() supplies the handler for the
     next execute(), called with the proposal, as v0.3.1's `adapter` argument was. It goes
     through the same resolve() the gateway calls on a real HandlerTable, so consume,
-    rollback, and state transitions are exercised unchanged. Tests of which handler runs
-    use a real HandlerTable (tests/test_boundary.py).
+    rollback, and state transitions are exercised unchanged.
+
+    Adapters receive the Proposal, not the arguments dict, and no schema is checked. Tests
+    of argument validation, a missing handler, or which handler runs use a real
+    HandlerTable (tests/test_boundary.py).
     """
 
     def __init__(self) -> None:
-        self._next: tuple[object, Callable[[object], object]] | None = None
+        self._next: tuple[str, object, Callable[[object], object]] | None = None
 
-    def use(self, proposal: object, adapter: Callable[[object], object]) -> None:
-        self._next = (proposal, adapter)
+    def use(self, proposal, adapter: Callable[[object], object]) -> None:
+        self._next = (proposal.tool_name, proposal, adapter)
 
     def resolve(self, name: str, parameters: object) -> Callable[[], object]:
         if self._next is None:
             raise AssertionError("tests must call run(), not gateway.execute(), directly")
-        proposal, adapter = self._next
+        tool, proposal, adapter = self._next
         self._next = None
+        if name != tool:
+            raise AssertionError(f"adapter was set up for {tool!r}, gateway resolved {name!r}")
         return lambda: adapter(proposal)
 
 
@@ -109,11 +115,10 @@ def run(gateway, token_id: str, proposal, adapter):
 
 def commit(store: Store, decision, proposal) -> None:
     """Commit a decision to the ledger in `store`, once (a second call is a no-op)."""
-    known = store.connection().execute(
-        "SELECT 1 FROM decisions WHERE decision_id = ?", (decision.decision_id,)
-    ).fetchone()
-    if known is None:
+    try:
         EventLedger(store).commit_decision(decision, proposal)
+    except sqlite3.IntegrityError:
+        pass  # already committed: the primary key refused it and nothing was appended
 
 
 def issue(gateway, decision, proposal, policy, **kwargs):

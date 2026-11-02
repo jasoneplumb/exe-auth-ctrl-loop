@@ -763,9 +763,12 @@ class ExecutionGateway:
             blockers = self.redemption_blockers(token, proposal)
             if blockers:
                 raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
+            # imported here: tools.py imports risk.py, which imports this module
+            from .tools import ToolValidationError
+
             try:
                 call = self.handlers.resolve(token.allowed_tool, proposal.parameters)
-            except ValueError as exc:  # ToolValidationError: bad arguments, no handler
+            except ToolValidationError as exc:  # bad arguments, or no handler for the tool
                 raise PermissionError(f"tool not executable: {exc}") from exc
             # effect: budgets are charged in the consume transaction, so a charge and a
             # consume commit together or not at all. A guard's commit() that raises now

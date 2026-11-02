@@ -4,7 +4,7 @@
 
 **Step objective:** Execution boundary (serves F1; see `docs/v3/plan.md` §4).
 
-**Branch / SHA:** `feat/v3-step-04-boundary` from `mainline` @ `de841a7`; Step 04 commit follows this report. Issue #30.
+**Branch / SHA:** `feat/v3-step-04-boundary` from `mainline` @ `de841a7`; Step 04 `c6ec990`, review fixes follow. Issue #30, PR #31.
 
 **Reviewer:** (pending, one person decides)
 
@@ -22,7 +22,7 @@
 | 4. `issue()` refuses a decision absent from `decisions` or differing in digest or route (closes L7 first half, enforces C20) | PASS | Schema v3 `decisions` (append-only). `test_boundary.py::CommittedDecisionTests`: uncommitted, hand-built, and route-altered-after-commit decisions refused; a committed one issues; a second commit of one decision fails on the primary key and appends nothing. `test_audit_commitment.py::test_agent_without_a_commit_hook_cannot_execute` |
 | 5. Same-process reflection residual stated in README and SECURITY.md | PASS | README invariant 1; SECURITY.md "Scope notes" (in scope: any route to a handler except `ExecutionGateway.execute`, any token for an uncommitted decision; out of scope and stated: `gc.get_objects()` / frame inspection in the same process) |
 | 6. Global gate passes; offline examples updated and exit 0 | PASS | below |
-| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 13 files; 286 passed, 1 skipped (Step 06 forward check), 58 subtests; `example.py`, `denials.py`, `mcp_demo.py` exit 0; `live_example.py` parses (API keys needed, not run). Full experiment reproduction: canonical hash `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a`, identical to `results/manifest.json`, although the harness now commits every decision to the ledger before issuing |
+| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 13 files; 286 passed, 1 skipped (Step 06 forward check), 58 subtests; `example.py`, `denials.py`, `mcp_demo.py` exit 0; `live_example.py` parses (API keys needed, not run). Full experiment reproduction: canonical hash `2e9dc58974affce7aca80d2e93322d18defb94956d98682d5f62212881ccbf1a`, identical to `results/manifest.json`, although the harness now commits every decision to the ledger before issuing; reproduced before and after the `executable_route()` refactor (at `c6ec990`). The PR #31 review fixes narrow one `except` and change tests and comments only |
 
 **Recorded mutation output (criterion 3):**
 
