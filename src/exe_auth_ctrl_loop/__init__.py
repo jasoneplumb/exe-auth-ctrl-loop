@@ -52,6 +52,7 @@ from .lifecycle import LifecycleEvent, LifecycleManager, LifecycleState, Partiti
 from .mcp import (
     EXTENSION_PREFIX,
     EXTENSION_VERSION,
+    CallReceipt,
     McpServer,
     MetaKeyError,
     MetaVerificationError,
@@ -103,6 +104,7 @@ from .tools import HandlerTable, ToolCatalog, ToolDefinition, ToolValidationErro
 __version__ = "0.3.1"
 
 __all__ = [
+    "CallReceipt",
     "Principals",
     "PrincipalKind",
     "Principal",

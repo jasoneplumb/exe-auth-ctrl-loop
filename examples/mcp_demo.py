@@ -30,7 +30,6 @@ from exe_auth_ctrl_loop.mcp import (
     MetaVerificationError,
     attach_meta,
     build_call_meta,
-    verify_call_meta,
 )
 from exe_auth_ctrl_loop.principals import (
     GrantScope,
@@ -84,15 +83,13 @@ def mcp_server(request: Mapping[str, Any], now: datetime,
         receipt = receiver.call(params, lambda args: {"receipt": "refund-9001"}, now)
     except (MetaVerificationError, PermissionError) as denial:
         return {"executed": False, "denied": str(denial)}
-    verified = verify_call_meta(
-        params, params["name"], params["arguments"], SHARED_SECRET, now, audience=server,
-    )
+    # the authority the call ran on comes back with it: no second verification
     return {
         "executed": True,
-        **receipt,
-        "audit_committed": verified.audit_committed,
-        "human_approved": verified.human_approved,
-        "evidence_snapshot": verified.evidence_snapshot,
+        **receipt.result,
+        "audit_committed": receipt.authority.audit_committed,
+        "human_approved": receipt.authority.human_approved,
+        "evidence_snapshot": receipt.authority.evidence_snapshot,
     }
 
 

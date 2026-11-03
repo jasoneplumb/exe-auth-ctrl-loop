@@ -337,6 +337,14 @@ def verify_call_meta(
     )
 
 
+@dataclass(frozen=True)
+class CallReceipt:
+    """What McpServer.call() returns: the handler's result and the authority it ran on."""
+
+    result: Any
+    authority: VerifiedAuthority
+
+
 class McpServer:
     """
     intent: What a receiving MCP server does with a tools/call before any side effect
@@ -357,17 +365,27 @@ class McpServer:
         params: Mapping[str, Any],
         handler: Callable[[Mapping[str, Any]], Any],
         now: datetime | None = None,
-    ) -> Any:
+    ) -> CallReceipt:
+        """
+        effect: Returns the handler's result with the VerifiedAuthority it ran on, so a
+                caller never re-verifies a block after spending it (a second, stateless
+                verification could fail after the effect, e.g. on expiry)
+        """
         tool_name, arguments = params["name"], dict(params.get("arguments", {}))
         verified = verify_call_meta(
             params, tool_name, arguments, self.secret, now, audience=self.principal_id,
         )
         digest = call_digest(tool_name, arguments)
         if verified.redemption == "server":
-            return self.gateway.redeem_remote(
+            result = self.gateway.redeem_remote(
                 verified.token_id, audience=self.principal_id, call_digest=digest,
                 handler=lambda: handler(arguments),
             )
+            return CallReceipt(result, verified)
         self.gateway.accept_nonce(verified.token_id, audience=self.principal_id,
                                   call_digest=digest)
-        return handler(arguments)
+        # by design: the nonce path has no handler-state lifecycle. The token stays
+        # `issued` (spec §6 rule 3) and the nonce row is the single use, so there is no
+        # handler_started/handler_failed to record; an effect-free call has no effect whose
+        # outcome could be unknown. Do not add _advance calls here.
+        return CallReceipt(handler(arguments), verified)

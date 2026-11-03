@@ -4,7 +4,7 @@
 
 **Step objective:** MCP server-side redemption (serves F2, closes the rest of L3; see `docs/v3/plan.md` §4).
 
-**Branch / SHA:** `feat/v3-step-07-mcp` from `mainline` @ `611dd95`; Step 07 commit follows this report. Issue #36.
+**Branch / SHA:** `feat/v3-step-07-mcp` from `mainline` @ `611dd95`; Step 07 `e6347b7`, PR #37 review fixes follow. Issue #36.
 
 **Reviewer:** (pending, one person decides)
 
@@ -24,13 +24,14 @@
 | Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 15 files; 353 passed, 95 subtests; three offline examples exit 0 |
 | Mutation check (v3 plan §5 rule) | PASS | Each fails `test_mcp_redemption.py`: host may spend MCP tokens (1 failure); verification ignores audience (1); nonce insert ignores duplicates (2); version check as a denylist of `0.1` only (3) |
 
-**Experiment reproduction:** canonical hash `4cc7a0e38ed7d60dd064fbf8b62fa6f3b04864c9b8c6aaa1fd131d6ea6785ea6`, identical to Step 06's (the harness uses no MCP, and the `execute()` refactor keeps its checks and their order). `results/` remains the v0.3.x artifacts until Step 09 (owner decision at Step 06).
+**Experiment reproduction:** canonical hash `4cc7a0e38ed7d60dd064fbf8b62fa6f3b04864c9b8c6aaa1fd131d6ea6785ea6`, identical to Step 06's (the harness uses no MCP, and the `execute()` refactor keeps its checks and their order). Not re-run after the review fixes: the only change on the harness's path wraps `_consume` in a transaction that joins the one its caller already holds. `results/` remains the v0.3.x artifacts until Step 09 (owner decision at Step 06).
 
 **Design and statistical assumptions:**
 - **One consume path.** `execute()`, `redeem_remote()`, and `accept_nonce()` share `_consume` / `_check`: the channel and audience are checked *before* any write (a token presented on the wrong channel is not spent), then the conditional update, then the same expiry, scope, and live-state checks. The server path therefore inherits every spec §5 revocation and every redemption guard.
 - **The call is checked against the stored proposal.** The server recomputes the call digest from what it received; the host recomputes it from the proposal stored with the token (schema v5) and compares, inside the consume transaction.
 - **Nonce path does not consume.** Spec §6 rule 3: the nonce row is the single use. The token stays `issued` and remains subject to revocation.
 - **Audience is a principal.** `issue(..., audience=)` requires an active SERVICE principal (Step 05), recorded as `mcp_audience` with `redemption_channel = mcp` (schema v6).
+- **The receipt carries the authority** (PR #37 review). `McpServer.call()` returns a `CallReceipt` (handler result and the `VerifiedAuthority` it ran on), so no caller re-verifies a block after spending it; the demo's second verification, which could fail after the effect, is gone. `_consume` owns its transaction (joining the caller's) rather than reaching for the store's connection. The nonce path's lack of handler states is documented as deliberate.
 - **Version first.** `verify_call_meta` refuses any version other than exactly `0.2` before reading other keys, so an old block is refused as old, not as malformed. The MAC still covers the field.
 
 **Limitations / deviations:**

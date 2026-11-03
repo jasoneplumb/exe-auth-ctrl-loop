@@ -917,17 +917,19 @@ class ExecutionGateway:
                 update -- the only single-use guard -- and every redemption check; a
                 refusal raises inside the caller's transaction and rolls the consume back.
         """
-        conn = self.store.connection()
-        token = self.token(token_id)
-        if token is not None:
-            self._check_channel(token, channel, audience)
-        consumed = conn.execute(
-            "UPDATE tokens SET state = 'consumed' WHERE token_id = ? AND state = 'issued'",
-            (token_id,),
-        ).rowcount
-        if token is None or consumed != 1:
-            self._refuse_state(token)
-        self._redemption_checks(token, proposal)
+        # effect: joins the caller's transaction (Store.transaction is re-entrant), so the
+        # consume commits or rolls back with everything the caller does around it
+        with self.store.transaction() as conn:
+            token = self.token(token_id)
+            if token is not None:
+                self._check_channel(token, channel, audience)
+            consumed = conn.execute(
+                "UPDATE tokens SET state = 'consumed' WHERE token_id = ? AND state = 'issued'",
+                (token_id,),
+            ).rowcount
+            if token is None or consumed != 1:
+                self._refuse_state(token)
+            self._redemption_checks(token, proposal)
         return token
 
     def _check(

@@ -148,7 +148,10 @@ class ConsequentialCallTests(Fixture):
 
     def test_the_call_runs_once_and_a_replay_is_refused(self):
         params = self.request(proposal())
-        self.assertEqual(self.server().call(params, self.handler, NOW), {"receipt": "ok"})
+        receipt = self.server().call(params, self.handler, NOW)
+        self.assertEqual(receipt.result, {"receipt": "ok"})
+        self.assertEqual(receipt.authority.token_id, self.token.token_id)
+        self.assertEqual(receipt.authority.audience, MCP_SERVER)
         with self.assertRaisesRegex(PermissionError, "consumed"):
             self.server().call(params, self.handler, NOW)
         self.assertEqual(len(self.effects), 1)
