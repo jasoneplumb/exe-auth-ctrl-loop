@@ -1,31 +1,41 @@
 """
-Intent: Drive the real authority stack with a synthetic proposal stream and record what
+Intent: Drive the shipped authority loop with a synthetic proposal stream and record what
         it does, step by step, from an empty evidence store
-Context: One simulated step is one proposal for the current partition. The host decides,
-        tokens are redeemed one step later (so a state change in between is visible), the
-        oracle labels frozen trials after a delay, and the lifecycle reacts. Nothing is
-        seeded unless the comparator is the legacy demonstration, which is labelled so.
-Pattern: The simulated parts are explicit and few: the truth process (is this proposal
-        acceptable, is a failure severe), the oracle (noisy, delayed, sometimes silent),
-        the human reviewer (catches a fraction of bad proposals), and configuration churn.
+Context: One simulated step is one proposal for the current partition. Since v3 Step 09 the
+        proposal goes through the shipped CrossModelAuthorityLoop: the OpenAI proposer and
+        the Claude executor run with fake clients, the executor's commit hook records the
+        decision and freezes what the loop freezes, and the gateway issues and redeems the
+        token inside the same run. The oracle labels frozen trials after a delay, and the
+        lifecycle reacts. Nothing is seeded unless the comparator is the legacy
+        demonstration, which is labelled so.
+Pattern: The simulated parts are explicit and few: the two model clients (they propose and
+        request exactly the synthetic proposal), the truth process (is this proposal
+        acceptable, is a failure severe), the oracle (noisy, delayed, sometimes silent), the
+        human reviewer (catches a fraction of bad proposals, signs an approval otherwise),
+        and configuration churn. The harness never commits, freezes, issues, or redeems
+        anything itself (claims matrix L6; tests/test_experiments.py::ShippedLoopTests).
 Future: Everything else is the production code path. If the stack changes, these numbers
         change, which is the point.
 """
 
 from __future__ import annotations
 
+import json
 import random
 import tempfile
 import weakref
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any, Mapping
 
 from exe_auth_ctrl_loop import (
+    Approval,
     AuthorityController,
     Bound,
-    Decision,
+    ClaudeExecutionAgent,
+    CrossModelAuthorityLoop,
     EventLedger,
     EvidenceSnapshot,
     EvidenceStore,
@@ -36,6 +46,7 @@ from exe_auth_ctrl_loop import (
     LifecycleManager,
     LifecycleState,
     OneOf,
+    OpenAIProposalGenerator,
     Oracle,
     OracleKind,
     Outcome,
@@ -45,6 +56,10 @@ from exe_auth_ctrl_loop import (
     PrincipalKind,
     Principals,
     Proposal,
+    ProposalBundle,
+    ProposalDraftModel,
+    ProposalGenerationError,
+    ProposedActionModel,
     Provenance,
     ReviewAction,
     RiskEnvelope,
@@ -59,13 +74,19 @@ from exe_auth_ctrl_loop import (
     TrialLabel,
     label_payload,
 )
-from exe_auth_ctrl_loop.principals import release_payload, root_grant_payload
+from exe_auth_ctrl_loop.executor import ExecutionStep
+from exe_auth_ctrl_loop.principals import approval_payload, release_payload, root_grant_payload
 
 T0 = datetime(2026, 1, 1, tzinfo=timezone.utc)
 PAYEES = frozenset({"acct-100", "acct-200", "acct-300"})
 ORACLE = Oracle("sim-oracle", "1", OracleKind.SANDBOX_REPLAY, "synthetic truth with noise")
 SIM_KEYS = {"operator": "k-operator", "reviewer": "k-reviewer", "sim-oracle": "k-oracle"}
 SIM_AGENT = "agent"
+SIM_PROPOSER = "openai"  # the proposer's ledger actor
+# what the fake proposer and executor report as their pinned versions; make_key matches
+PROPOSER_MODEL, EXECUTOR_MODEL, EXECUTOR_PROMPT, ENVIRONMENT = (
+    "proposer-m1", "executor-m1", "exec-p1", "sim-env",
+)
 SIM_GRANT = "g-sim"
 SIM_GRANT_EXPIRY = datetime(2100, 1, 1, tzinfo=timezone.utc)
 # The ledger key a simulation run supplies (v3 Step 08). A fixed value keeps runs
@@ -110,11 +131,13 @@ class ScenarioConfig:
     estimator: str = "beta_mixture"
     audit_rate: float = 0.05
     max_evidence_age: int = 1000
-    redeem_delay: int = 2  # steps between issue and redemption; >1 leaves a token outstanding
-    token_ttl: int = 5  # steps; must exceed redeem_delay or every token expires unredeemed
+    token_ttl: int = 5  # steps; the shipped loop redeems in the step it issues
     # risk
     amount_high_rate: float = 0.0
     amount_out_rate: float = 0.0
+    # constraint: no effect since v3 Step 09. The shipped proposer derives the risk class
+    # from the host's envelopes, so no proposal can carry a mislabel; the field stays so
+    # the v0.3.x configs load unchanged (the draw is still made, keeping the RNG stream)
     mislabel_rate: float = 0.0
     budget_limit: float | None = None
     seeded_successes: int = 0
@@ -147,6 +170,8 @@ class RunMetrics:
     failures_human_missed: int = 0
     policy_denials: int = 0
     issue_denials: int = 0
+    # approved by the reviewer, then refused by the gateway (e.g. suspended, over budget)
+    approved_refused: int = 0
     stale_token_denials: int = 0
     shadow_trials: int = 0
     shadow_positive: int = 0
@@ -191,8 +216,8 @@ class RunMetrics:
 
 def make_key(prompt_version: str, risk_class: str) -> PartitionKey:
     return PartitionKey(
-        "openai", "proposer-m1", prompt_version, "anthropic", "executor-m1", "exec-p1",
-        "refund-api-v2", "pol1", "sim-env", "refund", "0.95-1.00", risk_class,
+        "openai", PROPOSER_MODEL, prompt_version, "anthropic", EXECUTOR_MODEL, EXECUTOR_PROMPT,
+        "refund-api-v2", "pol1", ENVIRONMENT, "refund", "0.95-1.00", risk_class,
     )
 
 
@@ -208,6 +233,39 @@ def make_risk_policy(cfg: ScenarioConfig, store: Store) -> RiskPolicy:
         budgets = (SequenceBudget("refund-total", frozenset({"create_refund"}), "partition",
                                   "usd", cfg.budget_limit),)
     return RiskPolicy("risk-v1", envelopes, budgets, store=store)
+
+
+class FakeOpenAI:
+    """The simulated proposer model: returns the next synthetic draft, as Structured Output."""
+
+    def __init__(self) -> None:
+        self.draft: ProposalDraftModel | None = None
+        self.responses = SimpleNamespace(parse=self._parse)
+
+    def _parse(self, **_: Any) -> SimpleNamespace:
+        return SimpleNamespace(output_parsed=self.draft)
+
+
+class FakeClaude:
+    """The simulated executor model: requests the bundle's one proposal, then stops."""
+
+    def __init__(self) -> None:
+        self.proposal: Proposal | None = None
+        self.messages = SimpleNamespace(create=self._create)
+        self._turn = 0
+
+    def ask(self, proposal: Proposal) -> None:
+        self.proposal, self._turn = proposal, 0
+
+    def _create(self, **_: Any) -> SimpleNamespace:
+        self._turn += 1
+        if self._turn > 1 or self.proposal is None:
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text="done")])
+        p = self.proposal
+        return SimpleNamespace(content=[SimpleNamespace(
+            type="tool_use", id=f"toolu-{p.proposal_id}", name=p.tool_name,
+            input={"proposal_id": p.proposal_id, **p.parameters},
+        )])
 
 
 def _discard(db: Store, directory: tempfile.TemporaryDirectory[str]) -> None:
@@ -233,13 +291,15 @@ class Simulation:
         weakref.finalize(self, _discard, self.db, directory)
         self.ledger = EventLedger(self.db)
         # Principals (v3 Step 05): fixed simulation keys; the operator grants the agent
-        # unrestricted scope, the reviewer and oracle are registered ledger actors
+        # unrestricted scope; the reviewer (who approves) and the oracle (who labels) are
+        # distinct principals, so REVIEWER_IS_ORACLE never fires
         self.keyring = Keyring({key_id: f"sim-{key_id}".encode() for key_id in SIM_KEYS.values()})
         self.principals = Principals(self.db, self.keyring, self.clock)
         for name, key_id in SIM_KEYS.items():
             kind = PrincipalKind.ORACLE if name == ORACLE.oracle_id else PrincipalKind.HUMAN
             self.principals.register(name, kind, by="controller", key_id=key_id)
-        self.principals.register(SIM_AGENT, PrincipalKind.MODEL, by="controller")
+        for name in (SIM_AGENT, SIM_PROPOSER):
+            self.principals.register(name, PrincipalKind.MODEL, by="controller")
         self.principals.grant_root(
             "operator", SIM_AGENT, GrantScope(), SIM_GRANT_EXPIRY,
             self.keyring.sign(SIM_KEYS["operator"], root_grant_payload(
@@ -259,15 +319,15 @@ class Simulation:
             alpha=cfg.alpha, estimator=cfg.estimator,
         )
         self.risk = make_risk_policy(cfg, self.db)
-        # The gateway's handler table, the only route to the (counted) effect. The catalog
-        # schema is permissive; the risk policy's envelopes do the classifying.
-        catalog = ToolCatalog(risk=self.risk)
-        catalog.register(ToolDefinition(
+        # The host's catalog and handler table. The schema is permissive; the risk policy's
+        # envelopes do the classifying, for the proposer and the executor alike.
+        self.catalog = ToolCatalog(risk=self.risk)
+        self.catalog.register(ToolDefinition(
             "create_refund", "refund", {"type": "object"}, frozenset({"refund:write"}),
             "refund-api-v2", "refund", None,
         ))
-        self.handlers = HandlerTable(catalog)
-        self.handlers.register("create_refund", self.handler)
+        handlers = HandlerTable(self.catalog)
+        handlers.register("create_refund", self.handler)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(seed * 7919 + 1), self.clock, guards=(self.risk,)
         )
@@ -275,29 +335,42 @@ class Simulation:
             self.shadow, self.store, self.policy, self.controller, self.clock,
             principals=self.principals,
         )
-        if cfg.comparator == "legacy_wilson_seeded":
+        legacy = cfg.comparator == "legacy_wilson_seeded"
+        if legacy:
             # The v0.2.0 path: bare controller, hand-seeded evidence, no lifecycle, no live
             # redemption checks. Not a bootstrap; a demonstration of the old behaviour.
             self.gateway = ExecutionGateway(
-                self.clock, store=self.db, handlers=self.handlers, principals=self.principals
+                self.clock, store=self.db, handlers=handlers, principals=self.principals
             )
         else:
             self.gateway = ExecutionGateway(
                 self.clock, evidence=self.store, current_policy=lambda: self.policy,
-                guards=(self.manager, self.risk),
-                store=self.store.store,
-                handlers=self.handlers,
+                guards=(self.manager, self.risk), store=self.db, handlers=handlers,
                 principals=self.principals,
             )
+        self.openai, self.claude = FakeOpenAI(), FakeClaude()
         self.prompt_version = "prop-p1"
+        self.proposer = OpenAIProposalGenerator(
+            PROPOSER_MODEL, self.prompt_version, self.catalog, client=self.openai
+        )
+        agent = ClaudeExecutionAgent(
+            EXECUTOR_MODEL, EXECUTOR_PROMPT, self.controller if legacy else self.manager,
+            self.gateway, self.catalog, client=self.claude,
+            principal_id=SIM_AGENT, grant_id=SIM_GRANT,
+        )
+        # constraint: the shadow log is attached only where evidence is earned. The human-
+        # only comparator never accumulates any, and the legacy one folds outcomes into its
+        # seeded snapshot instead (legacy_adjudicate)
+        self.loop = CrossModelAuthorityLoop(
+            self.proposer, agent, self.ledger, self.policy.version, ENVIRONMENT,
+            shadow=self.shadow if cfg.comparator == "v2" else None,
+        )
         self.key = make_key(self.prompt_version, "low")
         if cfg.seeded_successes or cfg.seeded_failures:
             self.store.put(EvidenceSnapshot(
                 "seeded", 1, self.key, cfg.seeded_successes, cfg.seeded_failures, T0, T0,
             ))
 
-        # (due step, token id, decision id, proposal, audited)
-        self.pending_tokens: list[tuple[int, str, str, Proposal, bool]] = []
         self.pending_labels: list[tuple[int, str, PartitionKey, str, TrialLabel]] = []
         self.in_burst = False
         self.qualified_at: int | None = None
@@ -341,25 +414,40 @@ class Simulation:
             severe_rate = self.cfg.severe_defect
         return False, self.rng.random() < severe_rate
 
-    def next_proposal(self) -> Proposal:
+    def next_draft(self) -> dict[str, Any]:
+        """The arguments the simulated proposer puts forward this step."""
         cfg = self.cfg
         self.counter += 1
         u = self.rng.random()
         if u < cfg.amount_out_rate:
             usd = round(self.rng.uniform(10_001, 20_000), 2)
-            label = "high"
         elif u < cfg.amount_out_rate + cfg.amount_high_rate:
             usd = round(self.rng.uniform(100.01, 5_000), 2)
-            label = "low" if self.rng.random() < cfg.mislabel_rate else "high"
+            self.rng.random()  # the v0.3.x mislabel draw; see ScenarioConfig.mislabel_rate
         else:
             usd = round(self.rng.uniform(5, 100), 2)
-            label = "low"
         payee = sorted(PAYEES)[self.rng.randrange(len(PAYEES))]
-        return Proposal(
-            f"p-{self.seed}-{self.counter}", "refund order", "create_refund",
-            {"order_id": self.counter, "usd": usd, "payee": payee}, 0.96,
-            frozenset({"refund:write"}), make_key(self.prompt_version, label), "openai",
+        return {"order_id": self.counter, "usd": usd, "payee": payee}
+
+    def propose(self, arguments: dict[str, Any]) -> ProposalBundle:
+        """One bundle from the shipped proposer, through loop.propose (ledgered)."""
+        self.openai.draft = ProposalDraftModel(
+            readiness="executable", summary="refund order", missing_information=[],
+            actions=[ProposedActionModel(
+                action_id=f"p-{self.seed}-{self.counter}", intent="refund order",
+                tool_name="create_refund", arguments_json=json.dumps(arguments),
+                declared_effects=["refund:write"], declared_confidence=0.96,
+                preconditions=[], success_criteria=[], assumptions=[],
+                unresolved_questions=[],
+            )],
         )
+        return self.loop.propose("refund order")
+
+    def execute(self, bundle: ProposalBundle, approval: Approval | None = None) -> ExecutionStep:
+        """The executor asks for the bundle's one proposal; the loop does the rest."""
+        self.claude.ask(bundle.proposals[0])
+        run = self.loop.execute(bundle, approvals=(approval,) if approval else ())
+        return run.steps[0]
 
     def oracle_label(self, good: bool) -> TrialLabel:
         if self.rng.random() < self.cfg.oracle_inconclusive:
@@ -388,57 +476,20 @@ class Simulation:
                 SignedLabel(trial_id, key, digest, label, ORACLE, claimed_at, mac)
             )
 
-    # -- the host path -------------------------------------------------------------
+    def approval(self, proposal: Proposal) -> Approval:
+        """The simulated reviewer's signed, single-use approval of exactly this proposal."""
+        approval_id = f"ap-{self.seed}-{self.counter}"
+        expires = self.clock() + timedelta(days=1)
+        payload = approval_payload(approval_id, "reviewer", proposal.proposal_digest,
+                                   proposal.partition, expires)
+        return Approval(approval_id, "reviewer", proposal.proposal_digest, proposal.partition,
+                        expires, self.keyring.sign(SIM_KEYS["reviewer"], payload))
 
-    def decide(self, proposal: Proposal):
-        if self.cfg.comparator == "human_only":
-            decision = self.controller.evaluate(proposal)
-            return decision if decision.route == Route.DENY else None
-        if self.cfg.comparator == "legacy_wilson_seeded":
-            return self.controller.evaluate(proposal)
-        return self.manager.evaluate(proposal)
+    # -- the host path -------------------------------------------------------------
 
     def handler(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         self.metrics.handler_calls += 1
         return {"receipt": dict(arguments)}
-
-    def redeem_pending(self) -> None:
-        """Tokens come due redeem_delay steps after issue; what changed in between shows."""
-        due = [item for item in self.pending_tokens if item[0] <= self.t]
-        self.pending_tokens = [item for item in self.pending_tokens if item[0] > self.t]
-        for _, token_id, decision_id, proposal, audited in due:
-            try:
-                self.gateway.execute(token_id, proposal)
-            except PermissionError:
-                self.metrics.stale_token_denials += 1
-                continue
-            self.metrics.tokens_consumed += 1
-            if audited:
-                self.metrics.audit_executions += 1
-            else:
-                self.metrics.autonomous_executions += 1
-            good, severe = self.draw_truth()
-            if not good:
-                self.metrics.failures_after_autonomy += 1
-                if self.first_bad_after_change is None and (self.defected or (
-                    self.cfg.shift_at is not None and self.t >= self.cfg.shift_at
-                )):
-                    self.first_bad_after_change = self.t
-            if severe:
-                self.metrics.severe_after_autonomy += 1
-            provenance = Provenance.AUDIT if audited else Provenance.AUTONOMOUS
-            if self.cfg.comparator == "legacy_wilson_seeded":
-                self.legacy_adjudicate(proposal, good, severe, autonomous=True)
-            else:
-                if severe:
-                    self.manager.record_severe(proposal.partition, provenance, "severe_outcome")
-                # the trial is the committed decision; its provenance (AUDIT or
-                # AUTONOMOUS) is derived from the decision's route (spec §7 rule 7)
-                self.shadow.freeze(decision_id, proposal)
-                self.schedule_label(
-                    decision_id, proposal.partition, proposal.proposal_digest, good
-                )
-            self.record_trace("redeem", proposal, None, True, good, severe)
 
     def legacy_adjudicate(self, proposal: Proposal, good: bool, severe: bool,
                           autonomous: bool) -> None:
@@ -450,28 +501,73 @@ class Simulation:
             autonomous=autonomous,
         )
 
-    def human_path(self, proposal: Proposal, decision: Decision | None) -> None:
-        """A human-routed proposal; `decision` is set when it is frozen as a SHADOW trial."""
-        good, severe = self.draw_truth()
-        shadow = decision is not None
-        trial_id = decision.decision_id if decision is not None else ""
-        if decision is not None:
-            # committed, then frozen: SHADOW is derived from the HUMAN_APPROVAL route
-            self.ledger.commit_decision(decision, proposal)
-            self.shadow.freeze(trial_id, proposal)
+    def deny(self, proposal: Proposal | None, reasons: tuple[str, ...],
+             route: Route | None = None) -> None:
+        self.metrics.policy_denials += 1
+        for reason in reasons:
+            self.metrics.denial_reasons[reason] = self.metrics.denial_reasons.get(reason, 0) + 1
+        if proposal is not None:
+            self.record_trace("deny", proposal, route, False, None, None, reasons=reasons)
+
+    def executed(self, step: ExecutionStep, proposal: Proposal, good: bool,
+                 severe: bool) -> None:
+        """An AUTONOMOUS or AUDIT step the gateway ran: count it and observe its outcome."""
+        assert step.decision is not None
+        audited = step.route == Route.AUDIT
+        if audited:
+            self.metrics.audit_executions += 1
+        else:
+            self.metrics.autonomous_executions += 1
+        if not good:
+            self.metrics.failures_after_autonomy += 1
+            if self.first_bad_after_change is None and (self.defected or (
+                self.cfg.shift_at is not None and self.t >= self.cfg.shift_at
+            )):
+                self.first_bad_after_change = self.t
+        if severe:
+            self.metrics.severe_after_autonomy += 1
+        if self.cfg.comparator == "legacy_wilson_seeded":
+            self.legacy_adjudicate(proposal, good, severe, autonomous=True)
+        else:
+            if severe:
+                provenance = Provenance.AUDIT if audited else Provenance.AUTONOMOUS
+                self.manager.record_severe(proposal.partition, provenance, "severe_outcome")
+            if audited:
+                # the loop froze it at commit, under the decision id; only its label is
+                # the oracle's to give. An AUTONOMOUS execution is not frozen (L6)
+                self.schedule_label(step.decision.decision_id, proposal.partition,
+                                    proposal.proposal_digest, good)
+        self.record_trace(step.route.value, proposal, step.route, True, good, severe,
+                          lower=step.decision.lower_bound)
+
+    def human_path(self, bundle: ProposalBundle, step: ExecutionStep, good: bool,
+                   severe: bool) -> None:
+        """A step awaiting approval: the reviewer rejects it or approves and re-runs it."""
+        assert step.decision is not None
+        proposal = bundle.proposals[0]
+        trial_id = step.decision.decision_id
+        trial = self.shadow.trial(trial_id)
+        frozen = trial is not None and trial.provenance == Provenance.SHADOW
+        if frozen:
+            # the loop froze it before the run returned to ask for approval (O-6)
             self.metrics.shadow_trials += 1
             self.schedule_label(trial_id, proposal.partition, proposal.proposal_digest, good)
         self.metrics.human_reviews += 1
         caught = (not good) and self.rng.random() < self.cfg.reviewer_catch
+        if frozen:
+            action = ReviewAction.REJECT if caught else ReviewAction.APPROVE
+            self.shadow.record_human_review(trial_id, "reviewer", action)
         if caught:
             self.metrics.human_rejections += 1
-            if shadow:
-                self.shadow.record_human_review(trial_id, "reviewer", ReviewAction.REJECT)
             self.record_trace("human_reject", proposal, Route.HUMAN_APPROVAL, False, good, severe)
             return
+        approved = self.execute(bundle, self.approval(proposal))
+        if not approved.executed:
+            self.metrics.approved_refused += 1
+            self.record_trace("approved_refused", proposal, approved.route, False, good, severe,
+                              reasons=(approved.error or "",))
+            return
         self.metrics.human_approved_executions += 1
-        self.metrics.handler_calls += 1  # a human-approved execution still runs the handler
-        self.metrics.tokens_consumed += 1  # through a human-approved token in the real loop
         if not good:
             self.metrics.failures_human_missed += 1
         if severe and self.cfg.comparator == "v2":
@@ -480,49 +576,46 @@ class Simulation:
             )
         elif self.cfg.comparator == "legacy_wilson_seeded":
             self.legacy_adjudicate(proposal, good, severe, autonomous=False)
-        if shadow:
-            self.shadow.record_human_review(trial_id, "reviewer", ReviewAction.APPROVE)
         self.record_trace("human_approve", proposal, Route.HUMAN_APPROVAL, True, good, severe)
 
     def step(self) -> None:
-        cfg = self.cfg
         self.step_burst()
-        self.redeem_pending()
         self.deliver_labels()
         self.maybe_release()
         self.maybe_churn()
 
-        proposal = self.next_proposal()
-        decision = self.decide(proposal)
-        if decision is None:
-            self.human_path(proposal, None)
+        arguments = self.next_draft()
+        good, severe = self.draw_truth()
+        try:
+            bundle = self.propose(arguments)
+        except ProposalGenerationError as exc:
+            # the host's registry refused the draft (e.g. an amount outside every envelope)
+            self.deny(None, (f"PROPOSER: {exc}",))
+            self.observe_state()
+            self.t += 1
+            return
+        proposal = bundle.proposals[0]
+        if proposal.partition != make_key(self.prompt_version, proposal.partition.risk_class):
+            raise AssertionError("the proposer's partition key drifted from make_key")
+        step = self.execute(bundle)
+        decision = step.decision
+        if step.executed:
+            self.executed(step, proposal, good, severe)
+        elif decision is None:
+            self.deny(proposal, (f"EXECUTOR: {step.error}",))  # refused before authority
         elif decision.route == Route.DENY:
-            self.metrics.policy_denials += 1
-            for reason in decision.reason_codes:
-                self.metrics.denial_reasons[reason] = self.metrics.denial_reasons.get(reason, 0) + 1
-            self.record_trace("deny", proposal, decision.route, False, None, None,
-                              reasons=decision.reason_codes)
-        elif decision.route in {Route.AUTONOMOUS, Route.AUDIT}:
-            # Committed before issue, as in the shipped loop: the gateway refuses a
-            # decision with no ledger record (v3 Step 04; closes one L6 difference)
-            self.ledger.commit_decision(decision, proposal)
-            try:
-                token = self.gateway.issue(
-                    decision, proposal, self.policy, principal_id=SIM_AGENT, grant_id=SIM_GRANT
-                )
-            except PermissionError:
-                self.metrics.issue_denials += 1
-                self.record_trace("issue_denied", proposal, decision.route, False, None, None)
-            else:
-                audited = decision.route == Route.AUDIT
-                self.pending_tokens.append(
-                    (self.t + cfg.redeem_delay, token.token_id, decision.decision_id,
-                     proposal, audited)
-                )
-                self.record_trace("issued", proposal, decision.route, False, None, None,
-                                  lower=decision.lower_bound)
+            self.deny(proposal, decision.reason_codes, decision.route)
+        elif decision.route == Route.HUMAN_APPROVAL:
+            self.human_path(bundle, step, good, severe)
+        elif step.error == "authorization withdrawn before redemption":
+            # issued and refused at redemption in the same run (a guard such as a budget);
+            # the shipped loop holds no token across steps
+            self.metrics.stale_token_denials += 1
+            self.record_trace("redeem_refused", proposal, decision.route, False, None, None)
         else:
-            self.human_path(proposal, decision if cfg.comparator == "v2" else None)
+            self.metrics.issue_denials += 1
+            self.record_trace("issue_denied", proposal, decision.route, False, None, None,
+                              reasons=(step.error or "",))
         self.observe_state()
         self.t += 1
 
@@ -539,6 +632,7 @@ class Simulation:
             self.metrics.qualified_before_turnover = self.qualified_this_epoch_at is not None
         old = self.key
         self.prompt_version = f"prop-p{self.metrics.turnovers + 1}"
+        self.proposer.prompt_version = self.prompt_version  # the new partition's key
         self.key = make_key(self.prompt_version, "low")
         self.manager.on_churn(old, self.key)
         self.qualified_this_epoch_at = None
@@ -608,6 +702,12 @@ class Simulation:
 
     def finish(self) -> RunMetrics:
         m = self.metrics
+        # the gateway's own record of tokens spent; handler_calls minus this is the number of
+        # effects that ran without one (unauthorized_side_effects)
+        m.tokens_consumed = self.db.connection().execute(
+            "SELECT COUNT(*) FROM tokens WHERE state IN"
+            " ('consumed', 'handler_started', 'handler_completed', 'handler_failed')"
+        ).fetchone()[0]
         for provenance in (Provenance.SHADOW,):
             counts = self.shadow.counts(self.key, provenance)
             m.shadow_positive += counts.positive

@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,approved_refused,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+legacy_wilson_seeded,legacy_wilson_seeded,1,400,True,0,,0,128,12,260,258,2,0,0,0,0,0,0,0,0,0,1,1,0,0,0,,398,398,suspended,239,,0,0.08571428571428572,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,2,400,True,0,,0,245,11,144,143,1,0,0,0,0,0,0,0,0,0,5,1,0,0,0,,399,399,suspended,355,,0,0.04296875,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,3,400,True,0,,0,379,21,0,0,0,0,0,0,0,0,0,0,0,0,4,0,0,0,0,,400,400,seeded_autonomous,500,,0,0.0525,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,4,400,True,0,,0,139,4,257,255,2,0,0,0,0,0,0,0,0,0,3,1,0,0,0,,398,398,suspended,242,,0,0.027972027972027972,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,5,400,True,0,,0,384,16,0,0,0,0,0,0,0,0,0,0,0,0,1,0,0,0,0,,400,400,seeded_autonomous,500,,0,0.04,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,6,400,True,0,,0,277,17,106,104,2,0,0,0,0,0,0,0,0,0,2,1,0,0,0,,398,398,suspended,393,,0,0.05782312925170068,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,7,400,True,0,,0,47,0,353,349,4,1,0,0,0,0,0,0,0,0,1,1,0,0,0,,396,396,suspended,146,,0,0.0,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,8,400,True,0,,0,380,20,0,0,0,0,0,0,0,0,0,0,0,0,2,0,0,0,0,,400,400,seeded_autonomous,500,,0,0.05,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,9,400,True,0,,0,383,17,0,0,0,0,0,0,0,0,0,0,0,0,3,0,0,0,0,,400,400,seeded_autonomous,500,,0,0.0425,,False,
+legacy_wilson_seeded,legacy_wilson_seeded,10,400,True,0,,0,48,3,349,347,2,1,0,0,0,0,0,0,0,0,1,1,0,0,0,,398,398,suspended,150,,0,0.058823529411764705,,False,

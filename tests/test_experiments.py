@@ -1,14 +1,18 @@
 """
 Step 08: the simulation harness is deterministic, starts at n=0, and reports the bad news.
-Reduced sizes keep the suite fast; the committed results/ use the full configs.
+v3 Step 09: it drives the shipped loop (ShippedLoopTests, criterion 1: the four L6
+differences are gone). Reduced sizes keep the suite fast; committed results use full configs.
 """
 
+import ast
 import csv
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
+import experiments.simulate
+from exe_auth_ctrl_loop import Provenance
 from experiments.run import CONFIG_DIR, load_config, main, run_scenario
 from experiments.simulate import ScenarioConfig, Simulation
 
@@ -32,10 +36,15 @@ class HarnessTests(unittest.TestCase):
         # tokens are redeemed, not mostly expired or withdrawn, in the benign scenario
         self.assertLess(metrics.stale_token_denials, metrics.tokens_consumed)
 
-    def test_outstanding_token_is_refused_after_a_suspension(self):
-        metrics = Simulation(small("delayed_defection", horizon=300), seed=1).run()
-        self.assertGreater(metrics.stale_token_denials, 0)
-        self.assertLess(metrics.stale_token_denials, metrics.tokens_consumed)
+    def test_every_token_is_spent_or_refused_in_the_step_it_is_issued(self):
+        # v3 Step 09: the shipped loop issues and redeems inside one run, so the harness no
+        # longer holds tokens across steps (its old redeem_delay). Revocation of an
+        # outstanding token is tested on the gateway itself (test_gateway_revocation.py).
+        sim = Simulation(small("risk_envelopes", horizon=300), seed=1)
+        metrics = sim.run()
+        issued = sim.db.connection().execute("SELECT COUNT(*) FROM tokens").fetchone()[0]
+        self.assertGreater(issued, 0)
+        self.assertEqual(issued, metrics.tokens_consumed + metrics.stale_token_denials)
 
     def test_below_threshold_never_qualifies(self):
         for seed in (1, 2, 3):
@@ -71,12 +80,81 @@ class HarnessTests(unittest.TestCase):
         metrics = Simulation(small("risk_envelopes"), seed=1).run()
         self.assertGreater(metrics.policy_denials, 0)
         reasons = set(metrics.denial_reasons)
-        self.assertTrue({"RISK_CLASS_MISMATCH", "NO_RISK_ENVELOPE"} & reasons, reasons)
+        # since v3 Step 09 an amount outside every envelope is refused by the shipped
+        # proposer, which derives the risk class from the host's envelopes; no proposal can
+        # carry a mislabelled class, so RISK_CLASS_MISMATCH no longer occurs
+        self.assertTrue(any(r.startswith("PROPOSER: no risk envelope") for r in reasons),
+                        reasons)
 
     def test_censoring_is_reported(self):
         metrics = Simulation(small("censoring"), seed=1).run()
         self.assertGreater(metrics.shadow_censored, 0)
         self.assertIsNotNone(metrics.censored_fraction)
+
+
+class ShippedLoopTests(unittest.TestCase):
+    """
+    Criterion 1: the harness drives the shipped loop, so each L6 difference is gone. One
+    test per difference, each failing on the v0.3.x harness.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.sim = Simulation(small("stable", horizon=200, audit_rate=0.2), seed=1)
+        cls.metrics = cls.sim.run()
+        cls.events = cls.sim.ledger.events
+
+    def test_autonomous_executions_are_not_frozen_or_labelled(self):
+        # L6 (1): the v0.3.x harness froze and labelled every autonomous execution
+        key = self.sim.key
+        self.assertGreater(self.metrics.autonomous_executions, 0)
+        self.assertEqual(self.sim.shadow.counts(key, Provenance.AUTONOMOUS).frozen, 0)
+        self.assertGreater(self.metrics.audit_executions, 0)
+        self.assertGreaterEqual(self.sim.shadow.counts(key, Provenance.AUDIT).frozen,
+                                self.metrics.audit_executions)
+
+    def test_decisions_are_committed_by_the_executor_hook(self):
+        # L6 (2): the harness committed decisions itself (or, before v3 Step 04, not at all)
+        loop = self.sim.loop
+        self.assertEqual(loop.executor.commit, loop.commit)
+        committed = [e for e in self.events if e.event_type == "authority.decision.committed"]
+        steps = [e for e in self.events if e.event_type == "execution.step.recorded"
+                 and e.payload["decision_id"] is not None]
+        self.assertEqual({e.payload["decision_id"] for e in committed},
+                         {e.payload["decision_id"] for e in steps})
+        self.assertGreater(len(committed), 0)
+
+    def test_audits_are_frozen_before_their_token(self):
+        # L6 (3): the harness froze audits after execution
+        recorded = {e.payload["decision_id"]: e.sequence for e in self.events
+                    if e.event_type == "execution.step.recorded"}
+        audits = [e for e in self.events if e.event_type == "shadow.frozen"
+                  and e.payload["provenance"] == "audit"]
+        self.assertGreater(len(audits), 0)
+        for frozen in audits:
+            self.assertLess(frozen.sequence, recorded[frozen.aggregate_id])
+
+    def test_human_approved_executions_go_through_the_gateway(self):
+        # L6 (4): the harness ran the handler and counted a token without the gateway
+        approved = self.sim.db.connection().execute(
+            "SELECT COUNT(*) FROM tokens WHERE approval_id IS NOT NULL"
+            " AND state = 'handler_completed'"
+        ).fetchone()[0]
+        self.assertGreater(self.metrics.human_approved_executions, 0)
+        self.assertEqual(approved, self.metrics.human_approved_executions)
+        self.assertEqual(self.metrics.unauthorized_side_effects, 0)
+
+    def test_the_harness_calls_no_authority_api_itself(self):
+        # every commit, freeze, issue, and redemption happens inside the shipped loop
+        tree = ast.parse(Path(experiments.simulate.__file__).read_text())
+        forbidden = {"commit_decision", "freeze", "issue", "redeem_remote", "accept_nonce",
+                     "publish", "commit"}
+        calls = [node.func for node in ast.walk(tree) if isinstance(node, ast.Call)
+                 and isinstance(node.func, ast.Attribute)]
+        self.assertEqual([c.attr for c in calls if c.attr in forbidden], [])
+        gateway_calls = [c.attr for c in calls if isinstance(c.value, ast.Attribute)
+                         and c.value.attr == "gateway"]
+        self.assertEqual(gateway_calls, [])
 
 
 class ArtifactTests(unittest.TestCase):

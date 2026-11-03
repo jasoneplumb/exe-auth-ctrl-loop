@@ -13,12 +13,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping
+from typing import TYPE_CHECKING, Any, Callable, Iterable, Mapping, Protocol
 
 from .authority import (
-    AuthorityController,
     Decision,
     ExecutionGateway,
+    Policy,
     Proposal,
     ProposalBundle,
     ProposalReadiness,
@@ -29,6 +29,20 @@ from .tools import ToolCatalog, ToolValidationError
 
 if TYPE_CHECKING:  # principals.py imports authority.py and ledger.py, not this module
     from .principals import Approval
+
+
+class Authority(Protocol):
+    """
+    intent: What the executor needs from whoever decides: one decision per operation, and
+            the policy its tokens are issued under
+    context: AuthorityController satisfies it, and so does LifecycleManager, which the
+             shipped loop uses to enforce lifecycle state on top (pipeline.py reads its
+             `state` when present)
+    """
+
+    policy: Policy
+
+    def evaluate(self, proposal: Proposal) -> Decision: ...
 
 
 class ExecutionStatus(str, Enum):
@@ -75,7 +89,7 @@ run; do not route around it."""
         self,
         model: str,
         prompt_version: str,
-        authority: AuthorityController,
+        authority: Authority,
         gateway: ExecutionGateway,
         catalog: ToolCatalog,
         client: Any | None = None,
