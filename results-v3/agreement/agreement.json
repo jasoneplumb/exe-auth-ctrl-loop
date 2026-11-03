@@ -1,0 +1,23 @@
+[
+  {
+    "agree": 50,
+    "config": "agree_fast_labels",
+    "mismatches": [],
+    "qualified": 39,
+    "sequences": 50
+  },
+  {
+    "agree": 50,
+    "config": "agree_delayed_labels",
+    "mismatches": [],
+    "qualified": 38,
+    "sequences": 50
+  },
+  {
+    "agree": 50,
+    "config": "agree_censored",
+    "mismatches": [],
+    "qualified": 35,
+    "sequences": 50
+  }
+]
