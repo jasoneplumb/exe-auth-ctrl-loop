@@ -159,16 +159,21 @@ A receiving server recomputes the call digest from the tool name and arguments i
 received. Edited arguments, a substituted tool, a forged or stripped signature, and an
 expired authorization each deny.
 
-Verification is stateless: the server does not redeem or consume the gateway token, so a
-block verifies again until it expires, even after its token has been consumed or revoked.
-The audit flag also tells the server, before execution, which calls are audited.
+On `mainline` (v3 Step 07, unreleased; extension `0.2`) the block also names the one server
+it is for (`audience`, signed), and the server spends it at the host before running anything:
+a call with effects is redeemed against the host's token table in one transaction, an
+effect-free call takes a single-use nonce. A replay, to the same server or another, is
+refused, and so is a block whose token a host event has revoked; the host never spends an
+MCP-bound token itself. In the released 0.3.1 (extension `0.1`) verification is stateless,
+so a block verifies again until it expires, even after its token has been consumed or
+revoked. The audit flag also tells the server, before execution, which calls are audited.
 
 See [docs/mcp-extension.md](docs/mcp-extension.md) for the key specification and the
 verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 
 ## Safety invariants
 
-1. **No capability, no execution.** A registered handler runs only after the gateway redeems a token for that exact proposal. On `mainline` (v3 Step 04, unreleased) handlers live in a `HandlerTable` that only the gateway holds, the gateway runs the handler named by the token it consumed (no caller supplies one), it issues only for a decision committed to the ledger, and the agent and proposer hold a `ToolCatalog` that cannot run anything; a reachability test finds no route to a handler from the agent, proposer, or pipeline except through the gateway. Two limits remain: in one Python process, code that inspects the interpreter (`gc.get_objects()`, frame inspection) can still reach any object, which only running the gateway in its own process closes; and the MCP binding still verifies a block without redeeming a token (v3 Step 07). In the released 0.3.1 the gateway runs whichever handler its caller passes and `ToolRegistry.execute` is public.
+1. **No capability, no execution.** A registered handler runs only after the gateway redeems a token for that exact proposal. On `mainline` (v3 Step 04, unreleased) handlers live in a `HandlerTable` that only the gateway holds, the gateway runs the handler named by the token it consumed (no caller supplies one), it issues only for a decision committed to the ledger, and the agent and proposer hold a `ToolCatalog` that cannot run anything; a reachability test finds no route to a handler from the agent, proposer, or pipeline except through the gateway. Two limits remain: in one Python process, code that inspects the interpreter (`gc.get_objects()`, frame inspection) can still reach any object, which only running the gateway in its own process closes; and a server holding the shared MCP signing secret could mint a block for another server (per-server keys are a production requirement). In the released 0.3.1 the gateway runs whichever handler its caller passes and `ToolRegistry.execute` is public.
 2. **Models do not grant authority.** OpenAI and Claude outputs are untrusted requests.
 3. **Exact scope.** A token records the proposal digest, tool, effects, policy version, partition, evidence id and version, and expiry, and is consumed once. Redemption always checks the digest, tool, effects, and expiry. It checks the policy version only when the gateway has a policy provider and the evidence id only when it has an evidence store, and it compares the evidence version only to decide whether a human approval saw the current snapshot. Single use is per token: one decision can be issued several tokens, and because `issue()` does not check that a decision came from the controller, any in-process caller holding one can mint more. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
 4. **No post-approval mutation.** Changed arguments or tools require a new proposal and decision.

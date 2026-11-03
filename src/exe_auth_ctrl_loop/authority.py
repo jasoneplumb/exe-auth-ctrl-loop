@@ -16,11 +16,12 @@ import json
 import math
 import random
 import secrets
+import sqlite3
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timedelta, timezone
 from enum import Enum
 from hashlib import sha256
-from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Mapping, NoReturn, Protocol, Sequence
 
 from .sequential import beta_mixture_lower_bound
 from .store import Store, partition_text, time_text
@@ -295,6 +296,9 @@ class AuthorizationToken:
     grant_id: str | None = None
     requesting_principal: str | None = None
     approval_id: str | None = None
+    # v3 Step 07: "mcp" tokens are redeemed only by the server named in mcp_audience
+    redemption_channel: str = "local"
+    mcp_audience: str | None = None
 
 
 class ProposalGuard(Protocol):
@@ -698,6 +702,7 @@ class ExecutionGateway:
         principal_id: str,
         grant_id: str,
         approval: Approval | None = None,
+        audience: str | None = None,
     ) -> AuthorizationToken:
         """
         intent: Mint a capability scoped to exactly the decision that justified it
@@ -726,6 +731,9 @@ class ExecutionGateway:
                     must be live, and every scope in the chain must admit this operation
                     (spec §8). The token records the grant and the principal, so
                     Principals.lineage(token_id) answers "on whose authority".
+        constraint: With `audience` (an active SERVICE principal: the MCP server that will
+                    receive the call), the token is bound to MCP: only that server redeems
+                    it (redeem_remote / accept_nonce) and execute() refuses it (spec §6).
         constraint: An `approval` replaces v0.3.1's `human_approved=True`. It must be an
                     active human's valid signature over this proposal's digest and
                     partition, unexpired and unrescinded, and it is used once: it is
@@ -784,9 +792,15 @@ class ExecutionGateway:
                 ).fetchone():
                     raise PermissionError("approval already used")
                 self.principals._record_approval(approval)  # gateway-only (see principals)
+            if audience is not None:
+                server = self.principals.principal(audience)
+                if server is None or not server.active or server.kind.value != "SERVICE":
+                    raise PermissionError(f"audience {audience!r} is not an active service")
             token = replace(
                 token, grant_id=grant_id, requesting_principal=principal_id,
                 approval_id=approval.approval_id if approval is not None else None,
+                redemption_channel="mcp" if audience is not None else "local",
+                mcp_audience=audience,
             )
             conn.execute(
                 f"INSERT INTO tokens ({_TOKEN_COLUMNS}) VALUES ({_TOKEN_PLACEHOLDERS})",
@@ -797,6 +811,7 @@ class ExecutionGateway:
                     token.evidence_version, time_text(token.expires_at),
                     int(token.human_approved), "issued", None, token.grant_id,
                     token.requesting_principal, token.approval_id, proposal_json(proposal),
+                    token.redemption_channel, token.mcp_audience,
                 ),
             )
         return token
@@ -824,31 +839,8 @@ class ExecutionGateway:
                     that stops inside the handler leaves `handler_started`, which
                     effect_unknown() reports and nothing re-runs.
         """
-        with self.store.transaction() as conn:
-            token = self.token(token_id)
-            consumed = conn.execute(
-                "UPDATE tokens SET state = 'consumed' WHERE token_id = ? AND state = 'issued'",
-                (token_id,),
-            ).rowcount
-            if token is None or consumed != 1:
-                if token is not None and token.state == "revoked":
-                    # effect: a revocation names the event that caused it (spec §5)
-                    raise PermissionError(
-                        f"missing, consumed, or revoked token: revoked by "
-                        f"{token.revocation_reason}"
-                    )
-                raise PermissionError("missing, consumed, or revoked token")
-            if self.clock() >= token.expires_at:
-                raise PermissionError("expired token")
-            if token.proposal_digest != proposal.proposal_digest:
-                raise PermissionError("proposal changed after authorization")
-            if token.allowed_tool != proposal.tool_name:
-                raise PermissionError("tool exceeds authorization")
-            if not proposal.requested_effects <= token.allowed_effects:
-                raise PermissionError("effect exceeds authorization")
-            blockers = self.redemption_blockers(token, proposal)
-            if blockers:
-                raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
+        with self.store.transaction():
+            token = self._consume(token_id, proposal, channel="local")
             # imported here: tools.py imports risk.py, which imports this module
             from .tools import ToolValidationError
 
@@ -861,6 +853,139 @@ class ExecutionGateway:
             # rolls the consume back too, instead of leaving a spent token unsettled.
             for guard in self.guards:
                 guard.commit(token, proposal)
+        return self._run(token_id, call)
+
+    def redeem_remote(
+        self,
+        token_id: str,
+        *,
+        audience: str,
+        call_digest: str,
+        handler: Callable[[], Any],
+    ) -> Any:
+        """
+        intent: The receiving MCP server spends a capability bound to it (spec §6 rules 2, 4)
+        method: One transaction, as execute(): the token must be MCP-bound to `audience`;
+                the call digest the server recomputed from what it received must match the
+                proposal stored with the token; then the conditional consume and every
+                redemption check, and the guards settle. The server's handler runs after
+                commit, between handler_started and handler_completed/handler_failed.
+        constraint: The host never consumes an MCP-bound token itself: execute() refuses
+                    it, so this is the only path that spends one.
+        """
+        with self.store.transaction():
+            proposal = self._stored_proposal(token_id)
+            from .mcp import call_digest as digest_of_call  # mcp.py imports this module
+
+            if digest_of_call(proposal.tool_name, proposal.parameters) != call_digest:
+                raise PermissionError("call does not match the authorized proposal")
+            token = self._consume(token_id, proposal, channel="mcp", audience=audience)
+            for guard in self.guards:
+                guard.commit(token, proposal)
+        return self._run(token_id, handler)
+
+    def accept_nonce(self, token_id: str, *, audience: str, call_digest: str) -> None:
+        """
+        intent: Accept an effect-free MCP call once, without spending the token (O-5)
+        method: One transaction (spec §6 rule 3): the token must be MCP-bound to
+                `audience`, still `issued`, unexpired, carry no effects, match the call,
+                and pass every redemption check; then a row in `nonces`, whose primary key
+                refuses a second presentation from any thread or process.
+        """
+        from .mcp import call_digest as digest_of_call  # mcp.py imports this module
+
+        with self.store.transaction() as conn:
+            proposal = self._stored_proposal(token_id)
+            if digest_of_call(proposal.tool_name, proposal.parameters) != call_digest:
+                raise PermissionError("call does not match the authorized proposal")
+            token = self._check(token_id, proposal, channel="mcp", audience=audience)
+            if token.allowed_effects:
+                raise PermissionError("a consequential call must be redeemed, not nonce-accepted")
+            try:
+                conn.execute("INSERT INTO nonces VALUES (?, ?, ?)",
+                             (token_id, audience, self.clock().isoformat()))
+            except sqlite3.IntegrityError as exc:
+                raise PermissionError("block already presented") from exc
+
+    def _consume(
+        self, token_id: str, proposal: Proposal, *, channel: str, audience: str | None = None,
+    ) -> AuthorizationToken:
+        """
+        intent: The single-use step shared by every way a token is spent
+        method: Channel and audience are checked before any write, so a token presented on
+                the wrong channel is refused without being spent. Then the conditional
+                update -- the only single-use guard -- and every redemption check; a
+                refusal raises inside the caller's transaction and rolls the consume back.
+        """
+        conn = self.store.connection()
+        token = self.token(token_id)
+        if token is not None:
+            self._check_channel(token, channel, audience)
+        consumed = conn.execute(
+            "UPDATE tokens SET state = 'consumed' WHERE token_id = ? AND state = 'issued'",
+            (token_id,),
+        ).rowcount
+        if token is None or consumed != 1:
+            self._refuse_state(token)
+        self._redemption_checks(token, proposal)
+        return token
+
+    def _check(
+        self, token_id: str, proposal: Proposal, *, channel: str, audience: str | None,
+    ) -> AuthorizationToken:
+        """Every redemption check without consuming: for the nonce path."""
+        token = self.token(token_id)
+        if token is None or token.state != "issued":
+            self._refuse_state(token)
+        self._check_channel(token, channel, audience)
+        self._redemption_checks(token, proposal)
+        return token
+
+    @staticmethod
+    def _check_channel(token: AuthorizationToken, channel: str, audience: str | None) -> None:
+        if token.redemption_channel != channel:
+            if token.redemption_channel == "mcp":
+                raise PermissionError(
+                    f"token is bound to MCP server {token.mcp_audience}; only it redeems"
+                )
+            raise PermissionError("token is not bound to MCP")
+        if channel == "mcp" and audience != token.mcp_audience:
+            raise PermissionError("block is for another server")
+
+    @staticmethod
+    def _refuse_state(token: AuthorizationToken | None) -> NoReturn:
+        if token is not None and token.state == "revoked":
+            # effect: a revocation names the event that caused it (spec §5)
+            raise PermissionError(
+                f"missing, consumed, or revoked token: revoked by {token.revocation_reason}"
+            )
+        raise PermissionError("missing, consumed, or revoked token")
+
+    def _redemption_checks(self, token: AuthorizationToken, proposal: Proposal) -> None:
+        if self.clock() >= token.expires_at:
+            raise PermissionError("expired token")
+        if token.proposal_digest != proposal.proposal_digest:
+            raise PermissionError("proposal changed after authorization")
+        if token.allowed_tool != proposal.tool_name:
+            raise PermissionError("tool exceeds authorization")
+        if not proposal.requested_effects <= token.allowed_effects:
+            raise PermissionError("effect exceeds authorization")
+        blockers = self.redemption_blockers(token, proposal)
+        if blockers:
+            raise PermissionError(f"authorization withdrawn: {', '.join(blockers)}")
+
+    def _stored_proposal(self, token_id: str) -> Proposal:
+        row = self.store.connection().execute(
+            "SELECT proposal FROM tokens WHERE token_id = ?", (token_id,)
+        ).fetchone()
+        if row is None:
+            raise PermissionError("missing, consumed, or revoked token")
+        if row[0] is None:
+            raise PermissionError("token predates stored proposals; it cannot be redeemed remotely")
+        return proposal_from_json(row[0])
+
+    def _run(self, token_id: str, call: Callable[[], Any]) -> Any:
+        """Run a consumed token's handler between its handler-state transitions."""
         self._advance(token_id, "consumed", "handler_started")
         try:
             result = call()
@@ -964,15 +1089,17 @@ class ExecutionGateway:
 _TOKEN_COLUMNS = (
     "token_id, decision_id, proposal_digest, allowed_tool, allowed_effects, partition,"
     " policy_version, evidence_id, evidence_version, expires_at, human_approved, state,"
-    " revocation_reason, grant_id, requesting_principal, approval_id, proposal"
+    " revocation_reason, grant_id, requesting_principal, approval_id, proposal,"
+    " redemption_channel, mcp_audience"
 )
+_PROPOSAL_COLUMN = 16
 _TOKEN_PLACEHOLDERS = ", ".join("?" for _ in _TOKEN_COLUMNS.split(","))
 
 
 def _token(row: tuple[Any, ...]) -> AuthorizationToken:
     (token_id, decision_id, proposal_digest, allowed_tool, effects, partition, policy_version,
      evidence_id, evidence_version, expires_at, human_approved, state, reason, grant_id,
-     requesting_principal, approval_id, _proposal) = row
+     requesting_principal, approval_id, _proposal, redemption_channel, mcp_audience) = row
     return AuthorizationToken(
         token_id=token_id,
         decision_id=decision_id,
@@ -992,6 +1119,8 @@ def _token(row: tuple[Any, ...]) -> AuthorizationToken:
         grant_id=grant_id,
         requesting_principal=requesting_principal,
         approval_id=approval_id,
+        redemption_channel=redemption_channel,
+        mcp_audience=mcp_audience,
     )
 
 
@@ -1006,5 +1135,7 @@ def _select_tokens(
     """
     rows = conn.execute(f"SELECT {_TOKEN_COLUMNS} FROM tokens WHERE {where}", tuple(params))
     return [
-        (_token(row), None if row[-1] is None else proposal_from_json(row[-1])) for row in rows
+        (_token(row), None if row[_PROPOSAL_COLUMN] is None
+         else proposal_from_json(row[_PROPOSAL_COLUMN]))
+        for row in rows
     ]

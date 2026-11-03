@@ -36,6 +36,7 @@ SEED = (
     "INSERT INTO risk_history (policy_version, partition, tool_name, token_id)"
     " VALUES ('r1', 'k', 'pay', 'tok')",
     "INSERT INTO decisions VALUES ('dec', 'digest', 'autonomous', 0)",
+    "INSERT INTO nonces VALUES ('tok', 'server-a', 't')",
 )
 
 

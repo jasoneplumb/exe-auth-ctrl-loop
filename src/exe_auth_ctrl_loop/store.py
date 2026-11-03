@@ -317,13 +317,51 @@ _SCHEMA_V5 = (
         BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
 )
 
+# v3 Step 07: MCP-bound tokens and the nonce path (docs/v3/spec.md §6)
+_SCHEMA_V6 = (
+    "ALTER TABLE tokens ADD COLUMN redemption_channel TEXT NOT NULL DEFAULT 'local'"
+    " CHECK (redemption_channel IN ('local', 'mcp'))",
+    "ALTER TABLE tokens ADD COLUMN mcp_audience TEXT",
+    """CREATE TABLE nonces (
+        token_id TEXT PRIMARY KEY,
+        audience TEXT NOT NULL,
+        presented_at TEXT NOT NULL
+    )""",
+    """CREATE TRIGGER nonces_no_update BEFORE UPDATE ON nonces
+        BEGIN SELECT RAISE(ABORT, 'nonces is append-only'); END""",
+    """CREATE TRIGGER nonces_no_delete BEFORE DELETE ON nonces
+        BEGIN SELECT RAISE(ABORT, 'nonces is append-only'); END""",
+    "DROP TRIGGER tokens_fixed",
+    """CREATE TRIGGER tokens_fixed BEFORE UPDATE ON tokens
+        WHEN NEW.token_id IS NOT OLD.token_id
+          OR NEW.decision_id IS NOT OLD.decision_id
+          OR NEW.proposal_digest IS NOT OLD.proposal_digest
+          OR NEW.allowed_tool IS NOT OLD.allowed_tool
+          OR NEW.allowed_effects IS NOT OLD.allowed_effects
+          OR NEW.partition IS NOT OLD.partition
+          OR NEW.policy_version IS NOT OLD.policy_version
+          OR NEW.evidence_id IS NOT OLD.evidence_id
+          OR NEW.evidence_version IS NOT OLD.evidence_version
+          OR NEW.expires_at IS NOT OLD.expires_at
+          OR NEW.human_approved IS NOT OLD.human_approved
+          OR NEW.grant_id IS NOT OLD.grant_id
+          OR NEW.requesting_principal IS NOT OLD.requesting_principal
+          OR NEW.approval_id IS NOT OLD.approval_id
+          OR NEW.proposal IS NOT OLD.proposal
+          OR NEW.redemption_channel IS NOT OLD.redemption_channel
+          OR NEW.mcp_audience IS NOT OLD.mcp_audience
+          OR (NEW.revocation_reason IS NOT OLD.revocation_reason
+              AND NOT (OLD.state = 'issued' AND NEW.state = 'revoked'))
+        BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
+)
+
 # constraint: every table whose rows are history, across all schema versions
-APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions")
+APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions", "nonces")
 
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
 MIGRATIONS: tuple[tuple[str, ...], ...] = (
-    _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5,
+    _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5, _SCHEMA_V6,
 )
 
 

@@ -52,6 +52,7 @@ from .lifecycle import LifecycleEvent, LifecycleManager, LifecycleState, Partiti
 from .mcp import (
     EXTENSION_PREFIX,
     EXTENSION_VERSION,
+    McpServer,
     MetaKeyError,
     MetaVerificationError,
     VerifiedAuthority,
@@ -132,6 +133,7 @@ __all__ = [
     "LifecycleManager",
     "LifecycleEvent",
     "MetaKeyError",
+    "McpServer",
     "MetaVerificationError",
     "OneOf",
     "OpenAIProposalGenerator",

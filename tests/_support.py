@@ -133,7 +133,8 @@ def commit(store: Store, decision, proposal) -> None:
         pass  # already committed: the primary key refused it and nothing was appended
 
 
-def issue(gateway, decision, proposal, policy, human_approved: bool = False):
+def issue(gateway, decision, proposal, policy, human_approved: bool = False,
+          audience: str | None = None):
     """
     Commit the decision, as the executor's hook does, then issue against it as the test
     agent under the test root grant; human_approved=True attaches a fresh signed approval.
@@ -142,7 +143,7 @@ def issue(gateway, decision, proposal, policy, human_approved: bool = False):
     principals_for(gateway.store)
     return gateway.issue(
         decision, proposal, policy, **AGENT,
-        approval=approve(proposal) if human_approved else None,
+        approval=approve(proposal) if human_approved else None, audience=audience,
     )
 
 
@@ -152,6 +153,7 @@ FAR = datetime(2100, 1, 1, tzinfo=timezone.utc)
 HUMANS = {"alice": "k-alice", "rev": "k-rev", "operator": "k-operator"}
 ORACLES = {"constraint-v1": "k-constraint", "reviewer": "k-reviewer", "sim-oracle": "k-sim"}
 MODELS = ("agent", "openai")
+MCP_SERVER = "mcp-server"  # a SERVICE principal: the receiving MCP server (v3 Step 07)
 ROOT_GRANT = "g-root"
 AGENT = {"principal_id": "agent", "grant_id": ROOT_GRANT}
 TEST_KEYRING = Keyring({
@@ -172,6 +174,7 @@ def principals_for(store: Store) -> Principals:
             principals.register(name, PrincipalKind.ORACLE, by="controller", key_id=key_id)
         for name in MODELS:
             principals.register(name, PrincipalKind.MODEL, by="controller")
+        principals.register(MCP_SERVER, PrincipalKind.SERVICE, by="controller")
         scope = GrantScope()
         mac = TEST_KEYRING.sign(
             HUMANS["alice"], root_grant_payload(ROOT_GRANT, "alice", "agent", scope, FAR)
