@@ -17,7 +17,9 @@ from _support import (
     principals_for,
     run,
     scratch_store,
+    trial,
 )
+from _support import label as support_label
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -415,7 +417,9 @@ class LifecycleInteractionTests(unittest.TestCase):
         self.clock = lambda: T0
         self.db = scratch_store()
         self.ledger = EventLedger(self.db)
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
+        self.shadow = ShadowEvidenceLog(
+            self.ledger, timedelta(hours=1), self.clock, principals=principals_for(self.db)
+        )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90, "high": .90}, 30, timedelta(days=30), 0.0)
         self.risk = RiskPolicy(  # scope only; budgets tested above
@@ -447,10 +451,9 @@ class LifecycleInteractionTests(unittest.TestCase):
     def qualify(self, risk_class, usd):
         for _ in range(60):
             p = self.proposal(usd, risk_class)
-            self.shadow.freeze(p.proposal_id, p, Provenance.SHADOW)
-            self.shadow.adjudicate(
-                p.proposal_id, p.partition, p.proposal_digest, TrialLabel.POSITIVE, ORACLE, T0,
-            )
+            trial(self.shadow, p.proposal_id, p, Provenance.SHADOW)
+            support_label(self.shadow, p.proposal_id, p.partition, p.proposal_digest,
+                          TrialLabel.POSITIVE, ORACLE, T0)
 
     def test_low_risk_autonomy_does_not_extend_to_the_high_envelope(self):
         self.qualify("low", usd=20)

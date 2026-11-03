@@ -8,20 +8,24 @@ Context: pipeline.py appends proposal and execution events, and wires the execut
 Pattern: Hash chain -- each event covers the previous event's hash, so altering any earlier
         entry invalidates every entry after it
 Future: Durable since v3 Step 02: events are rows of the append-only `ledger` table, so a
-        restart keeps them and UPDATE/DELETE are refused by the database. verify() still
-        proves internal consistency only -- someone who can write the file with the
-        triggers dropped can rewrite the chain or drop its tail and produce a chain that
-        verifies (C22). The keyed chain and the anchor table are v3 Step 08.
+        restart keeps them and UPDATE/DELETE are refused by the database. Since Step 08 the
+        chain is an HMAC under a key the host supplies (Store.ledger_key) and sequence
+        numbers must be contiguous, so someone who can rewrite the file but lacks the key
+        cannot edit or delete an event and re-hash what follows (C22). Tail truncation and
+        a rewrite by a key holder still verify; anchor() shows what a head held outside the
+        host would add, and holding it there is a production requirement.
 """
 
 from __future__ import annotations
 
+import hmac
 import json
 from dataclasses import dataclass
 from datetime import datetime
+from hashlib import sha256
 from typing import Any, Mapping
 
-from .authority import Decision, Proposal, digest, utcnow
+from .authority import Decision, Proposal, utcnow
 from .store import Store, canonical_json, time_text
 
 
@@ -132,7 +136,7 @@ class EventLedger:
             ).fetchone()
             sequence, previous = (head[0] + 1, head[1]) if head else (0, "GENESIS")
             stored = json.loads(encoded)
-            event_hash = digest(
+            event_hash = self._hash(
                 _body(sequence, event_type, aggregate_id, actor, when, stored, previous)
             )
             conn.execute(
@@ -147,20 +151,33 @@ class EventLedger:
     def verify(self) -> bool:
         """
         intent: Re-derive every hash and confirm the chain still holds
-        constraint: Detects edits to a retained chain. It cannot detect truncation of the
-                    tail or wholesale replacement, because a shorter chain re-derived from
-                    GENESIS is internally consistent -- that needs external anchoring.
+        method: Each hash is an HMAC under the store's ledger key (v3 Step 08), and sequence
+                numbers must run 0, 1, 2, ... with no gap
+        effect: An edit, an insertion, or an interior deletion is detected even if every
+                later hash is recomputed, unless whoever recomputed them holds the key (C22).
+        constraint: Still cannot detect truncation of the tail, or a whole chain rewritten
+                    by someone holding the key: a shorter chain from GENESIS is internally
+                    consistent. That needs an anchor held outside the host.
         """
         previous = "GENESIS"
-        for event in self.events:
+        for index, event in enumerate(self.events):
+            if event.sequence != index:
+                return False
             body = _body(
                 event.sequence, event.event_type, event.aggregate_id, event.actor,
                 event.occurred_at, event.payload, previous,
             )
-            if event.previous_hash != previous or event.event_hash != digest(body):
+            if (event.previous_hash != previous
+                    or not hmac.compare_digest(event.event_hash, self._hash(body))):
                 return False
             previous = event.event_hash
         return True
+
+    def _hash(self, body: Mapping[str, Any]) -> str:
+        """HMAC-SHA256 of the event body under the store's ledger key."""
+        return hmac.new(
+            self.store.ledger_key, canonical_json(dict(body)).encode(), sha256
+        ).hexdigest()
 
     def commit_decision(self, decision: Decision, proposal: Proposal) -> LedgerEvent:
         """

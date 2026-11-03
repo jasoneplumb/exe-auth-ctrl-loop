@@ -1,32 +1,54 @@
 # Gate report — Step 08
 
-**Status:** pre-registered. Criteria fixed at Step 00 (2026-11-01) before any work; to be filled in when the step ends. A criterion may be tightened at Step 01 but not loosened without the owner's recorded decision.
+**Status:** completed 2026-11-03. Criteria were pre-registered at Step 00 (2026-11-01) before any work and are reported unchanged.
 
 **Step objective:** Evidence admission (serves F3; see `docs/v3/plan.md` §4).
 
-**Branch / SHA:** —
+**Branch / SHA:** `feat/v3-step-08-evidence` from `mainline` @ `3bab431`; Step 08 `decca99`, PR #39 review fixes follow. Issue #38.
 
 **Reviewer:** (pending, one person decides)
 
-**Date / environment:** —
+**Date / environment:** 2026-11-03, macOS (Darwin 25.6.0), Python 3.14.8, SQLite 3.54.1
 
 | Acceptance criterion | PASS / FAIL / NOT RUN / UNKNOWN | Evidence |
 |---|---|---|
-| 1. Provenance derived from the committed decision; no API accepts it as an argument | NOT RUN | |
-| 2. Shipped loop freezes every human-routed proposal on a non-autonomous partition as `SHADOW` before approval is requested; a partition reaches `AUTONOMOUS` from `n=0` through `CrossModelAuthorityLoop` with fake providers, no harness code (closes C5 caveat, L6 first difference) | NOT RUN | |
-| 3. Labels: bad MAC, unregistered or inactive oracle, `WRONG_ORACLE`, `REVIEWER_IS_ORACLE` each quarantined and ledgered | NOT RUN | |
-| 4. Deadline on `received_at`; a backdated `claimed_at` cannot admit a late label | NOT RUN | |
-| 5. Ledger: HMAC chain, contiguous sequence check; the C22 re-hash attack without the key is detected | NOT RUN | |
-| 6. Replay of the append-only tables reproduces counts and quarantines exactly | NOT RUN | |
-| 7. Global gate passes | NOT RUN | |
-| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | NOT RUN | |
+| 1. Provenance derived from the committed decision; no API accepts it as an argument | PASS | `shadow.py`: `freeze(decision_id, proposal)` reads the `decisions` row and the token's approval; `_provenance` maps AUDIT/AUTONOMOUS to themselves, HUMAN_APPROVAL to SHADOW, an approval-backed token to HUMAN_APPROVED. `test_evidence_admission.py::DerivedProvenanceTests`: no write method of the log, the loop's `commit`, or `SignedLabel` has a provenance parameter, and v0.3.1's three-argument call raises `TypeError`; each route gives its provenance (result, row, and ledger payload); approval-backed is recorded and never counted; uncommitted → `NOT_COMMITTED`, DENY → `NOT_TRIALABLE`, other content under the same id → `DIGEST_MISMATCH`; a proposal counts once per epoch (`DUPLICATE_PROPOSAL`), again after a new epoch |
+| 2. Shipped loop freezes every human-routed proposal on a non-autonomous partition as `SHADOW` before approval is requested; a partition reaches `AUTONOMOUS` from `n=0` through `CrossModelAuthorityLoop` with fake providers, no harness code (closes C5 caveat, L6 first difference) | PASS | `pipeline.py` `commit()`. `ShippedLoopTests::test_a_partition_reaches_autonomy_from_zero_through_the_shipped_loop`: empty store, `LifecycleManager` as the executor's authority, lifecycle-guarded gateway, fake Claude; the test never calls `freeze`, `publish`, or `put`; its only outside input is the oracle's signed labels. Each run is HUMAN_APPROVAL / `AWAITING_APPROVAL`, with `decision.committed` < `shadow.frozen` < `execution.step.recorded`; SHADOW trials frozen = human-routed proposals (none skipped); the first AUTONOMOUS run executes unapproved. `test_an_approved_rerun_...`: the approved re-run executes, freezes nothing, is quarantined `DUPLICATE_PROPOSAL`, count stays 1 |
+| 3. Labels: bad MAC, unregistered or inactive oracle, `WRONG_ORACLE`, `REVIEWER_IS_ORACLE` each quarantined and ledgered | PASS | `SignedLabelTests`, each asserting the result, the `quarantines` row, the `shadow.quarantined` ledger event, an unchanged count, and a still-pending trial: verdict changed after signing and another oracle's key (`BAD_SIGNATURE`; the genuine label then lands); unknown id, a HUMAN with a valid key of its own, a deactivated oracle (`ORACLE_NOT_REGISTERED`); another oracle and the same oracle at another version after the first label bound the epoch (`WRONG_ORACLE`); `change_oracle` opens an epoch bound to the new oracle, the old oracle is then `WRONG_ORACLE`, `alpha_ledger` has one `ORACLE_CHANGED` row with the policy's α, and rebinding is refused; the reviewer of a trial (`REVIEWER_IS_ORACLE`), but the same oracle labels a trial it did not review |
+| 4. Deadline on `received_at`; a backdated `claimed_at` cannot admit a late label | PASS | `ReceiptTimeTests`: claimed 5 minutes after freeze, received after 3 hours → `LATE_LABEL`, trial censored, counted inconclusive; claimed 9 days ahead, received after 10 minutes → admitted, with `claimed_at` and `resolved_at` (receipt) both stored and both in the ledger payload |
+| 5. Ledger: HMAC chain, contiguous sequence check; the C22 re-hash attack without the key is detected | PASS | `ledger.py` `_hash` (HMAC-SHA256 under `Store.ledger_key`) and `verify()` (sequence = index). `test_audit_commitment.py::ChainLimitTests`: interior edit with a suffix re-hashed under plain SHA-256 or a guessed key fails `verify()`; interior deletion with a re-hashed suffix fails even under the real key (gap); a key holder's re-hashed edit passes (documented limit); truncation and wholesale rewrite by a key holder still pass `verify()` and fail `verify_anchor()` (unchanged limits). `KeyedLedgerTests`: the same file under another key fails `verify()`; the key's bytes are absent from the database, `-wal`, and `-shm` files; deleting a negative label and renumbering plus re-hashing without the key fails `verify()` and `replay()` refuses it; with the key the rewrite passes (stated limit) |
+| 6. Replay of the append-only tables reproduces counts and quarantines exactly | PASS | `ReplayTests`: one history with four provenances, all three label values, seven quarantine reasons (`BAD_SIGNATURE`, `WRONG_ORACLE`, `ORACLE_NOT_REGISTERED`, `REVIEWER_IS_ORACLE`, `LATE_LABEL`, `DUPLICATE_TRIAL`, `NOT_COMMITTED`), two epochs with two oracle bindings, and deadline expiry; after replay into an empty store, every row of `trials`, `labels`, `epochs`, `epoch_oracles`, `quarantines` is equal, as are `quarantines()`, counts for every provenance, the snapshot, and every trial's status. `test_shadow_evidence.py` replay test also compares quarantines |
+| 7. Global gate passes | PASS | below |
+| Global quality gate: `ruff check .`, `mypy src`, `pytest -q`, three offline examples | PASS (local, Python 3.14.8 only) | ruff clean; mypy 0 issues in 15 files; 375 passed, 120 subtests (after the review fixes); `example.py`, `denials.py`, `mcp_demo.py` exit 0 (`live_example.py` compiles; it needs API keys) |
+| Mutation check (v3 plan §5 rule) | PASS | 14 mutations, each applied alone and each failing the named tests: loop skips HUMAN_APPROVAL freezes (2 failures); provenance ignores approvals (1); no MAC check (1); inactive oracle accepted (1); any principal kind may label (1); no `WRONG_ORACLE` check (1); `change_oracle` does not bind (1); no `REVIEWER_IS_ORACLE` check (1); deadline on `claimed_at` (2); unkeyed SHA-256 hash (4); no contiguity check (1); replay drops quarantines (1); replay drops oracle bindings (1); no `DUPLICATE_PROPOSAL` check (1) |
 
-**Design and statistical assumptions:** —
+**Experiment reproduction:** canonical hash `4cc7a0e38ed7d60dd064fbf8b62fa6f3b04864c9b8c6aaa1fd131d6ea6785ea6`, identical to Steps 06 and 07. The harness now supplies a ledger key, commits human-path decisions before freezing them, freezes by decision id (provenance derived), and delivers labels signed by `sim-oracle`. These add ledger events and change trial ids but no count, ordering, or timing the metrics read. `results/` remains the v0.3.x artifacts until Step 09 (owner decision at Step 06).
 
-**Limitations / deviations:** —
+**Owner decisions recorded:**
+- **Ledger key on the Store** (owner decision, recorded 2026-11-03): `Store(path, *, ledger_key=...)` is required and the key is never written to the file. It defends against someone who can write the database file, not against the host or same-process code holding the `Store`, which can append through the API or re-hash a rewritten chain. Stated in `docs/v3/threat-model.md` (Ledger row, TM-19), SECURITY.md, and README invariant 12.
+- **First admitted label binds an unbound epoch** (implementer's stated assumption; owner not asked): an epoch opened without an explicit binding (epoch 0, a human release) is bound to the oracle of its first *admitted* label (`shadow.oracle_bound` event). `change_oracle()` binds the new epoch explicitly at its opening (spec §7 rule 11). A label refused before the binding check (bad MAC, unregistered, reviewer) binds nothing. For the owner to confirm or replace with explicit binding at every epoch opening.
 
-**Unexpected behavior / open risks:** —
+**Design and statistical assumptions:**
+- **The trial is the decision.** `trial_id = decision_id`. Provenance comes from the `decisions` row (route) and the `tokens` row (approval). The shipped loop freezes at commit, before issue, so an approved re-run of a frozen proposal makes a SHADOW-routed decision that is refused `DUPLICATE_PROPOSAL`. HUMAN_APPROVED arises only where a decision's token was issued on an approval before the freeze.
+- **Admission order** in `adjudicate`: trial exists, partition, digest, active ORACLE principal, MAC, still pending, reviewer ≠ labeller, bound oracle, receipt after freeze, receipt within deadline (a late label censors). Identity is checked before the trial's status, so an unauthenticated label cannot change it or learn whether it is labelled; it can still learn whether a trial id exists (`UNKNOWN_TRIAL`), which is refused and ledgered like any other request.
+- **Reviewer separation** is read from the ledger: a `shadow.human_review` event for the trial with the labeller as actor.
+- **α per epoch** (rule 12): `release` and `change_oracle` write an `alpha_ledger` row with the epoch, its floor sequence, and the policy's α. Epoch 0 (registration) has no row: rule 12 names the two openings. The table is append-only and is not rebuilt by `replay()` (lifecycle state, not evidence).
+- **Withholding** (plan bullet, O-3) is unchanged: pending trials stay outside `n` until the deadline. Step 09 decides it.
 
-**Decision:** —
+**Limitations / deviations:**
+- **Derived tables are not chained.** Counts are read from `trials` and `labels`, which append-only triggers protect only against the API. Someone who can write the file can drop the triggers and edit them without touching the ledger. Replaying the verified ledger and comparing would reveal it, but nothing compares them automatically. Stated in TM-19, SECURITY.md, README.
+- **Truncation and key holders** remain undetected by `verify()` (C22 residue); anchoring outside the host is still a production requirement.
+- **Harness differences** (experiments/README.md): it commits decisions itself rather than through the executor; it freezes human-routed proposals on AUTONOMOUS partitions too; audits are still frozen after execution and every autonomous execution is labelled. Step 09 replaces the harness.
+- **Budget:** the plan allows 5 source and test files; this step touched 6 source files (`shadow.py`, `ledger.py`, `store.py`, `lifecycle.py`, `pipeline.py`, `__init__.py`) and 15 test files. Most test edits are mechanical: a required `ledger_key`, required `principals=`, and the new `freeze`/`adjudicate` signatures, through the new helpers `shadow_log`, `trial`, `sign_label`, `label`, `rehash_chain`, and `replay` in `tests/_support.py`. Also `experiments/simulate.py`, four examples, README, SECURITY.md, `experiments/README.md`, `docs/v3/threat-model.md`, and this report.
+- **Assertion changes (criterion 5, anticipated by the tests' own comment):** the two ChainLimitTests that pinned "rehashed suffix passes verify" now assert it fails without the key, and a new test pins that it passes for a key holder. Truncation and wholesale rewrite are unchanged. No other assertion was weakened. `test_store.py` gains one test (a key is required) and seeds the three new tables.
+- **API changes:** `Store(..., ledger_key=)` and `ShadowEvidenceLog(..., principals=)` required; `freeze(decision_id, proposal)`; `adjudicate(SignedLabel)`; `replay(..., principals=)`; `change_oracle(key, Oracle, *, by)`; `open_epoch` returns the floor sequence. New exports: `SignedLabel`, `label_payload`.
+- Python 3.10/3.13 not run locally; CI covers them.
 
-**Next permitted step (GO only):** —
+**Review (PR #39):** verdict COMMENT, no blocking issues; three minor findings, all addressed. (1) `replay()` reading `claimed_at` from a pre-Step-08 label event: unreachable, because such a ledger is chained with unkeyed SHA-256 and fails `verify()` first; documented in the docstring, and `test_a_ledger_chained_before_step_08_is_refused` pins it. (2) The empty-database guard now lists every table replay writes (`epoch_oracles`, `quarantines` added); `test_replay_refuses_a_database_holding_any_table_it_writes` fails with the old guard. (3) `_record_alpha` writes inside `with self.db.transaction()`, joining the epoch opening explicitly.
+
+**Unexpected behavior / open risks:**
+- Two errors in my own first draft of `test_evidence_admission.py`, caught before commit: the WRONG_ORACLE helper asserted zero decisive labels after one had legitimately been admitted, and the "interior deletion" test deleted the last event, which is truncation (a known limit), not an interior deletion. Both tests were corrected; no code defect.
+
+**Decision: GO** (recommended; reviewer to confirm)
+
+**Next permitted step (GO only):** Step 09, statistical evaluation, only on explicit request.

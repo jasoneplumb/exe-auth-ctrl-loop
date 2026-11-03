@@ -40,8 +40,11 @@ proposal = Proposal(
 )
 # Authority state is durable since v3: evidence lives in a database file. A throwaway
 # directory keeps this demo self-contained; a deployment passes a real path.
+# The ledger key keys the hash chain (v3 Step 08); this one is example-only, and a
+# deployment supplies its own secret from outside the database file.
+LEDGER_KEY = b"example-only-ledger-key"
 _scratch = tempfile.TemporaryDirectory()
-evidence = EvidenceStore(Store(Path(_scratch.name) / "authority.db"))
+evidence = EvidenceStore(Store(Path(_scratch.name) / "authority.db", ledger_key=LEDGER_KEY))
 evidence.put(EvidenceSnapshot(
     "ev-88", 4, key, 297, 3, now - timedelta(days=14), now,
 ))

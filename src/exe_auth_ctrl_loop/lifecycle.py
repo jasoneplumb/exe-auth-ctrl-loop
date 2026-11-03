@@ -37,7 +37,7 @@ from .authority import (
 )
 from .principals import Principals, release_payload
 from .revocation import LINEAGE_DESCENDANTS, revoke, successor_key
-from .shadow import Provenance, ShadowEvidenceLog
+from .shadow import Oracle, Provenance, ShadowEvidenceLog
 from .store import partition_text
 
 
@@ -287,8 +287,9 @@ class LifecycleManager:
             actor, release_payload(key, record.epoch, reason), mac
         ):
             raise PermissionError("release needs a valid signature from an active human")
-        self.shadow.open_epoch(key)
+        floor = self.shadow.open_epoch(key)
         record.epoch += 1
+        self._record_alpha(key, record, floor, "HUMAN_RELEASE")
         record.lineage_suspended = False
         if record.state == LifecycleState.SUSPENDED:
             record.suspension_reason = None
@@ -326,9 +327,7 @@ class LifecycleManager:
                 # did not inherit at creation; flag it now
                 self._suspend_lineage(new, successor, [partition_text(old)])
 
-    def change_oracle(
-        self, key: PartitionKey, oracle_id: str, oracle_version: str, *, by: str
-    ) -> None:
+    def change_oracle(self, key: PartitionKey, oracle: Oracle, *, by: str) -> None:
         """
         intent: Move a partition to a new oracle without pooling its labels with the old
                 one's (O-2, O-9; RV-04)
@@ -343,10 +342,13 @@ class LifecycleManager:
             record = self._require(key)
             if record.retired or record.state == LifecycleState.SUSPENDED:
                 raise ValueError("a retired or suspended partition cannot change oracle")
-            self.shadow.open_epoch(key)
+            floor = self.shadow.open_epoch(key)
             record.epoch += 1
+            # spec §7 rule 11: the new epoch is bound to the new oracle at its opening
+            self.shadow.bind_oracle(key, oracle)
+            self._record_alpha(key, record, floor, "ORACLE_CHANGED")
             self._move(key, record, E.ORACLE_CHANGED,
-                       (f"ORACLE:{oracle_id}@{oracle_version}", f"BY:{by}"))
+                       (f"ORACLE:{oracle.oracle_id}@{oracle.oracle_version}", f"BY:{by}"))
             self._sync_store(key, record)
 
     def _retire_policy_version(self, old_version: str, policy: Policy) -> list[str]:
@@ -428,6 +430,24 @@ class LifecycleManager:
         finally:
             self._in_label = False
             self._deferred.clear()
+
+    def _record_alpha(
+        self, key: PartitionKey, record: PartitionRecord, floor: int, reason: str
+    ) -> None:
+        """
+        intent: Every epoch opening is on the record with the α it starts with (spec §7 rule
+                12), so a reset of counts is never a silent reset of the error budget
+        constraint: Joins the caller's transaction (the epoch opening), so the row and the
+                    opening commit or roll back together; the table is append-only, so a
+                    row committed on its own could never be withdrawn (PR #39 review)
+        """
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO alpha_ledger (partition, epoch, floor_sequence, alpha, reason,"
+                " opened_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (partition_text(key), record.epoch, floor, self.policy.alpha, reason,
+                 self.clock().isoformat()),
+            )
 
     def _suspended_predecessors(self, key: PartitionKey) -> list[str]:
         rows = self.db.connection().execute(

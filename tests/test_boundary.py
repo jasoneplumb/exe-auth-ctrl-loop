@@ -15,7 +15,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from _support import AGENT, gateway_store, scratch_store
+from _support import AGENT, gateway_store, principals_for, scratch_store
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -131,7 +131,7 @@ class Loop:
         self.pipeline = CrossModelAuthorityLoop(
             proposer=self.proposer, executor=self.agent, ledger=self.ledger,
             policy_version="pol1", environment_version="prod1",
-            shadow=ShadowEvidenceLog(self.ledger),
+            shadow=ShadowEvidenceLog(self.ledger, principals=principals_for(db)),
         )
 
     def leaks(self, *roots: object) -> list[object]:

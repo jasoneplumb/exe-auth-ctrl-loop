@@ -2,13 +2,23 @@
 
 from __future__ import annotations
 
+import hmac
 import secrets
 import sqlite3
 import tempfile
-from datetime import datetime, timezone
+from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+from hashlib import sha256
 from pathlib import Path
 from typing import Callable, Sequence
 
+from exe_auth_ctrl_loop.authority import (
+    Decision,
+    ExecutionGateway,
+    Policy,
+    Route,
+    utcnow,
+)
 from exe_auth_ctrl_loop.ledger import EventLedger, LedgerEvent
 from exe_auth_ctrl_loop.principals import (
     Approval,
@@ -20,7 +30,12 @@ from exe_auth_ctrl_loop.principals import (
     release_payload,
     root_grant_payload,
 )
+from exe_auth_ctrl_loop.shadow import ShadowEvidenceLog, SignedLabel, label_payload
 from exe_auth_ctrl_loop.store import Store, canonical_json, time_text
+
+# The ledger key every test store uses (v3 Step 08: the hash chain is keyed). Subprocess
+# workers that cannot import this module use the same literal.
+TEST_LEDGER_KEY = b"test-ledger-key"
 
 # Every store opened through scratch_store(), closed after each test by conftest.py.
 OPEN: list[tuple[Store, tempfile.TemporaryDirectory[str]]] = []
@@ -29,7 +44,7 @@ OPEN: list[tuple[Store, tempfile.TemporaryDirectory[str]]] = []
 def scratch_store() -> Store:
     """A fresh database file in its own temporary directory, removed after the test."""
     directory = tempfile.TemporaryDirectory()
-    store = Store(Path(directory.name) / "authority.db")
+    store = Store(Path(directory.name) / "authority.db", ledger_key=TEST_LEDGER_KEY)
     OPEN.append((store, directory))
     return store
 
@@ -67,6 +82,35 @@ def rewrite_events(ledger: EventLedger, events: Sequence[LedgerEvent]) -> None:
         )
         for sql in triggers:
             conn.execute(sql)
+
+
+def rehash_chain(events: list[LedgerEvent], start: int, key: bytes | None = None,
+                 renumber: bool = False) -> None:
+    """
+    Recompute every hash from `start` on, in place, as someone who can rewrite the file
+    can. key=None is an attacker without the ledger key, who can only guess the hash
+    function (plain SHA-256, v0.3.1's); pass a key to model a guess or a key holder.
+    renumber=True also closes sequence gaps, as hiding a deletion requires (v3 Step 08).
+    """
+    # the body mirrors EventLedger.append/verify; a schema change there must land here
+    previous = events[start - 1].event_hash if start else "GENESIS"
+    for index in range(start, len(events)):
+        event = events[index]
+        sequence = index if renumber else event.sequence
+        body = canonical_json({
+            "sequence": sequence,
+            "event_type": event.event_type,
+            "aggregate_id": event.aggregate_id,
+            "actor": event.actor,
+            "occurred_at": event.occurred_at.isoformat(),
+            "payload": event.payload,
+            "previous_hash": previous,
+        }).encode()
+        event_hash = (sha256(body).hexdigest() if key is None
+                      else hmac.new(key, body, sha256).hexdigest())
+        events[index] = replace(event, sequence=sequence, previous_hash=previous,
+                                event_hash=event_hash)
+        previous = event_hash
 
 
 def forge_token(store: Store, token_id: str, **columns: object) -> None:
@@ -206,3 +250,67 @@ def release(manager, key, actor: str, reason: str) -> None:
     mac = (TEST_KEYRING.sign(HUMANS[actor], release_payload(key, epoch, reason))
            if actor in HUMANS else "")
     manager.release(key, actor, reason, mac)
+
+
+
+# -- evidence admission (v3 Step 08) --------------------------------------------------------
+
+_ROUTE_FOR = {"shadow": "human_approval", "autonomous": "autonomous", "audit": "audit",
+              "human_approved": "human_approval"}
+
+
+def shadow_log(ledger, deadline=None, clock=None):
+    """A ShadowEvidenceLog on `ledger` with the test principals (oracles, reviewers)."""
+    return ShadowEvidenceLog(ledger, deadline or timedelta(days=1), clock or utcnow,
+                             principals=principals_for(ledger.store))
+
+
+def trial(log, trial_id: str, proposal, provenance="shadow"):
+    """
+    Freeze a trial the way the host does: commit a decision whose route gives the wanted
+    provenance (SHADOW <- HUMAN_APPROVAL, AUTONOMOUS, AUDIT), then freeze it. A
+    HUMAN_APPROVED trial also gets a token issued on a signed approval, since an approval
+    record is what makes a decision human-approved.
+    """
+    provenance = getattr(provenance, "value", provenance)
+    route = Route(_ROUTE_FOR[provenance])
+    decision = Decision(trial_id, proposal.proposal_id, proposal.proposal_digest, None, None,
+                        None, .9, route, (), 0.0, None, log.clock())
+    commit(log.store, decision, proposal)
+    if provenance == "human_approved":
+        gateway = ExecutionGateway(log.clock, handlers=AdapterHandlers(),
+                                   **gateway_store(log.store))
+        policy = Policy(proposal.partition.policy_version, {}, 1, timedelta(days=1), 0.0)
+        gateway.issue(decision, proposal, policy, **AGENT, approval=approve(proposal))
+    return log.freeze(trial_id, proposal)
+
+
+def sign_label(trial_id, partition, proposal_digest, value, oracle, claimed_at=None):
+    """A SignedLabel signed with the test key of `oracle.oracle_id` (empty MAC if unknown)."""
+    claimed_at = claimed_at or datetime.now(timezone.utc)
+    key_id = ORACLES.get(oracle.oracle_id)
+    payload = label_payload(trial_id, partition, proposal_digest, value, oracle, claimed_at)
+    mac = TEST_KEYRING.sign(key_id, payload) if key_id else ""
+    return SignedLabel(trial_id, partition, proposal_digest, value, oracle, claimed_at, mac)
+
+
+def label(log, trial_id, partition, proposal_digest, value, oracle, at=None):
+    """Adjudicate a signed label, as if the host received it at `at` (default: now)."""
+    signed = sign_label(trial_id, partition, proposal_digest, value, oracle, at)
+    if at is None:
+        return log.adjudicate(signed)
+    clock = log.clock
+    log.clock = lambda: at
+    try:
+        return log.adjudicate(signed)
+    finally:
+        log.clock = clock
+
+
+def replay(ledger, into: Store, *args):
+    """
+    ShadowEvidenceLog.replay(ledger, into, ...) with bare principals on `into`: replay needs
+    an empty database and rebuilds evidence, not identities, so none are registered.
+    """
+    return ShadowEvidenceLog.replay(ledger, into, *args,
+                                    principals=Principals(into, TEST_KEYRING))

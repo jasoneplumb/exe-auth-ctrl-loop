@@ -16,9 +16,10 @@ from typing import Any, Iterable, Mapping
 from .authority import Decision, Proposal, ProposalBundle, Route
 from .executor import ClaudeExecutionAgent, ExecutionRun
 from .ledger import EventLedger
+from .lifecycle import LifecycleState
 from .principals import Approval
 from .providers import OpenAIProposalGenerator
-from .shadow import Provenance, ShadowEvidenceLog
+from .shadow import Reason, ShadowEvidenceLog
 
 
 @dataclass
@@ -52,12 +53,30 @@ class CrossModelAuthorityLoop:
                 an optional slot that expires to a failure would punish not auditing.
         constraint: A freeze the log refuses raises, so the executor refuses the step --
                     an audit without a frozen target is not an audit.
+        effect: Since v3 Step 08 (spec §7 rule 10, O-6), every HUMAN_APPROVAL-routed
+                proposal on a partition that is not AUTONOMOUS is also frozen, as SHADOW,
+                here: after the decision is on the record and before the executor returns
+                to ask a human. Nothing in that class is skipped, so no one chooses which
+                proposals become evidence (A3). This is how a partition earns autonomy from
+                n=0 in the shipped loop. A proposal already frozen in this epoch (an approved
+                re-run of it) is refused as DUPLICATE_PROPOSAL and is not an error.
         """
         self.ledger.commit_decision(decision, proposal)
-        if self.shadow is not None and decision.route == Route.AUDIT:
-            result = self.shadow.freeze(decision.decision_id, proposal, Provenance.AUDIT)
+        if self.shadow is None:
+            return
+        if decision.route == Route.AUDIT:
+            result = self.shadow.freeze(decision.decision_id, proposal)
             if not result.accepted:
                 raise RuntimeError(f"audit trial not frozen: {result.reason}")
+        elif decision.route == Route.HUMAN_APPROVAL and not self._autonomous(proposal):
+            result = self.shadow.freeze(decision.decision_id, proposal)
+            if not result.accepted and result.reason is not Reason.DUPLICATE_PROPOSAL:
+                raise RuntimeError(f"shadow trial not frozen: {result.reason}")
+
+    def _autonomous(self, proposal: Proposal) -> bool:
+        """Whether the partition is AUTONOMOUS, by the executor's lifecycle if it has one."""
+        state = getattr(self.executor.authority, "state", None)
+        return state is not None and state(proposal.partition) is LifecycleState.AUTONOMOUS
 
     def propose(
         self,

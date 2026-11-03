@@ -60,6 +60,21 @@ the host to spend an MCP-bound token itself. Out of scope, and stated as a
 limit: one shared secret signs blocks for every server, so a server holding it
 could mint a block for another; per-server keys are a production requirement.
 
+On `mainline` (v3 Step 08, unreleased) also in scope: any way to freeze a trial
+with a provenance other than the one its committed decision gives, to skip
+freezing a human-routed proposal on a non-autonomous partition, to count one
+proposal twice in an epoch, to admit a label not signed by an active oracle
+principal, from an oracle other than the one bound to the trial's epoch, from
+the principal that reviewed the trial, or received after the deadline (whatever
+time the labeller claims), and, for someone who can write the database file but
+does not hold the ledger key, any way to edit, insert, or delete a ledger event
+and have `verify()` still pass. Out of scope, and stated as limits: the ledger
+key is held by the `Store`, so the host and any code in its process can append
+through the ledger API or re-hash a rewritten chain; `verify()` does not detect
+truncation of the tail without an anchor held outside the host; and the tables
+counts are read from are not chained (a replay from a verified ledger rebuilds
+them for comparison, and nothing compares them automatically).
+
 Also in scope: any way for a human review to create, alter, discard, or relabel
 a frozen shadow trial; any path to `AUTONOMOUS` other than `QUALIFYING` on a
 met gate; any way to clear a suspension without a recorded human release; any

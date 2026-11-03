@@ -19,7 +19,9 @@ from _support import (
     principals_for,
     run,
     scratch_store,
+    trial,
 )
+from _support import label as support_label
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -404,7 +406,9 @@ class LifecycleGuardTests(unittest.TestCase):
         self.clock = Clock()
         self.db = scratch_store()
         self.ledger = EventLedger(self.db)
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
+        self.shadow = ShadowEvidenceLog(
+            self.ledger, timedelta(hours=1), self.clock, principals=principals_for(self.db)
+        )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         self.controller = AuthorityController(
@@ -438,8 +442,8 @@ class LifecycleGuardTests(unittest.TestCase):
             self.counter += 1
             p = replace(self.proposal(key), proposal_id=f"p-{self.counter}")
             tid = f"t-{self.counter}"
-            self.shadow.freeze(tid, p, Provenance.SHADOW)
-            self.shadow.adjudicate(tid, key, p.proposal_digest, label, ORACLE, self.clock.now)
+            trial(self.shadow, tid, p, Provenance.SHADOW)
+            support_label(self.shadow, tid, key, p.proposal_digest, label, ORACLE)
 
     def autonomous_token(self):
         self.add(60)

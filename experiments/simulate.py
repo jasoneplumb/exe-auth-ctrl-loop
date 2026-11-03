@@ -25,6 +25,7 @@ from typing import Any, Mapping
 from exe_auth_ctrl_loop import (
     AuthorityController,
     Bound,
+    Decision,
     EventLedger,
     EvidenceSnapshot,
     EvidenceStore,
@@ -51,10 +52,12 @@ from exe_auth_ctrl_loop import (
     Route,
     SequenceBudget,
     ShadowEvidenceLog,
+    SignedLabel,
     Store,
     ToolCatalog,
     ToolDefinition,
     TrialLabel,
+    label_payload,
 )
 from exe_auth_ctrl_loop.principals import release_payload, root_grant_payload
 
@@ -65,6 +68,9 @@ SIM_KEYS = {"operator": "k-operator", "reviewer": "k-reviewer", "sim-oracle": "k
 SIM_AGENT = "agent"
 SIM_GRANT = "g-sim"
 SIM_GRANT_EXPIRY = datetime(2100, 1, 1, tzinfo=timezone.utc)
+# The ledger key a simulation run supplies (v3 Step 08). A fixed value keeps runs
+# reproducible; a deployment supplies its own secret and never commits it.
+SIM_LEDGER_KEY = b"sim-ledger-key"
 
 
 @dataclass(frozen=True)
@@ -223,7 +229,7 @@ class Simulation:
         # One database per run, in a throwaway directory removed when the run object is
         # collected. Every component shares it, as the lifecycle requires.
         directory = tempfile.TemporaryDirectory()
-        self.db = Store(Path(directory.name) / "run.db")
+        self.db = Store(Path(directory.name) / "run.db", ledger_key=SIM_LEDGER_KEY)
         weakref.finalize(self, _discard, self.db, directory)
         self.ledger = EventLedger(self.db)
         # Principals (v3 Step 05): fixed simulation keys; the operator grants the agent
@@ -243,7 +249,8 @@ class Simulation:
         )
         self.store = EvidenceStore(self.db)
         self.shadow = ShadowEvidenceLog(
-            self.ledger, timedelta(minutes=cfg.label_deadline), self.clock
+            self.ledger, timedelta(minutes=cfg.label_deadline), self.clock,
+            principals=self.principals,
         )
         self.policy = Policy(
             "pol1", {"low": cfg.required_low, "high": cfg.required_high}, cfg.n_min,
@@ -289,7 +296,8 @@ class Simulation:
                 "seeded", 1, self.key, cfg.seeded_successes, cfg.seeded_failures, T0, T0,
             ))
 
-        self.pending_tokens: list[tuple[int, str, Proposal, bool]] = []
+        # (due step, token id, decision id, proposal, audited)
+        self.pending_tokens: list[tuple[int, str, str, Proposal, bool]] = []
         self.pending_labels: list[tuple[int, str, PartitionKey, str, TrialLabel]] = []
         self.in_burst = False
         self.qualified_at: int | None = None
@@ -371,7 +379,14 @@ class Simulation:
         due = [item for item in self.pending_labels if item[0] <= self.t]
         self.pending_labels = [item for item in self.pending_labels if item[0] > self.t]
         for _, trial_id, key, digest, label in due:
-            self.shadow.adjudicate(trial_id, key, digest, label, ORACLE, self.clock())
+            # signed by the registered oracle (v3 Step 08); it claims the time it labels,
+            # and the host's receipt time, the same instant here, is what admission uses
+            claimed_at = self.clock()
+            payload = label_payload(trial_id, key, digest, label, ORACLE, claimed_at)
+            mac = self.keyring.sign(SIM_KEYS[ORACLE.oracle_id], payload)
+            self.shadow.adjudicate(
+                SignedLabel(trial_id, key, digest, label, ORACLE, claimed_at, mac)
+            )
 
     # -- the host path -------------------------------------------------------------
 
@@ -391,7 +406,7 @@ class Simulation:
         """Tokens come due redeem_delay steps after issue; what changed in between shows."""
         due = [item for item in self.pending_tokens if item[0] <= self.t]
         self.pending_tokens = [item for item in self.pending_tokens if item[0] > self.t]
-        for _, token_id, proposal, audited in due:
+        for _, token_id, decision_id, proposal, audited in due:
             try:
                 self.gateway.execute(token_id, proposal)
             except PermissionError:
@@ -412,14 +427,17 @@ class Simulation:
             if severe:
                 self.metrics.severe_after_autonomy += 1
             provenance = Provenance.AUDIT if audited else Provenance.AUTONOMOUS
-            trial_id = f"x-{proposal.proposal_id}"
             if self.cfg.comparator == "legacy_wilson_seeded":
                 self.legacy_adjudicate(proposal, good, severe, autonomous=True)
             else:
                 if severe:
                     self.manager.record_severe(proposal.partition, provenance, "severe_outcome")
-                self.shadow.freeze(trial_id, proposal, provenance)
-                self.schedule_label(trial_id, proposal.partition, proposal.proposal_digest, good)
+                # the trial is the committed decision; its provenance (AUDIT or
+                # AUTONOMOUS) is derived from the decision's route (spec §7 rule 7)
+                self.shadow.freeze(decision_id, proposal)
+                self.schedule_label(
+                    decision_id, proposal.partition, proposal.proposal_digest, good
+                )
             self.record_trace("redeem", proposal, None, True, good, severe)
 
     def legacy_adjudicate(self, proposal: Proposal, good: bool, severe: bool,
@@ -432,11 +450,15 @@ class Simulation:
             autonomous=autonomous,
         )
 
-    def human_path(self, proposal: Proposal, shadow: bool) -> None:
+    def human_path(self, proposal: Proposal, decision: Decision | None) -> None:
+        """A human-routed proposal; `decision` is set when it is frozen as a SHADOW trial."""
         good, severe = self.draw_truth()
-        if shadow:
-            trial_id = f"s-{proposal.proposal_id}"
-            self.shadow.freeze(trial_id, proposal, Provenance.SHADOW)
+        shadow = decision is not None
+        trial_id = decision.decision_id if decision is not None else ""
+        if decision is not None:
+            # committed, then frozen: SHADOW is derived from the HUMAN_APPROVAL route
+            self.ledger.commit_decision(decision, proposal)
+            self.shadow.freeze(trial_id, proposal)
             self.metrics.shadow_trials += 1
             self.schedule_label(trial_id, proposal.partition, proposal.proposal_digest, good)
         self.metrics.human_reviews += 1
@@ -444,9 +466,7 @@ class Simulation:
         if caught:
             self.metrics.human_rejections += 1
             if shadow:
-                self.shadow.record_human_review(
-                    f"s-{proposal.proposal_id}", "reviewer", ReviewAction.REJECT
-                )
+                self.shadow.record_human_review(trial_id, "reviewer", ReviewAction.REJECT)
             self.record_trace("human_reject", proposal, Route.HUMAN_APPROVAL, False, good, severe)
             return
         self.metrics.human_approved_executions += 1
@@ -461,9 +481,7 @@ class Simulation:
         elif self.cfg.comparator == "legacy_wilson_seeded":
             self.legacy_adjudicate(proposal, good, severe, autonomous=False)
         if shadow:
-            self.shadow.record_human_review(
-                f"s-{proposal.proposal_id}", "reviewer", ReviewAction.APPROVE
-            )
+            self.shadow.record_human_review(trial_id, "reviewer", ReviewAction.APPROVE)
         self.record_trace("human_approve", proposal, Route.HUMAN_APPROVAL, True, good, severe)
 
     def step(self) -> None:
@@ -477,7 +495,7 @@ class Simulation:
         proposal = self.next_proposal()
         decision = self.decide(proposal)
         if decision is None:
-            self.human_path(proposal, shadow=False)
+            self.human_path(proposal, None)
         elif decision.route == Route.DENY:
             self.metrics.policy_denials += 1
             for reason in decision.reason_codes:
@@ -498,12 +516,13 @@ class Simulation:
             else:
                 audited = decision.route == Route.AUDIT
                 self.pending_tokens.append(
-                    (self.t + cfg.redeem_delay, token.token_id, proposal, audited)
+                    (self.t + cfg.redeem_delay, token.token_id, decision.decision_id,
+                     proposal, audited)
                 )
                 self.record_trace("issued", proposal, decision.route, False, None, None,
                                   lower=decision.lower_bound)
         else:
-            self.human_path(proposal, shadow=cfg.comparator == "v2")
+            self.human_path(proposal, decision if cfg.comparator == "v2" else None)
         self.observe_state()
         self.t += 1
 

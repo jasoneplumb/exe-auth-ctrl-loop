@@ -11,7 +11,7 @@ Changes to `docs/v2/threat-model.md` that v3 targets. Rows not listed are unchan
 | Oracle | Fallible; identity and timestamps asserted by the caller | Fallible but authenticated: registered `ORACLE` principal, MAC-signed labels, host-stamped receipt time (Step 08) |
 | Human reviewer / approver | Fallible; approval is a boolean, release takes any name | Authenticated `HUMAN` principal; approval and release are MAC-signed records (Step 05) |
 | MCP server | Holds the shared secret; verifies statelessly | Registered `SERVICE` principal and audience; redeems consequential calls against the host token table (Step 07) |
-| Ledger | In-memory, unkeyed hash | Append-only table, HMAC chain under a host key, contiguous sequence, append-only anchor table (Step 08) |
+| Ledger | In-memory, unkeyed hash | Append-only table, HMAC chain under a host key, contiguous sequence, append-only anchor table (Step 08). The key is passed to `Store(path, ledger_key=...)` and never written to the file (owner decision, Step 08): it defends against someone who can write the database file, not against the host or same-process code holding the `Store` |
 
 ## Threats: changed rows
 
@@ -33,10 +33,12 @@ Changes to `docs/v2/threat-model.md` that v3 targets. Rows not listed are unchan
 | TM-16 | Agent invokes a handler directly | Handlers only in the gateway's table; tool chosen from the token (Step 04) | Interpreter reflection in the same process (spec §4.3); closed only by process separation |
 | TM-17 | Unrecorded permission change | Every permission change is one of six ledger event types; no API path without one (Step 05) | Direct database writes by the host |
 | TM-18 | Issuance on a fabricated decision | `issue()` requires a matching committed `decisions` row (Step 04) | None within the trust boundary |
+| TM-19 | Ledger rewrite by someone who can write the database file (C22) | HMAC chain under a key the file does not hold; contiguous sequence check; a re-hashed edit, insertion, or deletion fails `verify()` and `replay()` refuses it (Step 08) | Tail truncation (needs an anchor held outside the host); any rewrite by a key holder (the host, same-process code holding the `Store`); direct edits to the derived tables (trials, labels), which are not chained and are detected only by comparing them with a replay of the verified ledger |
+| TM-20 | Provenance asserted by the caller | Provenance derived from the committed decision's route and approval record; no API takes it (Step 08) | A host that commits a decision with a false route |
 
 ## Unsupported adversaries (unchanged, restated)
 
-A compromised host, operator, or anyone with write access to the database file or the host keys; collusion between distinct principals; side channels; denial of service; real-world validity of oracle labels beyond their declared scope; adversaries on other hosts.
+A compromised host, operator, or anyone holding the host keys (the ledger key included); anyone with write access to the database file, except for the ledger chain itself (TM-19); collusion between distinct principals; side channels; denial of service; real-world validity of oracle labels beyond their declared scope; adversaries on other hosts.
 
 ## Prototype versus production (replaces the v2 table)
 
@@ -45,7 +47,7 @@ A compromised host, operator, or anyone with write access to the database file o
 | Token single use | Thread lock on a dict | Durable conditional update, cross-process and restart | Cross-host store |
 | Execution boundary | Convention | Handlers unreachable through any supplied object | Separate process or host for the gateway |
 | Evidence store | In memory | Durable, append-only | Replication |
-| Ledger | In-memory hash chain | Keyed chain, append-only anchor table | Anchor held outside the host |
+| Ledger | In-memory hash chain | Keyed chain (key held by the `Store`, not the file), contiguous sequence, append-only anchor table | Anchor held outside the host; key held outside the authority process |
 | Identity | None | Principals with HMAC keys | Asymmetric keys, external identity provider |
 | Audit randomness | `SystemRandom` | Unchanged | Auditable CSPRNG with committed seed |
 | Suspension lineage | In memory, `on_churn` only | Durable, every successor | |
