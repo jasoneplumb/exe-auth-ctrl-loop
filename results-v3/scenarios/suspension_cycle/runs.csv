@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,approved_refused,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+suspension_cycle,v2,1,400,True,54,,0,56,5,339,250,4,0,0,0,85,0,339,167,4,2,3,3,3,2,2,,311,311,SUSPENDED,148,0.902193,0,0.08196721311475409,0.0058997050147492625,False,
+suspension_cycle,v2,2,400,True,54,,0,73,3,324,235,3,2,0,0,86,0,324,5,0,2,2,2,3,3,1,,311,311,QUALIFYING,5,0.414968,0,0.039473684210526314,0.006172839506172839,False,
+suspension_cycle,v2,3,400,True,54,,0,60,2,338,270,13,1,0,0,55,0,338,203,9,2,1,1,2,2,0,,332,332,QUALIFYING,212,0.892596,0,0.03225806451612903,0.005917159763313609,False,
+suspension_cycle,v2,4,400,True,127,,0,65,0,335,296,11,0,0,0,28,0,335,170,7,2,3,1,1,1,0,,361,361,QUALIFYING,177,0.889796,0,0.0,0.005970149253731343,False,
+suspension_cycle,v2,5,400,True,303,,0,87,2,311,264,11,1,0,0,36,0,311,165,5,2,2,1,2,1,0,,353,353,SUSPENDED,166,0.901971,0,0.02247191011235955,0.006430868167202572,False,
+suspension_cycle,v2,6,400,True,164,,0,37,2,361,296,7,1,0,0,58,0,361,29,1,2,3,2,2,2,1,,335,335,QUALIFYING,30,0.761042,0,0.05128205128205128,0.00554016620498615,False,
+suspension_cycle,v2,7,400,True,164,,0,97,3,300,265,8,1,0,0,27,0,300,105,2,0,1,1,1,1,1,,365,365,AUTONOMOUS,110,0.903969,0,0.03,0.0,False,
+suspension_cycle,v2,8,400,True,84,,0,89,3,308,270,9,0,0,0,29,0,308,185,8,2,1,1,1,1,0,,362,362,QUALIFYING,193,0.890447,0,0.03260869565217391,0.006493506493506494,False,
+suspension_cycle,v2,9,400,True,54,,0,44,2,354,259,12,1,0,0,83,0,354,143,8,2,3,2,3,3,1,,305,305,QUALIFYING,151,0.862523,0,0.043478260869565216,0.005649717514124294,False,
+suspension_cycle,v2,10,400,True,84,,0,112,12,276,241,7,0,0,0,28,0,276,126,4,2,4,1,1,1,0,,365,365,QUALIFYING,130,0.889838,0,0.0967741935483871,0.007246376811594203,False,

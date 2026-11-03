@@ -1,0 +1,139 @@
+{
+  "defaults": {
+    "alpha": 0.05,
+    "cost_p": 0.97,
+    "deadline": 250,
+    "horizon": 400,
+    "n_min": 30,
+    "r": 0.9,
+    "sequences": 1000
+  },
+  "families": [
+    {
+      "name": "delayed_negatives",
+      "question": "Does label-dependent latency inflate false authorization, and does counting pending trials as failures restore it to at most alpha?",
+      "base": {
+        "p": 0.9
+      },
+      "grid": {
+        "negative_delay": [
+          0,
+          10,
+          50,
+          200
+        ],
+        "pending": [
+          "deadline",
+          "pessimistic"
+        ]
+      },
+      "pre_registered": true
+    },
+    {
+      "name": "adversarial_censoring",
+      "question": "Can a labeller who controls which trials resolve raise the bound?",
+      "base": {
+        "p": 0.9
+      },
+      "grid": {
+        "censor_target": [
+          "negatives",
+          "positives",
+          "random"
+        ],
+        "censor_action": [
+          "inconclusive",
+          "withhold"
+        ],
+        "pending": [
+          "deadline",
+          "pessimistic"
+        ]
+      },
+      "pre_registered": true
+    },
+    {
+      "name": "correlated_failures",
+      "question": "How far does correlation within blocks (A1 violated) push false authorization above alpha, and does block-level counting recover it, at what cost?",
+      "base": {
+        "p": 0.9
+      },
+      "grid": {
+        "block_size": [
+          1,
+          5,
+          20
+        ],
+        "rho": [
+          0.0,
+          0.1,
+          0.3,
+          0.6
+        ],
+        "counting": [
+          "trial",
+          "block"
+        ]
+      },
+      "pre_registered": true
+    },
+    {
+      "name": "repeated_epochs",
+      "question": "Lifetime false authorization per lineage with per-epoch alpha (L11) versus lineage-level alpha spending.",
+      "base": {
+        "p": 0.89
+      },
+      "grid": {
+        "epochs": [
+          1,
+          3,
+          10
+        ],
+        "epoch_alpha": [
+          "per_epoch",
+          "lineage"
+        ]
+      },
+      "pre_registered": true
+    },
+    {
+      "name": "error_budget",
+      "question": "Family-wise false authorization across K partitions with per-partition alpha (C12) versus a declared-K Bonferroni split versus online alpha spending by registration order.",
+      "base": {
+        "p": 0.89
+      },
+      "grid": {
+        "partitions": [
+          1,
+          10,
+          100
+        ],
+        "partition_alpha": [
+          "per_partition",
+          "bonferroni",
+          "online"
+        ]
+      },
+      "pre_registered": true
+    },
+    {
+      "name": "symmetric_delays",
+      "pre_registered": false,
+      "question": "Added at Step 09, not pre-registered: what pessimistic pending costs when positive labels are as late as negative ones (the pre-registered delayed_negatives family delays negatives only, so it cannot show this cost).",
+      "base": {
+        "p": 0.9
+      },
+      "grid": {
+        "label_delay": [
+          2,
+          10,
+          50
+        ],
+        "pending": [
+          "deadline",
+          "pessimistic"
+        ]
+      }
+    }
+  ]
+}

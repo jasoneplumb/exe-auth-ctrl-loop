@@ -85,6 +85,7 @@ def summarize(cfg: ScenarioConfig, rows: list[dict[str, Any]]) -> dict[str, Any]
         "failures_human_missed_total": total("failures_human_missed"),
         "policy_denials_total": total("policy_denials"),
         "issue_denials_total": total("issue_denials"),
+        "approved_refused_total": total("approved_refused"),
         "stale_token_denials_total": total("stale_token_denials"),
         "shadow_trials_total": total("shadow_trials"),
         "shadow_censored_total": total("shadow_censored"),

@@ -114,16 +114,16 @@ Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ 
 
 ## 11. Decisions
 
-O-1, O-2, O-5, O-6, O-7, O-9 are closed and written into the rules above (§2 rule 5, §5 RV-04, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 wait on Step 09.
+O-1, O-2, O-5, O-6, O-7, O-9 are closed and written into the rules above (§2 rule 5, §5 RV-04, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 were closed on 2026-11-03 from the Step 09 measurements (`docs/v3/gates/step-09.md`, criterion 4). They are not yet in `src/`: each becomes a `Policy` field and therefore a policy-version change (issue #43).
 
 | ID | Statement |
 |---|---|
 | O-1 | **Closed 2026-11-01 (owner): durable, same process.** Not: full service separation; in-process without durability; staged tiers. |
 | O-2 | **Closed 2026-11-01 (owner): new epoch, counts reset.** Each epoch is bound to one oracle; a change opens a new epoch (§7 rules 11–12). Extended at Step 01 by O-9 (RV-04), which the original decision did not include. Not: oracle fields in `PartitionKey`; pooling with a per-oracle report. |
-| O-3 | Open until Step 09. Pending trials: **count as failures until resolved (pessimistic)** (recommended, if Step 09 confirms) vs. outside `n` until the deadline (v0.3.1). |
-| O-4 | Open until Step 09. Multiplicity: **online α spending by partition registration order, recorded in `alpha_ledger`** (recommended) vs. fixed Bonferroni with a declared K in the policy. |
+| O-3 | **Closed 2026-11-03 (owner), from Step 09: pessimistic.** A pending trial counts in `n` from freezing and as a failure until an admitted `POSITIVE`. Valid whatever is delayed or withheld (`statistical-method.md` §11.2); measured false authorization ≤ 0.012 against 0.39–1.0 for the deadline-only rule. The accepted cost is liveness: oracle latency becomes an operational requirement (53 % of good partitions qualify within 400 trials when all labels are 10 steps late). Not: deadline-only (v0.3.1); both modes selectable per policy. |
+| O-4 | **Closed 2026-11-03 (owner), from Step 09: online α spending by registration order**, partition k getting α·6/(π²k²), recorded in `alpha_ledger`. Measured family-wise false authorization 0.001 at K = 100 against 0.261 with per-partition α; median trials to qualify 296 against 126. Not: Bonferroni with a declared K; per-partition α (C12). |
 | O-5 | **Closed 2026-11-01 (owner): nonce-only allowed** for non-consequential MCP calls (§6 rule 3). Not: redemption for every call; verify-only with replay until expiry. |
 | O-6 | **Closed 2026-11-01 (owner): freeze every one** (§7 rule 10). Not: a host-drawn shadow rate; per-partition operator opt-in. |
 | O-7 | **Closed 2026-11-01 (owner): remove in-memory classes in 0.4.0** (§2 rule 5). Not: deprecated shims for one release; a permanent in-memory backend. |
-| O-8 | Open until Step 09. Repeated epochs (L11): **lineage-level α spending across releases** (recommended, if Step 09 confirms) vs. per-epoch α with lifetime rate reported only. |
+| O-8 | **Closed 2026-11-03 (owner), from Step 09: lineage spending across epochs**, epoch e getting α·6/(π²e²) of the partition's budget, recorded in `alpha_ledger`. It compounds with O-4: partition k's epoch e gets α·(6/π²)²/(k²e²). Measured lifetime false authorization 0.006 over 10 epochs against 0.039; median trials 224 against 126. Not: per-epoch α with the lifetime rate reported only; lineage spending not compounded with O-4. |
 | O-9 | **Closed 2026-11-01 (owner), raised at Step 01 review: approve RV-04 as written.** An oracle change (O-2) synchronously revokes the partition's evidence-based tokens; approval-based tokens are kept, as for `GATE_LOST`. Not: revoke every token; no event, leaving it to redemption-time gate recomputation. |

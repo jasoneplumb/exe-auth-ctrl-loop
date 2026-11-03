@@ -1,0 +1,11 @@
+scenario,comparator,seed,horizon,qualified,time_to_authority,qualified_before_turnover,turnovers,autonomous_executions,audit_executions,human_reviews,human_approved_executions,human_rejections,failures_human_missed,policy_denials,issue_denials,approved_refused,stale_token_denials,shadow_trials,shadow_positive,shadow_negative,shadow_censored,failures_after_autonomy,severe_after_autonomy,suspensions,releases,requalifications,intervention_delay,handler_calls,tokens_consumed,final_state,final_n,final_lower_bound,unauthorized_side_effects,audit_overhead,censored_fraction,tta_censored,denial_reasons
+audit_rate_20,v2,1,400,False,,,0,0,0,400,380,20,3,0,0,0,0,400,375,23,2,0,0,0,0,0,,380,380,QUALIFYING,398,0.891695,0,,0.005,True,
+audit_rate_20,v2,2,400,False,,,0,0,0,400,223,16,2,0,0,161,0,400,380,18,2,0,0,1,0,0,,223,223,SUSPENDED,231,0.888292,0,,0.005,True,
+audit_rate_20,v2,3,400,False,,,0,0,0,400,377,23,2,0,0,0,0,400,374,24,2,0,0,0,0,0,,377,377,QUALIFYING,398,0.888424,0,,0.005,True,
+audit_rate_20,v2,4,400,True,164,,0,6,2,392,159,15,0,0,0,218,0,392,374,16,2,2,1,1,0,0,,167,167,SUSPENDED,165,0.901422,0,0.25,0.00510204081632653,False,
+audit_rate_20,v2,5,400,True,261,,0,110,19,271,262,9,2,0,0,0,0,271,260,11,0,5,0,0,0,0,,391,391,AUTONOMOUS,290,0.904825,0,0.14728682170542637,0.0,False,
+audit_rate_20,v2,6,400,True,261,,0,20,7,373,251,14,1,0,0,108,0,373,356,15,2,1,1,1,0,0,,278,278,SUSPENDED,268,0.902822,0,0.25925925925925924,0.005361930294906166,False,
+audit_rate_20,v2,7,400,False,,,0,0,0,400,379,21,2,0,0,0,0,400,375,23,2,0,0,0,0,0,,379,379,QUALIFYING,398,0.891695,0,,0.005,True,
+audit_rate_20,v2,8,400,True,198,,0,48,10,342,328,14,1,0,0,0,0,342,327,15,0,3,0,0,0,0,,386,386,AUTONOMOUS,352,0.900913,0,0.1724137931034483,0.0,False,
+audit_rate_20,v2,9,400,False,,,0,0,0,400,372,28,1,0,0,0,0,400,369,29,2,0,0,0,0,0,,372,372,QUALIFYING,398,0.872344,0,,0.005,True,
+audit_rate_20,v2,10,400,True,230,,0,21,5,374,222,14,1,0,0,138,0,374,356,16,2,2,1,1,0,0,,248,248,SUSPENDED,235,0.902453,0,0.19230769230769232,0.0053475935828877,False,

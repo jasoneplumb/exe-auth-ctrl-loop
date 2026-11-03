@@ -236,7 +236,14 @@ use: latency that depends on the label (failures counted later than successes)
 voids the guarantee, and a label still pending before its deadline is outside the
 count, so withholding negative labels raises the bound until the deadline passes.
 The error budget `alpha` restarts with every release and every successor
-partition. The v0.2.0 one-sided Wilson bound is retained as
+partition. On `mainline` (v3 Step 09, unreleased) these are measured at 1000
+sequences per cell in `results-v3/statistics/` (`experiments/statistics.py`):
+at $p = r = 0.90$, negatives labelled 50 trials late give a false-authorization
+rate of 0.39 and withheld negatives 1.0, against at most 0.012 when pending trials
+count as failures (proved valid in `statistical-method.md` §11, and costly when
+positive labels are late too); 100 partitions at per-partition α give 0.26
+family-wise. Which rules to adopt (`spec.md` O-3, O-4, O-8) is the owner's
+decision, from the table in `docs/v3/gates/step-09.md`. The v0.2.0 one-sided Wilson bound is retained as
 `estimator = "wilson_legacy"` for comparison only; it is a fixed-sample interval
 and exceeds its nominal error rate when read repeatedly. Neither bound protects
 against an agent that behaves until it qualifies and then defects; that is the
@@ -342,13 +349,16 @@ defection, turnover, audit rates, risk envelopes, censoring, oracle noise, a
 suspension/release cycle, and two comparators). It is a simulation: read
 [experiments/README.md](experiments/README.md) for what is modelled, where the
 adjudication is unrealistically strong, and what the numbers do not show. The
-harness also wires the components differently from the shipped loop: it labels
-every autonomous execution, commits decisions itself rather than through the
-executor, freezes audits after execution, and runs human-approved executions
-without the gateway.
-The speed at which the gate withdraws autonomy under defection and shift, and
-the finding that audit rate changes nothing that executes, depend on the first
-of these.
+harness behind `results/` wired the components differently from the shipped
+loop: it labelled every autonomous execution, committed decisions itself,
+froze audits after execution, and ran human-approved executions without the
+gateway. The speed at which the gate withdraws autonomy under defection and
+shift, and the finding that audit rate changes nothing that executes, depend on
+the first of these. On `mainline` (v3 Step 09, unreleased) the harness drives
+the shipped `CrossModelAuthorityLoop` with fake model clients and none of these
+differences remain; its outputs are in `results-v3/scenarios/`, where
+`delayed_defection` has 106 failures after autonomy against 20, because under
+autonomy only audits are labelled. `results/` is regenerated at Step 10.
 
 ```sh
 python -m experiments.run --all --output results
