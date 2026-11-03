@@ -16,6 +16,7 @@ Future: Durable since v3 Step 02: each partition's record is a row of the `lifec
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, replace
 from datetime import datetime
 from enum import Enum
@@ -35,6 +36,7 @@ from .authority import (
     utcnow,
 )
 from .principals import Principals, release_payload
+from .revocation import LINEAGE_DESCENDANTS, revoke, successor_key
 from .shadow import Provenance, ShadowEvidenceLog
 from .store import partition_text
 
@@ -54,6 +56,7 @@ class LifecycleEvent(str, Enum):
     EVIDENCE_EXPIRED = "EVIDENCE_EXPIRED"
     SEVERE_FAILURE = "SEVERE_FAILURE"
     HUMAN_RELEASE = "HUMAN_RELEASE"
+    ORACLE_CHANGED = "ORACLE_CHANGED"
 
 
 S = LifecycleState
@@ -71,6 +74,11 @@ TRANSITIONS: dict[tuple[LifecycleState | None, LifecycleEvent], LifecycleState] 
     (S.QUALIFYING, E.SEVERE_FAILURE): S.SUSPENDED,
     (S.AUTONOMOUS, E.SEVERE_FAILURE): S.SUSPENDED,
     (S.SUSPENDED, E.HUMAN_RELEASE): S.QUALIFYING,
+    # v3 Step 06 (RV-04, O-2/O-9): a new oracle opens a new epoch with counts reset, so an
+    # autonomous partition goes back to qualifying; the others keep their state
+    (S.UNESTABLISHED, E.ORACLE_CHANGED): S.UNESTABLISHED,
+    (S.QUALIFYING, E.ORACLE_CHANGED): S.QUALIFYING,
+    (S.AUTONOMOUS, E.ORACLE_CHANGED): S.QUALIFYING,
 }
 
 
@@ -116,6 +124,11 @@ class LifecycleManager:
         # constraint: release() verifies a human signature through this; without it,
         # release() refuses, so an unauthenticated release cannot happen by omission
         self.principals = principals
+        # effect: a label admitted by the shadow log moves this partition's state in the
+        # label's own transaction, so a bound that falls revokes at once (RV-03)
+        self._in_label = False
+        self._deferred: set[PartitionKey] = set()
+        shadow.listeners.append(self._on_label)
 
     def record(self, key: PartitionKey) -> PartitionRecord | None:
         """A copy of the stored record; changing it changes nothing in the database."""
@@ -181,6 +194,12 @@ class LifecycleManager:
             record = PartitionRecord(TRANSITIONS[(None, E.FIRST_PROPOSAL)])
             self._save(key, record)
             self._log(key, record, None, E.FIRST_PROPOSAL, ())
+            # constraint: a successor of a suspended (or lineage-suspended) partition, by
+            # any edge -- key churn or a policy change -- starts lineage-suspended, so no
+            # version edit clears a suspension (closes L12)
+            inherited = self._suspended_predecessors(key)
+            if inherited:
+                self._suspend_lineage(key, record, inherited)
         if not record.retired and key.policy_version != self.policy.version:
             self._retire(key, record, "POLICY_CHANGE")
         if record.retired or record.state == LifecycleState.SUSPENDED:
@@ -300,11 +319,64 @@ class LifecycleManager:
                  self.clock().isoformat()),
             )
             self.refresh(new)
-            if previous.state == LifecycleState.SUSPENDED or previous.lineage_suspended:
-                successor = self._require(new)
-                successor.lineage_suspended = True
-                self._save(new, successor)
-                self._log(new, successor, successor.state, None, ("LINEAGE_SUSPENDED",))
+            successor = self._require(new)
+            if ((previous.state == LifecycleState.SUSPENDED or previous.lineage_suspended)
+                    and not successor.lineage_suspended):
+                # a successor that already existed: refresh() did not create it, so it
+                # did not inherit at creation; flag it now
+                self._suspend_lineage(new, successor, [partition_text(old)])
+
+    def change_oracle(
+        self, key: PartitionKey, oracle_id: str, oracle_version: str, *, by: str
+    ) -> None:
+        """
+        intent: Move a partition to a new oracle without pooling its labels with the old
+                one's (O-2, O-9; RV-04)
+        effect: Opens a new epoch (counts reset to zero), takes an autonomous partition back
+                to QUALIFYING, and revokes its evidence-based tokens in the same transaction.
+                Approval-based tokens are kept: an approval does not rest on the counts.
+        constraint: A suspended or retired partition is refused: release it first, or use
+                    its successor. Binding labels to the epoch's oracle is v3 Step 08.
+        """
+        with self.db.transaction():
+            self.refresh(key)
+            record = self._require(key)
+            if record.retired or record.state == LifecycleState.SUSPENDED:
+                raise ValueError("a retired or suspended partition cannot change oracle")
+            self.shadow.open_epoch(key)
+            record.epoch += 1
+            self._move(key, record, E.ORACLE_CHANGED,
+                       (f"ORACLE:{oracle_id}@{oracle_version}", f"BY:{by}"))
+            self._sync_store(key, record)
+
+    def _retire_policy_version(self, old_version: str, policy: Policy) -> list[str]:
+        """
+        intent: Retire every partition on a superseded policy version at once (RV-07)
+        constraint: Private to revocation.PolicyAuthority.change(), which revokes in the same
+                    transaction. Called alone it would retire partitions and leave their
+                    tokens issued.
+        effect: Each is retired and its evidence invalidated, and a lineage edge is recorded
+                to the key it becomes under the new version, so a suspension passes on.
+                Revocation is the caller's single POLICY_CHANGED event
+                (revocation.PolicyAuthority), not one event per partition.
+        """
+        retired: list[str] = []
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                "SELECT partition FROM lifecycle WHERE retired = 0"
+            ).fetchall()
+            for (text,) in rows:
+                key = PartitionKey(**json.loads(text))
+                if key.policy_version != old_version:
+                    continue
+                self._retire(key, self._require(key), "POLICY_CHANGE")
+                conn.execute(
+                    "INSERT OR IGNORE INTO lineage VALUES (?, ?, ?, ?)",
+                    (text, successor_key(text, policy.version), "POLICY_CHANGE",
+                     self.clock().isoformat()),
+                )
+                retired.append(text)
+        return retired
 
     def commit(self, token: AuthorizationToken, proposal: Proposal) -> None:
         """RedemptionGuard: the lifecycle charges nothing at redemption."""
@@ -314,26 +386,71 @@ class LifecycleManager:
     ) -> tuple[str, ...]:
         """
         intent: Veto a token whose partition has lost authority since it was issued
-        method: Read-only view of the current record (RedemptionGuard). No refresh: a
-                state change caused by ordinary evidence shows up at the next evaluate(),
-                which is the documented boundary for what invalidates a token.
-        constraint: Lifecycle state at redemption is therefore exactly as fresh as the last
-                    evaluate(). A bound that fell, or evidence that went stale, between
-                    issuance and redemption with no evaluate() in between is NOT caught
-                    here; the gateway's own checks catch suspension, declared invalidation,
-                    and evidence replacement, and the token TTL bounds the rest. Callers
-                    wanting full recalculation at redemption must call evaluate() first.
-                    See docs/v2/gateway-redemption.md.
-        effect: An evidence-based token needs AUTONOMOUS; a human-approved one survives a
-                non-autonomous state but not retirement, lineage suspension, or suspension
+        method: Read-only (RedemptionGuard). Reads the current record and, for an
+                evidence-based token on an AUTONOMOUS partition, recomputes the gate from
+                the current counts and clock (v3 Step 06, spec §5): a bound that fell or
+                evidence that went stale since the last evaluate() refuses the token now.
+        effect: An evidence-based token needs AUTONOMOUS and a gate that still holds; a
+                human-approved one survives a non-autonomous state and the statistical gate
+                but not retirement, lineage suspension, or suspension
         """
         record = self._load(token.partition)
         if record is None:
             return ()
         reasons = list(self._blockers(token.partition, record))
-        if not token.human_approved and record.state != LifecycleState.AUTONOMOUS:
-            reasons.append(f"LIFECYCLE_{record.state.value}")
+        if not token.human_approved:
+            if record.state != LifecycleState.AUTONOMOUS:
+                reasons.append(f"LIFECYCLE_{record.state.value}")
+            else:
+                snapshot = self.shadow.snapshot(token.partition, self.clock())
+                reasons.extend(self._gate_reasons(token.partition, record, snapshot))
         return tuple(dict.fromkeys(reasons))
+
+    def _on_label(self, key: PartitionKey) -> None:
+        """Shadow-log listener: re-walk this partition's state inside the label's transaction."""
+        # constraint: a re-walk can resolve other partitions' trials (expire_unlabeled
+        # censors overdue trials of every partition), and those callbacks arrive here while
+        # the walk is in progress. They are deferred, not dropped, and walked before this
+        # call returns, still inside the label's transaction, so each partition's GATE_LOST
+        # revocation is as synchronous as the first's (PR #35 review).
+        if self._in_label:
+            self._deferred.add(key)
+            return
+        self._in_label = True
+        try:
+            self._deferred.add(key)
+            while self._deferred:
+                pending = self._deferred.pop()
+                record = self._load(pending)
+                if (record is not None and not record.retired
+                        and record.state != LifecycleState.SUSPENDED):
+                    self._refresh(pending)
+        finally:
+            self._in_label = False
+            self._deferred.clear()
+
+    def _suspended_predecessors(self, key: PartitionKey) -> list[str]:
+        rows = self.db.connection().execute(
+            "SELECT predecessor FROM lineage WHERE successor = ?", (partition_text(key),)
+        ).fetchall()
+        found = []
+        for (text,) in rows:
+            record = self._load(PartitionKey(**json.loads(text)))
+            if record is not None and (
+                record.state == LifecycleState.SUSPENDED or record.lineage_suspended
+            ):
+                found.append(text)
+        return found
+
+    def _suspend_lineage(
+        self, key: PartitionKey, record: PartitionRecord, predecessors: list[str]
+    ) -> None:
+        """Flag a successor lineage-suspended and revoke its tokens (RV-06)."""
+        record.lineage_suspended = True
+        self._save(key, record)
+        self._log(key, record, record.state, None, ("LINEAGE_SUSPENDED",))
+        revoke(self.db, "LINEAGE_SUSPENDED", "partition = ?", (partition_text(key),),
+               details={"predecessors": predecessors})
 
     def _gate_reasons(
         self, key: PartitionKey, record: PartitionRecord, snapshot: EvidenceSnapshot | None
@@ -378,8 +495,14 @@ class LifecycleManager:
         self._save(key, record)
         current = self.store.get(key)
         if current is not None and current.valid:
-            self.store.invalidate(key, f"PARTITION_RETIRED:{reason}")
+            # constraint: the retirement is the revoking event, not the invalidation
+            self.store.invalidate(key, f"PARTITION_RETIRED:{reason}", revoke_tokens=False)
         self._log(key, record, record.state, None, ("PARTITION_RETIRED", reason))
+        if reason == "KEY_FIELD_CHURN":
+            # RV-05. A policy-version retirement is revoked once by POLICY_CHANGED
+            # (revocation.PolicyAuthority) for every partition together
+            revoke(self.db, "PARTITION_RETIRED", "partition = ?", (partition_text(key),),
+                   details={"reason": reason})
 
     def _move(
         self,
@@ -395,6 +518,19 @@ class LifecycleManager:
         record.state = target
         self._save(key, record)
         self._log(key, record, previous, event, reasons)
+        # constraint: the transitions that take authority away revoke in this same
+        # transaction (spec §5). Evidence expiry is a time condition, not an event: the
+        # gateway checks it at redemption.
+        text = partition_text(key)
+        if event is E.SEVERE_FAILURE:  # RV-01: this partition and every successor
+            revoke(self.db, "SEVERE_FAILURE", LINEAGE_DESCENDANTS, (text,),
+                   details={"reasons": list(reasons)})
+        elif event is E.GATE_LOST_OUTCOME:  # RV-03: approvals do not rest on the gate
+            revoke(self.db, "GATE_LOST", "partition = ?", (text,), evidence_only=True,
+                   details={"reasons": list(reasons)})
+        elif event is E.ORACLE_CHANGED:  # RV-04: counts were reset under a new oracle
+            revoke(self.db, "ORACLE_CHANGED", "partition = ?", (text,), evidence_only=True,
+                   details={"reasons": list(reasons)})
 
     def _load(self, key: PartitionKey) -> PartitionRecord | None:
         row = self.db.connection().execute(

@@ -281,7 +281,8 @@ class LifecycleTests(unittest.TestCase):
         self.manager.on_churn(self.key, self.make_key(tool="refund-api-v3"))
         with self.assertRaises(PermissionError) as ctx:
             run(gateway, token.token_id, self.proposal(), lambda p: "ran")
-        self.assertIn("EVIDENCE_INVALID", str(ctx.exception))
+        # v3 Step 06: revoked at the retirement, named by its event
+        self.assertIn("revoked by", str(ctx.exception))
         self.assertTrue(self.store.get(self.key).invalidation_reason.startswith("PARTITION_RETIRED"))
 
     def test_severe_on_retired_partition_is_logged_not_stuck(self):
@@ -402,14 +403,24 @@ class TransitionTableTests(unittest.TestCase):
             for t in FIXTURE["transitions"]
             if not t["blocked"] and t["to"] != t["from"]
         }
+        # v3 transitions (ORACLE_CHANGED, spec §5 RV-04) are not part of the v2 fixture,
+        # which stays the record of v2; they are pinned separately below
         coded = {(k[0].value if k[0] else None, k[1].value): to.value
-                 for k, to in TRANSITIONS.items()}
+                 for k, to in TRANSITIONS.items() if k[1].value in FIXTURE["events"]}
         events = {e for _, e in coded}
         for key, to in coded.items():
             self.assertEqual(rows.get(key), to, key)
         for key, to in rows.items():
             if key[1] in events:
                 self.assertEqual(coded.get(key), to, key)
+
+    def test_oracle_change_takes_autonomy_away_and_nothing_else(self):
+        oracle = {k[0]: to for k, to in TRANSITIONS.items()
+                  if k[1] is LifecycleEvent.ORACLE_CHANGED}
+        self.assertEqual(oracle, {
+            S.UNESTABLISHED: S.UNESTABLISHED, S.QUALIFYING: S.QUALIFYING,
+            S.AUTONOMOUS: S.QUALIFYING,
+        })
 
 
 if __name__ == "__main__":

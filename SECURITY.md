@@ -83,11 +83,17 @@ released 0.3.1, within a single process).
   guard behaves as v0.2.0 did: expiry and explicit revocation only.
 - Ordinary evidence increments (a new label on the same evidence record, with
   the partition still valid, unsuspended, and autonomous) do not invalidate an
-  outstanding token. See `docs/v2/gateway-redemption.md` for the exact rule.
-- `issue()` does not check that a decision came from the controller. It accepts
-  any decision object that names the proposal and an executing route, so every
-  in-process party that can reach the gateway is trusted not to construct one.
-- A policy-version change clears a suspension without a human release. The
-  suspended partition is retired, and its successor under the new version
-  starts at `UNESTABLISHED` without the lineage flag; only `on_churn` carries a
-  suspension forward. The successor must still qualify from zero trials.
+  outstanding token. See `docs/v2/gateway-redemption.md` for the exact rule. On
+  `mainline` (v3 Step 06) an increment that takes the bound below policy
+  revokes the partition's evidence-based tokens in the label's own
+  transaction, and redemption recomputes the gate; the released 0.3.1 sees it
+  only at the next decision.
+- In the released 0.3.1, `issue()` does not check that a decision came from the
+  controller: it accepts any decision object that names the proposal and an
+  executing route. On `mainline` (v3 Step 04) it requires the decision's
+  committed ledger record.
+- In the released 0.3.1, a policy-version change clears a suspension without a
+  human release: the successor under the new version starts without the
+  lineage flag, because only `on_churn` carries a suspension forward. On
+  `mainline` (v3 Step 06) every successor, including a policy-version one,
+  inherits its predecessor's suspension through a recorded lineage edge.

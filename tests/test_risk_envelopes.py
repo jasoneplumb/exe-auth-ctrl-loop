@@ -386,7 +386,7 @@ class PolicyChangePropagationTests(RiskBase):
         self.risk.update("risk-v1", envelopes())  # rollback
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, proposal, self.handler)
-        self.assertIn("RISK_CLASS_MISMATCH", str(ctx.exception))
+        self.assertIn("revoked by ENVELOPE_CHANGED", str(ctx.exception))  # v3 Step 06, RV-10
         self.assertEqual(self.calls, 0)
 
     def test_tightened_budget_denies_outstanding_token(self):
@@ -399,7 +399,7 @@ class PolicyChangePropagationTests(RiskBase):
         self.risk.update("risk-v3", envelopes(), tighter)
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, proposal, self.handler)
-        self.assertIn("BUDGET_EXCEEDED:daily-refunds", str(ctx.exception))
+        self.assertIn("revoked by BUDGET_TIGHTENED", str(ctx.exception))  # v3 Step 06, RV-09
 
     def test_charges_survive_a_policy_update(self):
         self.seed("low")

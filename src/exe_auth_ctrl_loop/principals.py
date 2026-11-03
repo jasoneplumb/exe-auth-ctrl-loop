@@ -28,6 +28,7 @@ from typing import Any, Mapping
 
 from .authority import PartitionKey, Proposal, utcnow
 from .ledger import EventLedger
+from .revocation import GRANT_SUBTREE, HELD_GRANT_SUBTREES, revoke
 from .store import Store, canonical_json, partition_text, time_text, time_us
 
 PERMISSION_EVENTS = (
@@ -379,6 +380,21 @@ class Principals:
             conn.execute("UPDATE principals SET active = 0 WHERE principal_id = ?",
                          (principal_id,))
             self.ledger.append("principal.deactivated", principal_id, by, {})
+            # RV-13: every token under a grant it holds (and their descendants) and every
+            # token on an approval it gave, recorded as this one event with the grants
+            held = [row[0] for row in conn.execute(
+                "WITH RECURSIVE g(id) AS (SELECT grant_id FROM grants WHERE grantee = ?"
+                " UNION SELECT grants.grant_id FROM grants JOIN g"
+                " ON grants.parent_grant_id = g.id) SELECT id FROM g ORDER BY id",
+                (principal_id,),
+            )]
+            revoke(
+                self.store, "PRINCIPAL_DEACTIVATED",
+                f"{HELD_GRANT_SUBTREES} OR approval_id IN"
+                " (SELECT approval_id FROM approvals WHERE principal_id = ?)",
+                (principal_id, principal_id), actor=by,
+                details={"principal_id": principal_id, "grants": held},
+            )
 
     def grant_root(
         self, grantor: str, grantee: str, scope: GrantScope, expires_at: datetime, mac: str,
@@ -426,6 +442,9 @@ class Principals:
                 raise ValueError(f"grant already revoked: {grant_id}")
             conn.execute("UPDATE grants SET revoked = 1 WHERE grant_id = ?", (grant_id,))
             self.ledger.append("grant.revoked", grant_id, by, {})
+            # RV-12: tokens under this grant and every grant delegated from it
+            revoke(self.store, "GRANT_REVOKED", GRANT_SUBTREE, (grant_id,), actor=by,
+                   details={"grant_id": grant_id})
 
     def _record_approval(self, approval: Approval) -> None:
         """
@@ -459,6 +478,10 @@ class Principals:
             )
             self.ledger.append("approval.rescinded", approval.approval_id,
                                approval.principal_id, {})
+            # RV-11: the token issued on this approval, if it is still unspent
+            revoke(self.store, "APPROVAL_RESCINDED", "approval_id = ?",
+                   (approval.approval_id,), actor=approval.principal_id,
+                   details={"approval_id": approval.approval_id})
 
     # -- internals -------------------------------------------------------------------
 

@@ -291,12 +291,40 @@ _SCHEMA_V4 = (
         BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
 )
 
+# v3 Step 06: a token keeps the proposal it was issued for, so a budget or envelope change
+# can ask whether the new limits would refuse it (docs/v3/spec.md §5, RV-09, RV-10)
+_SCHEMA_V5 = (
+    "ALTER TABLE tokens ADD COLUMN proposal TEXT",
+    "DROP TRIGGER tokens_fixed",
+    """CREATE TRIGGER tokens_fixed BEFORE UPDATE ON tokens
+        WHEN NEW.token_id IS NOT OLD.token_id
+          OR NEW.decision_id IS NOT OLD.decision_id
+          OR NEW.proposal_digest IS NOT OLD.proposal_digest
+          OR NEW.allowed_tool IS NOT OLD.allowed_tool
+          OR NEW.allowed_effects IS NOT OLD.allowed_effects
+          OR NEW.partition IS NOT OLD.partition
+          OR NEW.policy_version IS NOT OLD.policy_version
+          OR NEW.evidence_id IS NOT OLD.evidence_id
+          OR NEW.evidence_version IS NOT OLD.evidence_version
+          OR NEW.expires_at IS NOT OLD.expires_at
+          OR NEW.human_approved IS NOT OLD.human_approved
+          OR NEW.grant_id IS NOT OLD.grant_id
+          OR NEW.requesting_principal IS NOT OLD.requesting_principal
+          OR NEW.approval_id IS NOT OLD.approval_id
+          OR NEW.proposal IS NOT OLD.proposal
+          OR (NEW.revocation_reason IS NOT OLD.revocation_reason
+              AND NOT (OLD.state = 'issued' AND NEW.state = 'revoked'))
+        BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
+)
+
 # constraint: every table whose rows are history, across all schema versions
 APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions")
 
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
-MIGRATIONS: tuple[tuple[str, ...], ...] = (_SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4)
+MIGRATIONS: tuple[tuple[str, ...], ...] = (
+    _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5,
+)
 
 
 class StoreError(RuntimeError):

@@ -156,7 +156,9 @@ class LiveStateInvalidationTests(GatewayBase):
 
     def test_denial_names_every_reason(self):
         token = self.autonomous_token()
-        self.store.invalidate(self.key, "x")
+        # second line (v3 Step 06): a state change made without the revoking path, so the
+        # redemption-time checks are what refuse it, and they name every reason
+        self.store.invalidate(self.key, "x", revoke_tokens=False)
         self.policy = replace(self.policy, version="pol2")
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, self.proposal(), self.handler)
@@ -167,7 +169,8 @@ class LiveStateInvalidationTests(GatewayBase):
         token = self.autonomous_token()
         severe = Outcome("p-0", OutcomeStatus.UNACCEPTABLE, True, "reviewer", T0, "d")
         self.store.adjudicate(self.key, severe, autonomous=True)
-        self.store.invalidate(self.key, "oracle_recalled")
+        # second line (v3 Step 06): invalidated without the revoking path, see above
+        self.store.invalidate(self.key, "oracle_recalled", revoke_tokens=False)
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, self.proposal(), self.handler)
         self.assertIn("PARTITION_SUSPENDED", str(ctx.exception))
@@ -449,17 +452,19 @@ class LifecycleGuardTests(unittest.TestCase):
         self.manager.record_severe(self.key, Provenance.AUDIT, "bad")
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, self.proposal(), self.handler)
-        self.assertIn("PARTITION_SUSPENDED", str(ctx.exception))
-        self.assertIn("LIFECYCLE_SUSPENDED", str(ctx.exception))
+        # v3 Step 06: revoked at the suspension itself, named by its event (RV-01)
+        self.assertIn("revoked by SEVERE_FAILURE", str(ctx.exception))
         self.assertEqual(self.handler.calls, 0)
 
     def test_gate_lost_before_redemption_denies(self):
         token = self.autonomous_token()
         self.add(10, TrialLabel.NEGATIVE)
-        self.manager.evaluate(self.proposal())  # next decision notices the bound fell
+        self.manager.evaluate(self.proposal())
         with self.assertRaises(PermissionError) as ctx:
             run(self.gateway, token.token_id, self.proposal(), self.handler)
-        self.assertIn("LIFECYCLE_QUALIFYING", str(ctx.exception))
+        # v3 Step 06: revoked when the label took the bound below policy, before this
+        # evaluate() (RV-03)
+        self.assertIn("revoked by GATE_LOST", str(ctx.exception))
 
     def test_ordinary_increment_without_reevaluation_keeps_token_good(self):
         token = self.autonomous_token()
