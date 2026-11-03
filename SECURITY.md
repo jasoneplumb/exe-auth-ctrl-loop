@@ -53,6 +53,13 @@ or to change a principal, grant, or approval without a ledger event. Out of
 scope: anyone holding the host's signing keys, which are HMAC secrets the host
 holds (stronger keys are a production requirement).
 
+On `mainline` (v3 Step 07, unreleased; MCP extension `0.2`) also in scope: any
+way for an MCP server to run a call twice on one token, to accept a block
+addressed to another server, to accept a block whose token was revoked, or for
+the host to spend an MCP-bound token itself. Out of scope, and stated as a
+limit: one shared secret signs blocks for every server, so a server holding it
+could mint a block for another; per-server keys are a production requirement.
+
 Also in scope: any way for a human review to create, alter, discard, or relabel
 a frozen shadow trial; any path to `AUTONOMOUS` other than `QUALIFYING` on a
 met gate; any way to clear a suspension without a recorded human release; any

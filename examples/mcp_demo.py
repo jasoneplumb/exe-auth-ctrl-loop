@@ -1,6 +1,6 @@
 """
-Intent: Show the MCP binding end to end — one authorized tools/call, and the five calls a
-        server refuses
+Intent: Show the MCP binding end to end — one authorized tools/call, and the seven calls a
+        server refuses, including the replays extension 0.2 closes
 Context: Runnable offline alongside examples/example.py; CI executes it on every push
 Pattern: The server function trusts nothing it is told, recomputing the call digest from
         the tool name and arguments it actually received
@@ -26,10 +26,10 @@ from exe_auth_ctrl_loop.authority import (
 )
 from exe_auth_ctrl_loop.ledger import EventLedger
 from exe_auth_ctrl_loop.mcp import (
+    McpServer,
     MetaVerificationError,
     attach_meta,
     build_call_meta,
-    verify_call_meta,
 )
 from exe_auth_ctrl_loop.principals import (
     GrantScope,
@@ -67,26 +67,29 @@ def build_request(params: Mapping[str, Any], meta: Mapping[str, Any]) -> dict[st
     }
 
 
-def mcp_server(request: Mapping[str, Any], now: datetime) -> dict[str, Any]:
+def mcp_server(request: Mapping[str, Any], now: datetime,
+               server: str = "refund-mcp") -> dict[str, Any]:
     """
     intent: Stand in for an MCP server that grants nothing on an unverified claim
-    method: Verify before acting; a raised MetaVerificationError becomes a denial, never a
-            warning that execution proceeds past
+    method: McpServer.call(): verify the block as this server, spend it at the host (a
+            refund has effects, so by redemption against the token table), and only then
+            run the handler. A raised refusal becomes a denial, never a warning that
+            execution proceeds past.
     effect: Every refusal path in the demo below returns without producing a side effect
     """
     params = request["params"]
+    receiver = McpServer(gateway, server, SHARED_SECRET)
     try:
-        verified = verify_call_meta(
-            params, params["name"], params["arguments"], SHARED_SECRET, now,
-        )
-    except MetaVerificationError as denial:
+        receipt = receiver.call(params, lambda args: {"receipt": "refund-9001"}, now)
+    except (MetaVerificationError, PermissionError) as denial:
         return {"executed": False, "denied": str(denial)}
+    # the authority the call ran on comes back with it: no second verification
     return {
         "executed": True,
-        "receipt": "refund-9001",
-        "audit_committed": verified.audit_committed,
-        "human_approved": verified.human_approved,
-        "evidence_snapshot": verified.evidence_snapshot,
+        **receipt.result,
+        "audit_committed": receipt.authority.audit_committed,
+        "human_approved": receipt.authority.human_approved,
+        "evidence_snapshot": receipt.authority.evidence_snapshot,
     }
 
 
@@ -131,12 +134,16 @@ principals.grant_root(
     grant_id="g-1",
 )
 EventLedger(evidence.store).commit_decision(decision, proposal)
-# The effect runs on the MCP server, so this host gateway issues but runs no handler of
-# its own: its handler table is empty. (v3 Step 07 makes MCP-bound tokens explicit.)
+# Two MCP servers the host knows. The token is bound to one of them (extension 0.2), and
+# only that server can spend it; this gateway runs no handler of its own.
+principals.register("refund-mcp", PrincipalKind.SERVICE, by="controller")
+principals.register("ledger-mcp", PrincipalKind.SERVICE, by="controller")
 gateway = ExecutionGateway(
     lambda: NOW, store=evidence.store, handlers=HandlerTable(ToolCatalog()), principals=principals
 )
-token = gateway.issue(decision, proposal, policy, principal_id="agent", grant_id="g-1")
+token = gateway.issue(
+    decision, proposal, policy, principal_id="agent", grant_id="g-1", audience="refund-mcp",
+)
 meta = build_call_meta(decision, proposal, token, SHARED_SECRET)
 request = build_request(
     {"name": proposal.tool_name, "arguments": dict(proposal.parameters)}, meta,
@@ -153,6 +160,9 @@ print("\nthe authorized call:")
 print(f"  {mcp_server(request, NOW)}")
 
 print("\ncalls the server refuses:")
+
+print(f"  replayed block    -> {mcp_server(request, NOW)['denied']}")
+print(f"  another server    -> {mcp_server(request, NOW, server='ledger-mcp')['denied']}")
 
 tampered = build_request(
     {"name": "create_refund", "arguments": {"order_id": 4815, "usd": 9999.00}}, meta,

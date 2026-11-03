@@ -12,7 +12,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from unittest import mock
 
-from _support import AdapterHandlers, gateway_store, issue, scratch_store
+from _support import MCP_SERVER, AdapterHandlers, gateway_store, issue, scratch_store
 
 from exe_auth_ctrl_loop import mcp
 from exe_auth_ctrl_loop.authority import (
@@ -108,8 +108,9 @@ class CallMetaTests(unittest.TestCase):
         policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), audit_rate)
         controller = AuthorityController(self.store, policy, random.Random(1), lambda: NOW)
         decision = controller.evaluate(self.proposal)
-        token = issue(self.gateway,
-            decision, self.proposal, policy, human_approved=human_approved
+        token = issue(
+            self.gateway, decision, self.proposal, policy, human_approved=human_approved,
+            audience=MCP_SERVER,
         )
         return decision, token
 
@@ -130,6 +131,7 @@ class CallMetaTests(unittest.TestCase):
         params = self.signed_params()
         verified = verify_call_meta(
             params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+            audience=MCP_SERVER,
         )
         self.assertEqual(verified.proposal_digest, self.proposal.proposal_digest)
         self.assertFalse(verified.audit_committed)
@@ -150,19 +152,24 @@ class CallMetaTests(unittest.TestCase):
         params = self.signed_params(human_approved=True)
         verified = verify_call_meta(
             params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+            audience=MCP_SERVER,
         )
         self.assertTrue(verified.human_approved)
 
     def test_edited_arguments_are_rejected(self):
         params = self.signed_params()
         with self.assertRaises(MetaVerificationError):
-            verify_call_meta(params, "create_refund", {"order_id": 7, "usd": 9999}, SECRET, NOW)
+            verify_call_meta(
+                params, "create_refund", {"order_id": 7, "usd": 9999}, SECRET, NOW,
+                audience=MCP_SERVER,
+            )
 
     def test_substituted_tool_is_rejected(self):
         params = self.signed_params()
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "delete_order", dict(self.proposal.parameters), SECRET, NOW,
+                audience=MCP_SERVER,
             )
 
     def test_forged_metadata_is_rejected(self):
@@ -170,6 +177,7 @@ class CallMetaTests(unittest.TestCase):
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), b"wrong-secret", NOW,
+                audience=MCP_SERVER,
             )
 
     def test_tampered_field_is_rejected(self):
@@ -178,6 +186,7 @@ class CallMetaTests(unittest.TestCase):
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+                audience=MCP_SERVER,
             )
 
     def test_expired_authorization_is_rejected(self):
@@ -186,11 +195,15 @@ class CallMetaTests(unittest.TestCase):
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET, later,
+                audience=MCP_SERVER,
             )
 
     def test_absent_metadata_is_rejected(self):
         with self.assertRaises(MetaVerificationError):
-            verify_call_meta({"name": "create_refund"}, "create_refund", {}, SECRET, NOW)
+            verify_call_meta(
+                {"name": "create_refund"}, "create_refund", {}, SECRET, NOW,
+                audience=MCP_SERVER,
+            )
 
     def test_stripped_signature_is_rejected(self):
         params = self.signed_params()
@@ -198,6 +211,7 @@ class CallMetaTests(unittest.TestCase):
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+                audience=MCP_SERVER,
             )
 
     def test_version_mismatch_is_rejected(self):
@@ -211,6 +225,7 @@ class CallMetaTests(unittest.TestCase):
             with self.assertRaises(MetaVerificationError):
                 verify_call_meta(
                     params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+                    audience=MCP_SERVER,
                 )
 
     def test_naive_clock_denies_rather_than_crashing(self):
@@ -224,6 +239,7 @@ class CallMetaTests(unittest.TestCase):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET,
                 datetime(2026, 8, 19),  # naive on purpose
+                audience=MCP_SERVER,
             )
 
     def test_non_boolean_flag_is_rejected(self):
@@ -241,6 +257,7 @@ class CallMetaTests(unittest.TestCase):
         with self.assertRaises(MetaVerificationError):
             verify_call_meta(
                 params, "create_refund", dict(self.proposal.parameters), SECRET, NOW,
+                audience=MCP_SERVER,
             )
 
     def test_same_evidence_id_in_two_partitions_does_not_collide(self):
