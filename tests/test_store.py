@@ -9,6 +9,8 @@ import threading
 import unittest
 from pathlib import Path
 
+from _support import TEST_LEDGER_KEY
+
 from exe_auth_ctrl_loop.authority import PartitionKey
 from exe_auth_ctrl_loop.store import (
     APPEND_ONLY_TABLES,
@@ -28,7 +30,7 @@ SEED = (
     "INSERT INTO ledger_anchor (sequence, event_hash, anchored_at) VALUES (0, 'h', 't')",
     "INSERT INTO evidence_snapshots VALUES ('k', 1, 'ev', 1, 0, 't', 't', 1, 0, NULL)",
     "INSERT INTO trials VALUES ('tr', 'shadow', 'k', 'd', 't', 0, 0)",
-    "INSERT INTO labels VALUES ('tr', 'positive', 0, 't', 0)",
+    "INSERT INTO labels VALUES ('tr', 'positive', 0, 't', 0, NULL)",
     "INSERT INTO epochs VALUES ('k', 3)",
     "INSERT INTO lineage VALUES ('k', 'k2', 'KEY_FIELD_CHURN', 't')",
     "INSERT INTO risk_charges (policy_version, budget_id, scope_key, amount, token_id)"
@@ -37,6 +39,10 @@ SEED = (
     " VALUES ('r1', 'k', 'pay', 'tok')",
     "INSERT INTO decisions VALUES ('dec', 'digest', 'autonomous', 0)",
     "INSERT INTO nonces VALUES ('tok', 'server-a', 't')",
+    "INSERT INTO epoch_oracles VALUES ('k', 3, 'o', '1', 'constraint_check', 's', 4)",
+    "INSERT INTO alpha_ledger (partition, epoch, floor_sequence, alpha, reason, opened_at)"
+    " VALUES ('k', 1, 3, 0.05, 'HUMAN_RELEASE', 't')",
+    "INSERT INTO quarantines VALUES (5, 'tr', 'WRONG_ORACLE')",
 )
 
 
@@ -44,7 +50,7 @@ class StoreTestCase(unittest.TestCase):
     def setUp(self):
         self._tmp = tempfile.TemporaryDirectory()
         self.path = Path(self._tmp.name) / "authority.db"
-        self.store = Store(self.path)
+        self.store = Store(self.path, ledger_key=TEST_LEDGER_KEY)
 
     def tearDown(self):
         self.store.close()
@@ -55,7 +61,12 @@ class OpeningTests(StoreTestCase):
     def test_in_memory_paths_are_refused(self):
         for path in ("", ":memory:", "file::memory:?cache=shared"):
             with self.subTest(path=path), self.assertRaises(StoreError):
-                Store(path)
+                Store(path, ledger_key=TEST_LEDGER_KEY)
+
+    def test_a_ledger_key_is_required(self):
+        # v3 Step 08: the chain is an HMAC, so a store without a key is refused at open
+        with self.assertRaisesRegex(StoreError, "ledger key"):
+            Store(self.path, ledger_key=b"")
 
     def test_schema_is_current_and_journal_is_wal(self):
         self.assertEqual(self.store.schema_version, len(MIGRATIONS))
@@ -69,7 +80,7 @@ class OpeningTests(StoreTestCase):
         with self.store.transaction() as conn:
             conn.execute(SEED[0])
         self.store.close()
-        with Store(self.path) as reopened:
+        with Store(self.path, ledger_key=TEST_LEDGER_KEY) as reopened:
             self.assertEqual(reopened.schema_version, len(MIGRATIONS))
             rows = reopened.connection().execute("SELECT sequence FROM ledger").fetchall()
             self.assertEqual(rows, [(0,)])
@@ -78,7 +89,7 @@ class OpeningTests(StoreTestCase):
         self.store.connection().execute(f"PRAGMA user_version = {len(MIGRATIONS) + 1}")
         self.store.close()
         with self.assertRaisesRegex(StoreError, "newer than this code"):
-            Store(self.path)
+            Store(self.path, ledger_key=TEST_LEDGER_KEY)
 
     def test_closed_store_refuses_use(self):
         self.store.close()
@@ -111,12 +122,12 @@ class AppendOnlyTests(StoreTestCase):
     def test_a_trial_resolves_at_most_once(self):
         with self.assertRaises(sqlite3.IntegrityError):
             with self.store.transaction() as conn:
-                conn.execute("INSERT INTO labels VALUES ('tr', NULL, 1, 't2', 0)")
+                conn.execute("INSERT INTO labels VALUES ('tr', NULL, 1, 't2', 0, NULL)")
 
     def test_label_and_censored_are_exclusive(self):
         with self.store.transaction() as conn:
             conn.execute("INSERT INTO trials VALUES ('tr2', 'shadow', 'k', 'd', 't', 0, 1)")
-        for row in ("('tr2', 'positive', 1, 't', 0)", "('tr2', NULL, 0, 't', 0)"):
+        for row in ("('tr2', 'positive', 1, 't', 0, NULL)", "('tr2', NULL, 0, 't', 0, NULL)"):
             with self.subTest(row=row), self.assertRaises(sqlite3.IntegrityError):
                 with self.store.transaction() as conn:
                     conn.execute(f"INSERT INTO labels VALUES {row}")
@@ -163,7 +174,9 @@ class TransactionTests(StoreTestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             with self.store.transaction() as conn:
                 conn.execute("PRAGMA defer_foreign_keys = ON")
-                conn.execute("INSERT INTO labels VALUES ('no-such-trial', 'positive', 0, 't', 0)")
+                conn.execute(
+                    "INSERT INTO labels VALUES ('no-such-trial', 'positive', 0, 't', 0, NULL)"
+                )
         conn = self.store.connection()
         self.assertFalse(conn.in_transaction)
         with self.store.transaction() as conn:
@@ -179,7 +192,7 @@ class TransactionTests(StoreTestCase):
         self.assertIs(self.store.connection(), self.store.connection())
 
     def test_an_open_transaction_blocks_another_writer(self):
-        other = Store(self.path, timeout=0.2)
+        other = Store(self.path, ledger_key=TEST_LEDGER_KEY, timeout=0.2)
         errors = []
 
         def write():
@@ -206,7 +219,7 @@ class CrossProcessTests(StoreTestCase):
     WORKER = textwrap.dedent("""
         import sys
         from exe_auth_ctrl_loop.store import Store
-        store = Store(sys.argv[1])
+        store = Store(sys.argv[1], ledger_key=b"test-ledger-key")
         for _ in range(int(sys.argv[2])):
             with store.transaction() as conn:
                 (n,) = conn.execute("SELECT n FROM counter").fetchone()

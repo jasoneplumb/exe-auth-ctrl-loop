@@ -13,7 +13,9 @@ from _support import (
     release,
     run,
     scratch_store,
+    trial,
 )
+from _support import label as support_label
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -56,7 +58,9 @@ class LifecycleTests(unittest.TestCase):
         self.clock = Clock()
         self.db = scratch_store()
         self.ledger = EventLedger(self.db)
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
+        self.shadow = ShadowEvidenceLog(
+            self.ledger, timedelta(hours=1), self.clock, principals=principals_for(self.db)
+        )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         self.controller = AuthorityController(
@@ -88,10 +92,9 @@ class LifecycleTests(unittest.TestCase):
             self.counter += 1
             p = replace(self.proposal(key), proposal_id=f"p-{self.counter}")
             tid = f"t-{self.counter}"
-            self.assertTrue(self.shadow.freeze(tid, p, provenance).accepted)
-            self.assertTrue(self.shadow.adjudicate(
-                tid, key, p.proposal_digest, label, ORACLE, self.clock.now,
-            ).accepted)
+            self.assertTrue(trial(self.shadow, tid, p, provenance).accepted)
+            result = support_label(self.shadow, tid, key, p.proposal_digest, label, ORACLE)
+            self.assertTrue(result.accepted, result.reason)
 
     def decide(self, key=None):
         return self.manager.evaluate(self.proposal(key))

@@ -9,7 +9,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from _support import principals_for
+from _support import TEST_LEDGER_KEY, principals_for, trial
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -57,14 +57,16 @@ class Components:
     """Everything a host process builds over one database at start-up."""
 
     def __init__(self, path: Path, now: datetime) -> None:
-        self.db = Store(path)
+        self.db = Store(path, ledger_key=TEST_LEDGER_KEY)
         clock = lambda: now  # noqa: E731
         self.ledger = EventLedger(self.db)
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), clock)
+        self.principals = principals_for(self.db)
+        self.shadow = ShadowEvidenceLog(
+            self.ledger, timedelta(hours=1), clock, principals=self.principals
+        )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
         controller = AuthorityController(self.store, self.policy, random.Random(1), clock)
-        self.principals = principals_for(self.db)
         self.manager = LifecycleManager(
             self.shadow, self.store, self.policy, controller, clock, principals=self.principals,
         )
@@ -81,7 +83,7 @@ class RestartTests(unittest.TestCase):
         before.manager.on_churn(SUSPENDED, SUCCESSOR)
         charged = proposal(SUCCESSOR, usd=40.0)
         before.risk.commit(token(charged), charged)
-        self.assertTrue(before.shadow.freeze("t-pending", proposal(PENDING)).accepted)
+        self.assertTrue(trial(before.shadow, "t-pending", proposal(PENDING)).accepted)
         self.events_before = len(before.ledger.events)
         before.db.close()
         # A new process: new objects, the same file, a later clock.
@@ -124,7 +126,7 @@ class SecondProcessTests(unittest.TestCase):
         import sys
         from exe_auth_ctrl_loop.authority import EvidenceStore, PartitionKey
         from exe_auth_ctrl_loop.store import Store
-        store = EvidenceStore(Store(sys.argv[1]))
+        store = EvidenceStore(Store(sys.argv[1], ledger_key=b"test-ledger-key"))
         snapshot = store.get(PartitionKey(*sys.argv[2:]))
         print("suspended" if snapshot is not None and snapshot.suspended else "live")
     """)

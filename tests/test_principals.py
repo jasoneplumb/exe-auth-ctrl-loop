@@ -177,7 +177,8 @@ class ReleaseTests(Fixture):
 
     def setUp(self):
         super().setUp()
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), lambda: NOW)
+        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), lambda: NOW,
+                                        principals=self.principals)
         self.manager = LifecycleManager(
             self.shadow, self.store, POLICY, self.controller, lambda: NOW,
             principals=self.principals,

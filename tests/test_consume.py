@@ -10,7 +10,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from _support import AdapterHandlers, forge_token, gateway_store, issue, run
+from _support import TEST_LEDGER_KEY, AdapterHandlers, forge_token, gateway_store, issue, run
 
 from exe_auth_ctrl_loop.authority import (
     Decision,
@@ -56,7 +56,7 @@ class StoreCase(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.path = Path(tmp.name) / "authority.db"
-        self.store = Store(self.path)
+        self.store = Store(self.path, ledger_key=TEST_LEDGER_KEY)
         self.addCleanup(self.store.close)
         self.gateway = ExecutionGateway(**gateway_store(self.store), handlers=AdapterHandlers())
 
@@ -77,7 +77,7 @@ class CrossProcessRedemptionTests(StoreCase):
         exec(sys.argv[4], namespace)
         make = namespace["make"]
         path, ids_file, start = sys.argv[1:4]
-        store = Store(path)
+        store = Store(path, ledger_key=b"test-ledger-key")
         gateway = ExecutionGateway(**gateway_store(store), handlers=AdapterHandlers())
         ids = json.load(open(ids_file))
         while not os.path.exists(start):
@@ -261,7 +261,8 @@ class RestartTests(StoreCase):
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(**gateway_store(Store(sys.argv[1])), handlers=AdapterHandlers())
+        store = Store(sys.argv[1], ledger_key=b"test-ledger-key")
+        gateway = ExecutionGateway(**gateway_store(store), handlers=AdapterHandlers())
         def handler(proposal):
             os._exit(3)  # the process dies inside the effect
         run(gateway, sys.argv[2], namespace["make"](1), handler)
@@ -269,7 +270,7 @@ class RestartTests(StoreCase):
 
     def reopen(self) -> ExecutionGateway:
         self.store.close()
-        self.store = Store(self.path)
+        self.store = Store(self.path, ledger_key=TEST_LEDGER_KEY)
         self.addCleanup(self.store.close)
         return ExecutionGateway(**gateway_store(self.store), handlers=AdapterHandlers())
 
@@ -308,7 +309,8 @@ class RestartTests(StoreCase):
         from exe_auth_ctrl_loop.store import Store
         namespace = {}
         exec(sys.argv[3], namespace)
-        gateway = ExecutionGateway(**gateway_store(Store(sys.argv[1])), handlers=AdapterHandlers())
+        store = Store(sys.argv[1], ledger_key=b"test-ledger-key")
+        gateway = ExecutionGateway(**gateway_store(store), handlers=AdapterHandlers())
         advance = gateway._advance
         def dies_before_start(token_id, current, target):
             if target == "handler_started":

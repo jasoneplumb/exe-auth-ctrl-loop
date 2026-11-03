@@ -355,13 +355,56 @@ _SCHEMA_V6 = (
         BEGIN SELECT RAISE(ABORT, 'token fields are fixed at issue'); END""",
 )
 
+# v3 Step 08: evidence admission (docs/v3/spec.md §7). Labels keep the labeller's claimed
+# time beside the host's receipt time; each epoch is bound to one oracle; every epoch opening
+# records the α it starts with; refused admissions are kept so a replay reproduces them.
+_SCHEMA_V7 = (
+    "ALTER TABLE labels ADD COLUMN claimed_at TEXT",
+    """CREATE TABLE epoch_oracles (
+        partition TEXT NOT NULL,
+        floor_sequence INTEGER NOT NULL,
+        oracle_id TEXT NOT NULL,
+        oracle_version TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        validity_scope TEXT NOT NULL,
+        bound_sequence INTEGER NOT NULL,
+        PRIMARY KEY (partition, floor_sequence)
+    )""",
+    """CREATE TABLE alpha_ledger (
+        entry_id INTEGER PRIMARY KEY AUTOINCREMENT,
+        partition TEXT NOT NULL,
+        epoch INTEGER NOT NULL,
+        floor_sequence INTEGER NOT NULL,
+        alpha REAL NOT NULL,
+        reason TEXT NOT NULL,
+        opened_at TEXT NOT NULL
+    )""",
+    """CREATE TABLE quarantines (
+        sequence INTEGER PRIMARY KEY,
+        trial_id TEXT NOT NULL,
+        reason TEXT NOT NULL
+    )""",
+    *(
+        statement
+        for table in ("epoch_oracles", "alpha_ledger", "quarantines")
+        for statement in (
+            f"""CREATE TRIGGER {table}_no_update BEFORE UPDATE ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END""",
+            f"""CREATE TRIGGER {table}_no_delete BEFORE DELETE ON {table}
+                BEGIN SELECT RAISE(ABORT, '{table} is append-only'); END""",
+        )
+    ),
+)
+
 # constraint: every table whose rows are history, across all schema versions
-APPEND_ONLY_TABLES = (*_V1_APPEND_ONLY, "decisions", "nonces")
+APPEND_ONLY_TABLES = (
+    *_V1_APPEND_ONLY, "decisions", "nonces", "epoch_oracles", "alpha_ledger", "quarantines",
+)
 
 # constraint: one entry per schema version, applied in order and never edited once
 # released. A later step adds a version; it does not change an earlier one.
 MIGRATIONS: tuple[tuple[str, ...], ...] = (
-    _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5, _SCHEMA_V6,
+    _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5, _SCHEMA_V6, _SCHEMA_V7,
 )
 
 
@@ -420,10 +463,22 @@ class Store:
                 the in-process concurrency tests mean the same thing as cross-process ones.
     """
 
-    def __init__(self, path: str | os.PathLike[str], *, timeout: float = 30.0) -> None:
+    def __init__(
+        self, path: str | os.PathLike[str], *, ledger_key: bytes, timeout: float = 30.0,
+    ) -> None:
+        """
+        constraint: `ledger_key` keys the ledger's hash chain (v3 Step 08). It is supplied by
+                    the host and never written to the file, so someone who can rewrite the
+                    file but lacks the key cannot re-hash the chain after an edit. Same-process
+                    code holding this Store can still append through the ledger API, which is
+                    the trust boundary v3 states (docs/v3/threat-model.md, owner decision).
+        """
         text = os.fspath(path)
         if text in ("", ":memory:") or text.startswith("file::memory:"):
             raise StoreError("a database file is required; in-memory databases are not durable")
+        if not ledger_key:
+            raise StoreError("a ledger key is required; the chain is keyed")
+        self.ledger_key = ledger_key
         self.path = text
         self.timeout = timeout
         self._local = threading.local()

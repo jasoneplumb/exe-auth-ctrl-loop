@@ -101,12 +101,17 @@ def proposal(proposal_id: str, **overrides: object) -> Proposal:
 
 # Authority state is durable since v3: evidence lives in a database file. Each scenario
 # below gets its own file in a throwaway directory, so no two share a track record.
+# The ledger key keys the hash chain (v3 Step 08); this one is example-only, and a
+# deployment supplies its own secret from outside the database file.
+LEDGER_KEY = b"example-only-ledger-key"
 _scratch = tempfile.TemporaryDirectory()
 _files = count()
 
 
 def fresh_store() -> EvidenceStore:
-    return EvidenceStore(Store(Path(_scratch.name) / f"scenario-{next(_files)}.db"))
+    return EvidenceStore(
+        Store(Path(_scratch.name) / f"scenario-{next(_files)}.db", ledger_key=LEDGER_KEY)
+    )
 
 
 def evidence_with(snapshot: EvidenceSnapshot) -> EvidenceStore:

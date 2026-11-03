@@ -12,6 +12,7 @@ from pathlib import Path
 
 from _support import (
     MCP_SERVER,
+    TEST_LEDGER_KEY,
     AdapterHandlers,
     issue,
     principals_for,
@@ -64,7 +65,7 @@ class Fixture(unittest.TestCase):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
         self.path = Path(tmp.name) / "authority.db"
-        self.db = Store(self.path)
+        self.db = Store(self.path, ledger_key=TEST_LEDGER_KEY)
         self.addCleanup(self.db.close)
         self.principals = principals_for(self.db)
         self.principals.register(OTHER, PrincipalKind.SERVICE, by="controller")
@@ -252,7 +253,7 @@ class NonceTests(Fixture):
         from exe_auth_ctrl_loop.authority import ExecutionGateway
         from datetime import datetime
         from exe_auth_ctrl_loop.store import Store
-        store = Store(sys.argv[1])
+        store = Store(sys.argv[1], ledger_key=b"test-ledger-key")
         now = datetime.fromisoformat(sys.argv[5])  # the test's clock, not the wall clock
         gateway = ExecutionGateway(lambda: now, store=store, handlers=AdapterHandlers(),
                                    principals=principals_for(store))

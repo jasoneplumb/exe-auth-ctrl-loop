@@ -48,11 +48,12 @@ Read these before reading any number.
 The harness drives the real components, but it wires them differently from `pipeline.py`, and some results depend on the difference.
 
 - **It labels every autonomous execution.** Every redeemed operation is frozen and labelled; the shipped loop freezes only audited ones. A failure under autonomy therefore always reaches the bound `label_delay` steps later. That is why the gate withdraws autonomy quickly in `delayed_defection` and `distribution_shift`, and why the audit rate changes nothing that executes.
-- **It never commits decisions to the ledger.** It calls the gateway directly, without the executor's commit-before-act hook.
+- **It commits decisions itself.** It calls `EventLedger.commit_decision` and the gateway directly, without the executor or its commit-before-act hook (since v3 Step 04 for autonomous and audit routes, and since Step 08 for human-routed proposals before they are frozen).
+- **It freezes every human-routed proposal.** The shipped loop (v3 Step 08) freezes only those on a partition that is not `AUTONOMOUS`; the harness also freezes them once the partition is autonomous.
 - **It freezes audits after execution.** The shipped loop freezes an audited proposal before the token is issued.
 - **Its human path bypasses the gateway.** A human-approved execution increments `handler_calls` and `tokens_consumed` without a token, so `unauthorized_side_effects` cannot be non-zero on that path.
 
-It is also the only code in the repository that creates `SHADOW` trials; a host using the shipped loop must freeze human-routed proposals itself.
+Since v3 Step 08 the shipped loop creates `SHADOW` trials too, so the harness is no longer the only route from `n=0` to autonomy. Like the shipped loop, it derives every trial's provenance from the committed decision and delivers labels signed by a registered oracle principal (`sim-oracle`) under a fixed simulation key; none of this moved a reported number (canonical hash unchanged at Step 08).
 
 ## Scenarios
 

@@ -28,6 +28,8 @@ from _support import (
     run,
     scratch_store,
 )
+from _support import label as support_label
+from _support import trial as freeze_trial
 
 from exe_auth_ctrl_loop.authority import (
     AuthorityController,
@@ -89,7 +91,9 @@ class World(unittest.TestCase):
         self.db = scratch_store()
         self.principals = principals_for(self.db)
         self.ledger = EventLedger(self.db)
-        self.shadow = ShadowEvidenceLog(self.ledger, timedelta(hours=1), self.clock)
+        self.shadow = ShadowEvidenceLog(
+            self.ledger, timedelta(hours=1), self.clock, principals=self.principals
+        )
         self.store = EvidenceStore(self.db)
         # a token lives longer than evidence stays fresh, so staleness can be observed at
         # redemption before expiry would refuse the token anyway
@@ -126,9 +130,9 @@ class World(unittest.TestCase):
         self.trials += 1
         trial = f"t-{self.trials}"
         p = self.proposal(1000 + self.trials, k=k)
-        self.assertTrue(self.shadow.freeze(trial, p, Provenance.SHADOW).accepted)
-        result = self.shadow.adjudicate(trial, k, p.proposal_digest, value, ORACLE, self.clock())
-        self.assertTrue(result.accepted)
+        self.assertTrue(freeze_trial(self.shadow, trial, p, Provenance.SHADOW).accepted)
+        result = support_label(self.shadow, trial, k, p.proposal_digest, value, ORACLE)
+        self.assertTrue(result.accepted, result.reason)
 
     def earn(self, k: PartitionKey) -> None:
         for _ in range(10):
@@ -202,7 +206,7 @@ class RevokingEventTests(World):
         evidence_token, p1 = self.token(1)
         human_token, p2 = self.token(2, approved=True)
         epoch = self.manager.record(self.key).epoch
-        self.manager.change_oracle(self.key, "constraint-v2", "2", by="alice")
+        self.manager.change_oracle(self.key, replace(ORACLE, oracle_version="2"), by="alice")
         self.assertEqual(self.manager.state(self.key), LifecycleState.QUALIFYING)
         self.assertEqual(self.manager.record(self.key).epoch, epoch + 1)
         self.assertIsNone(self.shadow.snapshot(self.key, T0))  # counts reset
@@ -324,7 +328,9 @@ class ListenerTests(World):
         token, p = self.token(1, k=other)
         for n in range(10):  # pending trials on the other partition, never labelled
             pending = self.proposal(2000 + n, k=other)
-            self.assertTrue(self.shadow.freeze(f"pending-{n}", pending, Provenance.SHADOW).accepted)
+            self.assertTrue(
+                freeze_trial(self.shadow, f"pending-{n}", pending, Provenance.SHADOW).accepted
+            )
         self.clock.now = T0 + timedelta(hours=2)  # past the label deadline, evidence fresh
         self.label(self.key, TrialLabel.POSITIVE)  # this partition's walk censors them
         self.assertEqual(self.manager.record(other).state, LifecycleState.QUALIFYING)

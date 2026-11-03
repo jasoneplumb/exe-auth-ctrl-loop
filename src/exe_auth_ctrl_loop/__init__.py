@@ -15,7 +15,7 @@ Module map:
   providers.py  OpenAI proposal generation
   executor.py   Claude execution requests, verified per operation
   pipeline.py   composition and ledger recording
-  ledger.py     tamper-evident hash chain
+  ledger.py     tamper-evident hash chain, keyed (HMAC) by the host
   lifecycle.py  explicit UNESTABLISHED/QUALIFYING/AUTONOMOUS/SUSPENDED state machine
   risk.py       host-owned risk envelopes, sequence budgets, decision- and redemption-time guards
   sequential.py anytime-valid Beta-mixture lower bound for the evidence gate
@@ -95,8 +95,10 @@ from .shadow import (
     ReviewAction,
     ShadowEvidenceLog,
     ShadowTrial,
+    SignedLabel,
     TrialLabel,
     TrialStatus,
+    label_payload,
 )
 from .store import Store, StoreError
 from .tools import HandlerTable, ToolCatalog, ToolDefinition, ToolValidationError
@@ -166,6 +168,7 @@ __all__ = [
     "StoreError",
     "ShadowEvidenceLog",
     "ShadowTrial",
+    "SignedLabel",
     "ToolDefinition",
     "ToolCatalog",
     "ToolValidationError",
@@ -180,6 +183,7 @@ __all__ = [
     "crosses",
     "digest",
     "evidence_snapshot_hash",
+    "label_payload",
     "log_mixture_martingale",
     "meta_key",
     "utcnow",

@@ -9,7 +9,17 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 
-from _support import AGENT, approve, gateway_store, rewrite_events, scratch_store
+from _support import (
+    AGENT,
+    TEST_LEDGER_KEY,
+    approve,
+    gateway_store,
+    principals_for,
+    rehash_chain,
+    rewrite_events,
+    scratch_store,
+)
+from _support import label as support_label
 
 from exe_auth_ctrl_loop import (
     AuthorityController,
@@ -29,7 +39,6 @@ from exe_auth_ctrl_loop import (
     Route,
     ToolCatalog,
     ToolDefinition,
-    digest,
 )
 
 NOW = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -262,7 +271,8 @@ class AuditDrawTests(unittest.TestCase):
         from exe_auth_ctrl_loop import Oracle, OracleKind, Provenance, ShadowEvidenceLog, TrialLabel
 
         h = Harness(audit_rate=1.0, commit="none")
-        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW)
+        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW,
+                                   principals=principals_for(h.ledger.store))
         seen = []
         loop = CrossModelAuthorityLoop(
             proposer=None, executor=h.agent, ledger=h.ledger,
@@ -288,10 +298,8 @@ class AuditDrawTests(unittest.TestCase):
         ))
         # the label lands on the frozen form, under the decision id, as AUDIT provenance
         oracle = Oracle("reviewer", "1", OracleKind.INDEPENDENT_REVIEW, "post-hoc")
-        result = shadow.adjudicate(
-            decision.decision_id, h.key, h.proposal.proposal_digest, TrialLabel.POSITIVE,
-            oracle, NOW + timedelta(minutes=5),
-        )
+        result = support_label(shadow, decision.decision_id, h.key, h.proposal.proposal_digest,
+                               TrialLabel.POSITIVE, oracle, NOW + timedelta(minutes=5))
         self.assertTrue(result.accepted)
         self.assertEqual(shadow.counts(h.key, Provenance.AUDIT).positive, 1)
         self.assertEqual(shadow.counts(h.key, Provenance.AUTONOMOUS).frozen, 0)
@@ -300,7 +308,8 @@ class AuditDrawTests(unittest.TestCase):
         from exe_auth_ctrl_loop import ShadowEvidenceLog
 
         h = Harness(audit_rate=0.0, commit="none")
-        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW)
+        shadow = ShadowEvidenceLog(h.ledger, timedelta(hours=1), lambda: NOW,
+                                   principals=principals_for(h.ledger.store))
         CrossModelAuthorityLoop(
             proposer=None, executor=h.agent, ledger=h.ledger,
             policy_version="pol1", environment_version="prod1", shadow=shadow,
@@ -324,24 +333,6 @@ class ChainLimitTests(unittest.TestCase):
             ledger.append("e", f"a-{i}", "controller", {"i": i})
         return ledger
 
-    def rehash_from(self, events, start):
-        """Recompute every hash from `start` on, as anyone holding the chain can."""
-        # the body mirrors EventLedger.append/verify; a schema change there must land here
-        previous = events[start - 1].event_hash if start else "GENESIS"
-        for index in range(start, len(events)):
-            event = events[index]
-            body = {
-                "sequence": event.sequence,
-                "event_type": event.event_type,
-                "aggregate_id": event.aggregate_id,
-                "actor": event.actor,
-                "occurred_at": event.occurred_at.isoformat(),
-                "payload": event.payload,
-                "previous_hash": previous,
-            }
-            events[index] = replace(event, previous_hash=previous, event_hash=digest(body))
-            previous = events[index].event_hash
-
     def test_interior_edit_is_detected(self):
         ledger = self.ledger()
         events = ledger.events
@@ -349,28 +340,46 @@ class ChainLimitTests(unittest.TestCase):
         rewrite_events(ledger, events)
         self.assertFalse(ledger.verify())
 
-    # The next two pin documented limits (claims matrix C22). A keyed hash or a sequence-gap
-    # check would make them fail, and should update them deliberately.
-    def test_interior_edit_with_a_rehashed_suffix_passes_verify(self):
+    # C22 since v3 Step 08 (gate criterion 5): the chain is an HMAC under Store.ledger_key and
+    # sequences must be contiguous, so the re-hash attack v0.3.1 pinned as passing now fails
+    # for anyone without the key. A key holder can still re-hash an edit; no one can re-hash
+    # a gap away without renumbering, and renumbering needs the key too.
+    def test_interior_edit_with_a_rehashed_suffix_is_detected_without_the_key(self):
+        for guess in (None, b"guessed-key"):
+            with self.subTest(guess=guess):
+                ledger = self.ledger()
+                anchor = ledger.anchor()
+                events = ledger.events
+                events[1] = replace(events[1], payload={"i": 99})
+                rehash_chain(events, 1, guess)
+                rewrite_events(ledger, events)
+                self.assertFalse(ledger.verify())
+                self.assertFalse(ledger.verify_anchor(*anchor))
+
+    def test_interior_edit_rehashed_by_a_key_holder_passes_verify(self):
+        # the documented limit: the host (or anyone with its key) is out of scope
         ledger = self.ledger()
         anchor = ledger.anchor()
         events = ledger.events
         events[1] = replace(events[1], payload={"i": 99})
-        self.rehash_from(events, 1)
+        rehash_chain(events, 1, TEST_LEDGER_KEY)
         rewrite_events(ledger, events)
-        self.assertTrue(ledger.verify())  # the hash is unkeyed SHA-256
+        self.assertTrue(ledger.verify())
         self.assertFalse(ledger.verify_anchor(*anchor))  # what an external anchor adds
 
-    def test_interior_deletion_with_a_rehashed_suffix_passes_verify(self):
-        ledger = self.ledger()
-        anchor = ledger.anchor()
-        events = ledger.events
-        del events[1]
-        self.rehash_from(events, 1)
-        rewrite_events(ledger, events)
-        self.assertEqual([e.sequence for e in ledger.events], [0, 2, 3])
-        self.assertTrue(ledger.verify())  # sequence numbers are hashed, not checked for gaps
-        self.assertFalse(ledger.verify_anchor(*anchor))
+    def test_interior_deletion_with_a_rehashed_suffix_is_detected(self):
+        for guess in (None, b"guessed-key", TEST_LEDGER_KEY):
+            with self.subTest(guess=guess):
+                ledger = self.ledger()
+                anchor = ledger.anchor()
+                events = ledger.events
+                del events[1]
+                rehash_chain(events, 1, guess)
+                rewrite_events(ledger, events)
+                self.assertEqual([e.sequence for e in ledger.events], [0, 2, 3])
+                # even with the key: the gap fails the contiguity check
+                self.assertFalse(ledger.verify())
+                self.assertFalse(ledger.verify_anchor(*anchor))
 
     def test_truncation_is_not_detected_by_verify_alone(self):
         ledger = self.ledger()
@@ -384,7 +393,7 @@ class ChainLimitTests(unittest.TestCase):
     def test_wholesale_rewrite_is_not_detected_by_verify_alone(self):
         ledger = self.ledger()
         anchor = ledger.anchor()
-        rebuilt = EventLedger(scratch_store())
+        rebuilt = EventLedger(scratch_store())  # same key: a rewrite by a key holder
         for i in range(4):
             rebuilt.append("e", f"a-{i}", "controller", {"i": -i})  # different history, fresh chain
         rewrite_events(ledger, rebuilt.events)

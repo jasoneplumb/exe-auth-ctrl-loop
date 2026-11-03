@@ -6,9 +6,12 @@ Context: v1 counts only autonomous outcomes, but autonomy needs evidence, so an 
         the counts as an EvidenceSnapshot the existing controller already understands.
 Pattern: Freeze, then label. The candidate's digest and a ledger record exist before any
         human sees it, and every later record refers to that digest rather than replacing it.
-Future: Durable since v3 Step 02, in the ledger's database. Labels from an oracle
-        estimate oracle-adjudicated acceptability, not live side-effect reliability
-        (docs/v2/spec.md section 5).
+Future: Durable since v3 Step 02, in the ledger's database. Since Step 08 a trial's
+        provenance is derived from its committed decision, labels are signed by a
+        registered ORACLE principal bound to the trial's epoch, the deadline runs on the
+        host's receipt time, and a reviewer cannot also be the labeller (spec §7). Labels
+        from an oracle estimate oracle-adjudicated acceptability, not live side-effect
+        reliability (docs/v2/spec.md section 5).
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ from .authority import (
     utcnow,
 )
 from .ledger import EventLedger
+from .principals import PrincipalKind, Principals
 from .store import Store, delta_us, partition_text, time_text, time_us
 
 
@@ -70,6 +74,14 @@ class Reason(str, Enum):
     LABEL_BEFORE_FREEZE = "LABEL_BEFORE_FREEZE"
     LATE_LABEL = "LATE_LABEL"
     LABEL_DEADLINE = "LABEL_DEADLINE"
+    # v3 Step 08 (spec §7 rules 7, 8)
+    NOT_COMMITTED = "NOT_COMMITTED"
+    NOT_TRIALABLE = "NOT_TRIALABLE"
+    DUPLICATE_PROPOSAL = "DUPLICATE_PROPOSAL"
+    ORACLE_NOT_REGISTERED = "ORACLE_NOT_REGISTERED"
+    BAD_SIGNATURE = "BAD_SIGNATURE"
+    WRONG_ORACLE = "WRONG_ORACLE"
+    REVIEWER_IS_ORACLE = "REVIEWER_IS_ORACLE"
 
 
 class ReviewAction(str, Enum):
@@ -97,11 +109,47 @@ class ShadowTrial:
 
 
 @dataclass(frozen=True)
+class SignedLabel:
+    """
+    intent: One oracle's verdict on one frozen trial, signed so the host can check who gave it
+    constraint: The MAC (label_payload) covers the trial, its partition and frozen digest,
+                the verdict, the oracle's identity and version, and the oracle's own claimed
+                time. The host records claimed_at and never uses it for admission.
+    """
+
+    trial_id: str
+    partition: PartitionKey
+    proposal_digest: str
+    label: TrialLabel
+    oracle: Oracle
+    claimed_at: datetime
+    mac: str
+
+    def payload(self) -> dict[str, object]:
+        return label_payload(self.trial_id, self.partition, self.proposal_digest, self.label,
+                             self.oracle, self.claimed_at)
+
+
+def label_payload(
+    trial_id: str, partition: PartitionKey, proposal_digest: str, label: TrialLabel,
+    oracle: Oracle, claimed_at: datetime,
+) -> dict[str, object]:
+    return {
+        "action": "label", "trial_id": trial_id, "partition": asdict(partition),
+        "proposal_digest": proposal_digest, "label": TrialLabel(label).value,
+        "oracle_id": oracle.oracle_id, "oracle_version": oracle.oracle_version,
+        "oracle_kind": OracleKind(oracle.kind).value, "validity_scope": oracle.validity_scope,
+        "claimed_at": time_text(claimed_at),
+    }
+
+
+@dataclass(frozen=True)
 class Result:
     """accepted=False means the request was quarantined and changed no evidence."""
 
     accepted: bool
     reason: Reason | None = None
+    provenance: Provenance | None = None
 
 
 @dataclass(frozen=True)
@@ -150,8 +198,17 @@ class ShadowEvidenceLog:
         ledger: EventLedger,
         label_deadline: timedelta = timedelta(days=1),
         clock: Callable[[], datetime] = utcnow,
+        *,
+        principals: Principals,
     ) -> None:
+        """
+        constraint: `principals` verifies oracle signatures (keys stay in its Keyring) and
+                    must share the ledger's Store
+        """
+        if principals.store is not ledger.store:
+            raise ValueError("the shadow log and its principals must share one Store")
         self.ledger = ledger
+        self.principals = principals
         self.store = ledger.store
         self.label_deadline = label_deadline
         self.clock = clock
@@ -160,11 +217,13 @@ class ShadowEvidenceLog:
         # (LifecycleManager registers itself; v3 Step 06, RV-03)
         self.listeners: list[Callable[[PartitionKey], None]] = []
 
-    def open_epoch(self, key: PartitionKey) -> None:
+    def open_epoch(self, key: PartitionKey) -> int:
         """
         intent: Start a partition's evidence over, e.g. after a human releases a suspension
         effect: Trials frozen before this ledger event stop counting, so data gathered
                 around the incident cannot requalify the partition on the same day
+        effect: Returns the new epoch's floor sequence (the opening event's), which the
+                lifecycle records in alpha_ledger
         """
         with self.store.transaction() as conn:
             event = self.ledger.append(
@@ -174,21 +233,44 @@ class ShadowEvidenceLog:
             conn.execute(
                 "INSERT INTO epochs VALUES (?, ?)", (partition_text(key), event.sequence)
             )
+        return event.sequence
 
-    def freeze(
-        self,
-        trial_id: str,
-        proposal: Proposal,
-        provenance: Provenance = Provenance.SHADOW,
-    ) -> Result:
+    def freeze(self, decision_id: str, proposal: Proposal) -> Result:
         """
         intent: Commit to a candidate before anyone can review it
+        method: The trial is the committed decision: its id is the decision id, and its
+                provenance is derived from the decision's route and approval record (spec
+                §7 rule 7), never passed in. AUDIT and AUTONOMOUS give themselves;
+                HUMAN_APPROVAL gives SHADOW; any decision whose token was issued on an
+                approval gives HUMAN_APPROVED (recorded, never counted).
         effect: The ledger event is the pre-review commitment; frozen_sequence orders it
                 before any human_review or label event for the same trial
+        constraint: One counting trial per proposal per epoch: a proposal frozen again (an
+                    approved re-run makes a new decision for the same proposal) is refused as
+                    DUPLICATE_PROPOSAL, so a proposal is never counted twice
         """
+        trial_id = decision_id
         with self.store.transaction() as conn:
             if self.trial(trial_id) is not None:
                 return self._quarantine(trial_id, Reason.DUPLICATE_TRIAL)
+            committed = conn.execute(
+                "SELECT proposal_digest, route FROM decisions WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+            if committed is None:
+                return self._quarantine(trial_id, Reason.NOT_COMMITTED)
+            if committed[0] != proposal.proposal_digest:
+                return self._quarantine(trial_id, Reason.DIGEST_MISMATCH)
+            provenance = self._provenance(conn, decision_id, committed[1])
+            if provenance is None:
+                return self._quarantine(trial_id, Reason.NOT_TRIALABLE)
+            if provenance in COUNTING_PROVENANCE and conn.execute(
+                "SELECT 1 FROM trials WHERE partition = ? AND proposal_digest = ?"
+                " AND frozen_sequence > ? AND provenance != 'human_approved'",
+                (partition_text(proposal.partition), proposal.proposal_digest,
+                 self._floor(proposal.partition)),
+            ).fetchone():
+                return self._quarantine(trial_id, Reason.DUPLICATE_PROPOSAL)
             now = self.clock()
             event = self.ledger.append(
                 "shadow.frozen",
@@ -207,62 +289,140 @@ class ShadowEvidenceLog:
                 (trial_id, provenance.value, partition_text(proposal.partition),
                  proposal.proposal_digest, time_text(now), time_us(now), event.sequence),
             )
-        return Result(True)
+        return Result(True, provenance=provenance)
 
-    def adjudicate(
-        self,
-        trial_id: str,
-        partition: PartitionKey,
-        proposal_digest: str,
-        label: TrialLabel,
-        oracle: Oracle,
-        labeled_at: datetime | None = None,
-    ) -> Result:
+    @staticmethod
+    def _provenance(conn, decision_id: str, route: str) -> Provenance | None:
+        approved = conn.execute(
+            "SELECT 1 FROM tokens WHERE decision_id = ? AND approval_id IS NOT NULL",
+            (decision_id,),
+        ).fetchone()
+        if approved:
+            return Provenance.HUMAN_APPROVED
+        return {"audit": Provenance.AUDIT, "autonomous": Provenance.AUTONOMOUS,
+                "human_approval": Provenance.SHADOW}.get(route)
+
+    def bind_oracle(self, key: PartitionKey, oracle: Oracle) -> None:
+        """
+        intent: Bind the partition's current epoch to one oracle (spec §7 rule 11, O-2)
+        constraint: An epoch is bound once. A different oracle needs a new epoch
+                    (LifecycleManager.change_oracle); the first admitted label binds an
+                    unbound epoch to its own oracle.
+        """
+        with self.store.transaction():
+            floor = self._floor(key)
+            bound = self._bound_oracle(key, floor)
+            if bound is not None:
+                if bound != (oracle.oracle_id, oracle.oracle_version):
+                    raise ValueError("this epoch is bound to another oracle; open a new epoch")
+                return
+            self._bind(key, floor, oracle)
+
+    def adjudicate(self, signed: SignedLabel) -> Result:
         """
         intent: Accept one oracle label for one frozen candidate, once
-        constraint: The oracle must name the digest it labeled and the partition it
-                    belongs to. A label for a reviewer's rewrite, another configuration,
-                    a second label for the same trial, or one outside the deadline is
-                    quarantined; a late label also censors the trial so a favorable
-                    label cannot be held back until it is convenient.
+        method: In order: the trial exists and the label names its partition and frozen
+                digest; the labeller is an active ORACLE principal and the MAC verifies
+                under its key; the trial is still pending; the labeller did not review this
+                trial; the oracle is the one bound to the trial's epoch (the first admitted
+                label binds an unbound one); the label arrived (host clock) inside the
+                deadline. Any failure is quarantined and ledgered (spec §7 rules 8, 9).
+        effect: A late label also censors the trial, so a favourable label cannot be held
+                back until it is convenient. The labeller's claimed_at is recorded and never
+                used: a backdated claim cannot make a late label admissible.
         """
+        trial_id = signed.trial_id
+        oracle = signed.oracle
         with self.store.transaction() as conn:
+            received = self.clock()
             trial = self.trial(trial_id)
-            when = labeled_at or self.clock()
             if trial is None:
                 return self._quarantine(trial_id, Reason.UNKNOWN_TRIAL)
-            if partition != trial.partition:
+            if signed.partition != trial.partition:
                 return self._quarantine(trial_id, Reason.WRONG_PARTITION)
-            if proposal_digest != trial.proposal_digest:
+            if signed.proposal_digest != trial.proposal_digest:
                 return self._quarantine(trial_id, Reason.DIGEST_MISMATCH)
+            labeller = self.principals.principal(oracle.oracle_id)
+            if (labeller is None or not labeller.active
+                    or labeller.kind is not PrincipalKind.ORACLE or labeller.key_id is None):
+                return self._quarantine(trial_id, Reason.ORACLE_NOT_REGISTERED)
+            if not self.principals.keyring.verify(labeller.key_id, signed.payload(), signed.mac):
+                return self._quarantine(trial_id, Reason.BAD_SIGNATURE)
             if self.status(trial_id) != TrialStatus.PENDING:
                 return self._quarantine(trial_id, Reason.ALREADY_ADJUDICATED)
-            if when < trial.frozen_at:
+            if conn.execute(
+                "SELECT 1 FROM ledger WHERE event_type = 'shadow.human_review'"
+                " AND aggregate_id = ? AND actor = ?",
+                (trial_id, oracle.oracle_id),
+            ).fetchone():
+                return self._quarantine(trial_id, Reason.REVIEWER_IS_ORACLE)
+            floor = self._trial_floor(trial)
+            bound = self._bound_oracle(trial.partition, floor)
+            if bound is not None and bound != (oracle.oracle_id, oracle.oracle_version):
+                return self._quarantine(trial_id, Reason.WRONG_ORACLE)
+            if received < trial.frozen_at:
                 return self._quarantine(trial_id, Reason.LABEL_BEFORE_FREEZE)
-            if when > trial.frozen_at + self.label_deadline:
+            if received > trial.frozen_at + self.label_deadline:
                 self._censor(trial_id, Reason.LATE_LABEL)
                 return self._quarantine(trial_id, Reason.LATE_LABEL)
+            if bound is None:
+                self._bind(trial.partition, floor, oracle)
             self.ledger.append(
                 "shadow.labeled",
                 trial_id,
                 oracle.oracle_id,
                 {
-                    "label": label.value,
-                    "proposal_digest": proposal_digest,
+                    "label": TrialLabel(signed.label).value,
+                    "proposal_digest": signed.proposal_digest,
                     "oracle_id": oracle.oracle_id,
                     "oracle_version": oracle.oracle_version,
-                    "oracle_kind": oracle.kind.value,
+                    "oracle_kind": OracleKind(oracle.kind).value,
                     "validity_scope": oracle.validity_scope,
-                    "labeled_at": when.isoformat(),
+                    "claimed_at": time_text(signed.claimed_at),
+                    "received_at": time_text(received),
+                    "mac": signed.mac,
                 },
-                when,
+                received,
             )
             conn.execute(
-                "INSERT INTO labels VALUES (?, ?, 0, ?, ?)",
-                (trial_id, label.value, time_text(when), time_us(when)),
+                "INSERT INTO labels (trial_id, label, censored, resolved_at, resolved_us,"
+                " claimed_at) VALUES (?, ?, 0, ?, ?, ?)",
+                (trial_id, TrialLabel(signed.label).value, time_text(received),
+                 time_us(received), time_text(signed.claimed_at)),
             )
             self._notify(trial.partition)
         return Result(True)
+
+    def _trial_floor(self, trial: ShadowTrial) -> int:
+        """The epoch floor in force when the trial was frozen."""
+        row = self.store.connection().execute(
+            "SELECT MAX(floor_sequence) FROM epochs WHERE partition = ? AND floor_sequence < ?",
+            (partition_text(trial.partition), trial.frozen_sequence),
+        ).fetchone()
+        return -1 if row[0] is None else int(row[0])
+
+    def _bound_oracle(self, key: PartitionKey, floor: int) -> tuple[str, str] | None:
+        row = self.store.connection().execute(
+            "SELECT oracle_id, oracle_version FROM epoch_oracles"
+            " WHERE partition = ? AND floor_sequence = ?",
+            (partition_text(key), floor),
+        ).fetchone()
+        return None if row is None else (row[0], row[1])
+
+    def _bind(self, key: PartitionKey, floor: int, oracle: Oracle) -> None:
+        with self.store.transaction() as conn:
+            event = self.ledger.append(
+                "shadow.oracle_bound", digest(_partition_payload(key))[:16], "controller",
+                {"partition": _partition_payload(key), "floor_sequence": floor,
+                 "oracle_id": oracle.oracle_id, "oracle_version": oracle.oracle_version,
+                 "oracle_kind": OracleKind(oracle.kind).value,
+                 "validity_scope": oracle.validity_scope},
+            )
+            conn.execute(
+                "INSERT INTO epoch_oracles VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (partition_text(key), floor, oracle.oracle_id, oracle.oracle_version,
+                 OracleKind(oracle.kind).value, oracle.validity_scope, event.sequence),
+            )
 
     def record_human_review(
         self,
@@ -451,18 +611,23 @@ class ShadowEvidenceLog:
         into: Store,
         label_deadline: timedelta = timedelta(days=1),
         clock: Callable[[], datetime] = utcnow,
+        *,
+        principals: Principals,
     ) -> ShadowEvidenceLog:
         """
-        intent: Rebuild the log from the ledger alone, to show counts are reproducible
-        constraint: Refuses a ledger whose chain does not verify. Quarantine and review
-                    events are skipped because they never changed evidence.
+        intent: Rebuild the log from the ledger alone, to show counts and refusals are
+                reproducible
+        constraint: Refuses a ledger whose chain does not verify. Trials, labels, censoring,
+                    epochs, oracle bindings, and quarantines are rebuilt; review events are
+                    skipped because they never changed evidence. `principals` is the rebuilt
+                    log's, on `into`.
         constraint: `into` must be a different, empty database: the rebuilt trials keep the
                     source ledger's sequence numbers, and mixing them with another log's
                     rows would pool two histories. The rebuilt log's own ledger is `into`'s.
         """
         if not ledger.verify():
             raise ValueError("ledger chain does not verify")
-        log = cls(EventLedger(into), label_deadline, clock)
+        log = cls(EventLedger(into), label_deadline, clock, principals=principals)
         with into.transaction() as conn:
             # constraint: checked under the same write lock as the inserts, so two
             # replays into one database cannot both find it empty
@@ -483,14 +648,17 @@ class ShadowEvidenceLog:
                          event.sequence),
                     )
                 elif event.event_type == "shadow.labeled":
-                    when = datetime.fromisoformat(payload["labeled_at"])
+                    when = datetime.fromisoformat(payload["received_at"])
                     conn.execute(
-                        "INSERT INTO labels VALUES (?, ?, 0, ?, ?)",
-                        (event.aggregate_id, payload["label"], time_text(when), time_us(when)),
+                        "INSERT INTO labels (trial_id, label, censored, resolved_at,"
+                        " resolved_us, claimed_at) VALUES (?, ?, 0, ?, ?, ?)",
+                        (event.aggregate_id, payload["label"], time_text(when), time_us(when),
+                         payload["claimed_at"]),
                     )
                 elif event.event_type == "shadow.censored":
                     conn.execute(
-                        "INSERT INTO labels VALUES (?, NULL, 1, ?, ?)",
+                        "INSERT INTO labels (trial_id, label, censored, resolved_at,"
+                        " resolved_us) VALUES (?, NULL, 1, ?, ?)",
                         (event.aggregate_id, time_text(event.occurred_at),
                          time_us(event.occurred_at)),
                     )
@@ -499,6 +667,17 @@ class ShadowEvidenceLog:
                     conn.execute(
                         "INSERT INTO epochs VALUES (?, ?)", (partition_text(key), event.sequence)
                     )
+                elif event.event_type == "shadow.oracle_bound":
+                    key = PartitionKey(**payload["partition"])
+                    conn.execute(
+                        "INSERT INTO epoch_oracles VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (partition_text(key), payload["floor_sequence"], payload["oracle_id"],
+                         payload["oracle_version"], payload["oracle_kind"],
+                         payload["validity_scope"], event.sequence),
+                    )
+                elif event.event_type == "shadow.quarantined":
+                    conn.execute("INSERT INTO quarantines VALUES (?, ?, ?)",
+                                 (event.sequence, event.aggregate_id, payload["reason"]))
         return log
 
     def _censor(self, trial_id: str, reason: Reason) -> None:
@@ -507,7 +686,8 @@ class ShadowEvidenceLog:
                 "shadow.censored", trial_id, "controller", {"reason": reason.value}, self.clock()
             )
             conn.execute(
-                "INSERT INTO labels VALUES (?, NULL, 1, ?, ?)",
+                "INSERT INTO labels (trial_id, label, censored, resolved_at, resolved_us)"
+                " VALUES (?, NULL, 1, ?, ?)",
                 (trial_id, time_text(event.occurred_at), time_us(event.occurred_at)),
             )
             trial = self.trial(trial_id)
@@ -519,5 +699,17 @@ class ShadowEvidenceLog:
             listener(key)
 
     def _quarantine(self, trial_id: str, reason: Reason) -> Result:
-        self.ledger.append("shadow.quarantined", trial_id, "controller", {"reason": reason.value})
+        """Refuse, and keep the refusal: a ledger event and a quarantines row together."""
+        with self.store.transaction() as conn:
+            event = self.ledger.append(
+                "shadow.quarantined", trial_id, "controller", {"reason": reason.value}
+            )
+            conn.execute("INSERT INTO quarantines VALUES (?, ?, ?)",
+                         (event.sequence, trial_id, reason.value))
         return Result(False, reason)
+
+    def quarantines(self) -> list[tuple[str, str]]:
+        """Every refused request as (trial_id, reason), in ledger order."""
+        return [(row[0], row[1]) for row in self.store.connection().execute(
+            "SELECT trial_id, reason FROM quarantines ORDER BY sequence"
+        )]
