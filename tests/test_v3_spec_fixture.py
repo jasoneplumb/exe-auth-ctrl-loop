@@ -111,12 +111,12 @@ class SpecContractTest(unittest.TestCase):
         self.assertEqual(missing, [])
 
     def test_no_pending_rule_remains_for_a_decided_option(self):
-        self.assertNotRegex(SPEC, r"[Pp]ending O-[2567]\b")
+        self.assertNotRegex(SPEC, r"[Pp]ending O-[2-9]\b")
         decisions = section(SPEC, 11)
-        for closed in ("O-1", "O-2", "O-5", "O-6", "O-7", "O-9"):
+        # O-3, O-4, O-8 closed by the owner on 2026-11-03 from Step 09's measurements
+        for closed in ("O-1", "O-2", "O-3", "O-4", "O-5", "O-6", "O-7", "O-8", "O-9"):
             self.assertRegex(decisions, rf"\| {closed} \| \*\*Closed \d{{4}}-\d{{2}}-\d{{2}}")
-        for still_open in ("O-3", "O-4", "O-8"):
-            self.assertRegex(decisions, rf"\| {still_open} \| Open until Step 09")
+        self.assertNotIn("Open until Step 09", decisions)
 
     def test_module_names_are_fixed_in_the_plan(self):
         self.assertNotIn("names provisional", PLAN)
