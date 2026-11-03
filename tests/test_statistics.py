@@ -172,3 +172,52 @@ class BehaviourTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AgreementTests(unittest.TestCase):
+    """
+    Tier two's check (issue #40): the driver's gate logic, fed the shipped loop's own
+    trials, reaches the same qualification step as the shipped loop. The committed check
+    runs 50 seeds per config (results-v3/agreement/agreement.json); this runs three.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        from experiments.simulate import ScenarioConfig, Simulation
+        from experiments.statistics import AGREEMENT_BASE, AGREEMENT_CONFIGS
+
+        cls.runs = []
+        for config in AGREEMENT_CONFIGS:
+            cfg = ScenarioConfig.from_dict({**AGREEMENT_BASE, **config, "seeds": [1]})
+            for seed in (1, 2, 3):
+                sim = Simulation(cfg, seed)
+                cls.runs.append((cfg, sim, sim.run().time_to_authority))
+
+    def cell(self, cfg):
+        return Cell("agreement", "agreement/test", p=cfg.p_good, r=cfg.required_low,
+                    alpha=cfg.alpha, n_min=cfg.n_min, horizon=cfg.horizon,
+                    deadline=cfg.label_deadline)
+
+    def test_the_driver_reproduces_the_shipped_loops_qualification_step(self):
+        from experiments.statistics import first_crossing, shipped_trials
+
+        qualified = 0
+        for cfg, sim, shipped in self.runs:
+            with self.subTest(config=cfg.name, seed=sim.seed):
+                cell = self.cell(cfg)
+                self.assertEqual(first_crossing(cell, cell.alpha, shipped_trials(sim, sim.key)),
+                                 shipped)
+                qualified += shipped is not None
+        self.assertGreaterEqual(qualified, 5)  # agreement on "never" alone would be weak
+
+    def test_the_check_detects_a_one_step_timing_error(self):
+        # if the driver saw each label one step late, the check must notice
+        from experiments.statistics import first_crossing, shipped_trials
+
+        late = [
+            first_crossing(self.cell(cfg), cfg.alpha,
+                           [(f, v + 1, x) for f, v, x in shipped_trials(sim, sim.key)])
+            != shipped
+            for cfg, sim, shipped in self.runs if shipped is not None
+        ]
+        self.assertTrue(any(late))

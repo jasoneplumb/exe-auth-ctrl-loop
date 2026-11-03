@@ -195,21 +195,53 @@ def _verdicts(cell: Cell, p: float, rng: random.Random) -> list[int]:
     return verdicts
 
 
-def run_unit(cell: Cell, p: float, alpha: float, rng: random.Random) -> int | None:
+Trial = tuple[int, int, int]  # (frozen at step, visible from step, counted value 1 or 0)
+
+
+def trials(cell: Cell, p: float, rng: random.Random) -> list[Trial]:
     """
-    intent: One partition, one epoch: the first step at which the gate opens, or None
-    method: At each step t the gate reads the trials frozen before t. A label sent with
-            delay d <= deadline is visible from step i + max(d, 1), as in the shipped
-            harness (a label is delivered at the start of a step, before that step's
-            proposal); otherwise the trial is censored from step i + deadline + 1 (the
-            shipped expire_unlabeled: now > frozen + deadline). Then trial t is frozen,
-            unless block counting skips it.
-    effect: Returns the number of steps (proposals seen) before autonomy, which is the
-            "trials to qualify" reported at cost_p
+    intent: One partition-epoch's counting trials, with when each resolves and how it counts
+    method: Trial i (one per step, or one per block under block counting) is frozen at step
+            i. A label sent with delay d <= deadline is visible from step i + max(d, 1), as
+            in the shipped harness (a label is delivered at the start of a step, before that
+            step's proposal); otherwise the trial is censored and visible, as a failure,
+            from step i + deadline + 1 (the shipped expire_unlabeled: now > frozen +
+            deadline)
+    """
+    verdicts = _verdicts(cell, p, rng)
+    out = []
+    for step, verdict in enumerate(verdicts):
+        if cell.counting == "block" and step % cell.block_size:
+            continue  # not a counting trial
+        delay = cell.negative_delay if verdict == 0 else cell.positive_delay
+        value = verdict
+        targeted = (
+            (cell.censor_target == "negatives" and verdict == 0)
+            or (cell.censor_target == "positives" and verdict == 1)
+            or (cell.censor_target == "random" and rng.random() < 0.5)
+        )
+        if targeted and cell.censor_action == "inconclusive":
+            value = 0
+        if (targeted and cell.censor_action == "withhold") or delay > cell.deadline:
+            out.append((step, step + cell.deadline + 1, 0))
+        else:
+            out.append((step, step + max(delay, 1), value))
+    return out
+
+
+def first_crossing(cell: Cell, alpha: float, counted: list[Trial]) -> int | None:
+    """
+    intent: The first step at which the gate opens for these trials, or None
+    method: At each step t the gate reads the trials frozen before t, counted by the cell's
+            pending rule, against the shipped bound's success threshold. This is the only
+            gate logic in the driver; the agreement check (agreement()) feeds it the
+            shipped loop's own trials.
+    effect: The step is the number of proposals seen before autonomy, which is the "trials
+            to qualify" reported at cost_p
     """
     threshold = success_threshold(alpha, cell.r, cell.horizon)
-    verdicts = _verdicts(cell, p, rng)
-    due: dict[int, list[int]] = {}  # visible-from step -> counted values (1 success, 0 not)
+    due: dict[int, list[int]] = {}
+    by_step = {step: (visible, value) for step, visible, value in counted}
     frozen = resolved = successes = 0
     for t in range(cell.horizon):
         for value in due.pop(t, ()):
@@ -218,25 +250,16 @@ def run_unit(cell: Cell, p: float, alpha: float, rng: random.Random) -> int | No
         n = frozen if cell.pending == "pessimistic" else resolved
         if n >= cell.n_min and successes >= threshold[n]:
             return t
-        if cell.counting == "block" and t % cell.block_size:
-            continue  # not a counting trial
-        frozen += 1
-        verdict = verdicts[t]
-        delay = cell.negative_delay if verdict == 0 else cell.positive_delay
-        value = verdict
-        targeted = (
-            (cell.censor_target == "negatives" and verdict == 0)
-            or (cell.censor_target == "positives" and verdict == 1)
-            or (cell.censor_target == "random" and rng.random() < 0.5)
-        )
-        withheld = targeted and cell.censor_action == "withhold"
-        if targeted and cell.censor_action == "inconclusive":
-            value = 0
-        if withheld or delay > cell.deadline:
-            due.setdefault(t + cell.deadline + 1, []).append(0)
-        else:
-            due.setdefault(t + max(delay, 1), []).append(value)
+        if t in by_step:
+            frozen += 1
+            visible, value = by_step[t]
+            due.setdefault(visible, []).append(value)
     return None
+
+
+def run_unit(cell: Cell, p: float, alpha: float, rng: random.Random) -> int | None:
+    """One partition, one epoch: the first step at which the gate opens, or None."""
+    return first_crossing(cell, alpha, trials(cell, p, rng))
 
 
 def run_sequence(cell: Cell, p: float, rng: random.Random) -> list[int | None]:
@@ -318,6 +341,78 @@ def run_cells(cells: Iterable[Cell], workers: int | None = None,
     return summaries
 
 
+# Tier two's check (owner decision, issue #40): shipped-loop runs whose qualification time
+# the driver must reproduce from the loop's own trials. Each covers a different path:
+# label delay, missing labels censored at the deadline, inconclusive labels, and a rate
+# near the threshold so some runs never qualify.
+AGREEMENT_CONFIGS: tuple[dict[str, Any], ...] = (
+    {"name": "agree_fast_labels", "p_good": 0.97, "label_delay": 0},
+    {"name": "agree_delayed_labels", "p_good": 0.97, "label_delay": 5},
+    {"name": "agree_censored", "p_good": 0.99, "label_delay": 2, "label_missing": 0.02,
+     "oracle_inconclusive": 0.01, "label_deadline": 20},
+)
+AGREEMENT_BASE = {"horizon": 200, "severe_given_bad": 0.0, "audit_rate": 0.0}
+
+
+def shipped_trials(sim: Any, key: Any) -> list[Trial]:
+    """
+    intent: The partition's SHADOW trials as the shipped loop recorded them, in the driver's
+            form: freeze step, the step its label or censoring took effect, counted value
+    method: Read from the ledger the loop wrote, steps being the simulation clock's minutes
+    """
+    from .simulate import T0
+
+    def step(when: Any) -> int:
+        return int((when - T0).total_seconds() // 60)
+
+    frozen: dict[str, int] = {}
+    resolved: dict[str, tuple[int, int]] = {}
+    for event in sim.ledger.events:
+        if (event.event_type == "shadow.frozen" and event.payload["provenance"] == "shadow"
+                and event.payload["partition"] == asdict(key)):
+            frozen[event.aggregate_id] = step(event.occurred_at)
+        elif event.event_type == "shadow.labeled":
+            resolved[event.aggregate_id] = (
+                step(event.occurred_at), int(event.payload["label"] == "positive"))
+        elif event.event_type == "shadow.censored":
+            resolved[event.aggregate_id] = (step(event.occurred_at), 0)
+    never = 10**9  # unresolved by the horizon: never visible
+    return sorted((at, *resolved.get(trial_id, (never, 0))) for trial_id, at in frozen.items())
+
+
+def agreement(seeds: Iterable[int] = range(1, 51)) -> list[dict[str, Any]]:
+    """
+    intent: Show the driver and the shipped loop make the same qualification decision
+    method: For each config and seed, run the shipped-loop harness, rebuild its trials from
+            the ledger, and compare the harness's time to authority with first_crossing on
+            those trials under the shipped (deadline-only) rule. A mismatch is reported,
+            not raised, so the artifact records it.
+    """
+    from .simulate import ScenarioConfig, Simulation
+
+    out = []
+    seeds = list(seeds)
+    for config in AGREEMENT_CONFIGS:
+        cfg = ScenarioConfig.from_dict({**AGREEMENT_BASE, **config, "seeds": seeds})
+        cell = Cell("agreement", f"agreement/{cfg.name}", p=cfg.p_good, r=cfg.required_low,
+                    alpha=cfg.alpha, n_min=cfg.n_min, horizon=cfg.horizon,
+                    deadline=cfg.label_deadline, pending="deadline", pre_registered=False)
+        rows = []
+        for seed in seeds:
+            sim = Simulation(cfg, seed)
+            metrics = sim.run()
+            driver = first_crossing(cell, cell.alpha, shipped_trials(sim, sim.key))
+            rows.append({"seed": seed, "shipped_loop": metrics.time_to_authority,
+                         "driver": driver})
+        out.append({
+            "config": cfg.name, "sequences": len(rows),
+            "agree": sum(r["shipped_loop"] == r["driver"] for r in rows),
+            "qualified": sum(r["shipped_loop"] is not None for r in rows),
+            "mismatches": [r for r in rows if r["shipped_loop"] != r["driver"]],
+        })
+    return out
+
+
 CSV_FIELDS = (
     "family", "cell_id", "pre_registered", "assumptions_hold", "false_authorization_rate",
     "false_authorization_ci95", "exceeds_alpha", "median_trials_to_qualify",
@@ -356,7 +451,18 @@ def main(argv: list[str] | None = None) -> int:
                         help="override: sequences per cell (the committed results use 1000)")
     parser.add_argument("--workers", type=int, default=os.cpu_count())
     parser.add_argument("--family", action="append", help="only these families")
+    parser.add_argument("--agreement", action="store_true",
+                        help="write only the shipped-loop agreement check, to --output")
     args = parser.parse_args(argv)
+    if args.agreement:
+        result = agreement()
+        args.output.mkdir(parents=True, exist_ok=True)
+        (args.output / "agreement.json").write_text(
+            json.dumps(result, indent=2, sort_keys=True) + "\n")
+        for row in result:
+            print(f"{row['config']:<24} agree {row['agree']}/{row['sequences']}"
+                  f" (qualified {row['qualified']})")
+        return 0 if all(r["agree"] == r["sequences"] for r in result) else 1
     cells = [c for c in expand() if not args.family or c.family in args.family]
     if args.sequences:
         cells = [replace(c, sequences=args.sequences) for c in cells]
