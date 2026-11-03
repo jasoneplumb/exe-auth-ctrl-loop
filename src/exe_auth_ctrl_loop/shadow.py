@@ -621,6 +621,10 @@ class ShadowEvidenceLog:
                     epochs, oracle bindings, and quarantines are rebuilt; review events are
                     skipped because they never changed evidence. `principals` is the rebuilt
                     log's, on `into`.
+        constraint: Only ledgers written since v3 Step 08 replay. An earlier one is chained
+                    with unkeyed SHA-256, so it fails verify() under the keyed chain and is
+                    refused before any event is read; its label events (`labeled_at`, no
+                    `received_at` or `claimed_at`) are never parsed here.
         constraint: `into` must be a different, empty database: the rebuilt trials keep the
                     source ledger's sequence numbers, and mixing them with another log's
                     rows would pool two histories. The rebuilt log's own ledger is `into`'s.
@@ -630,10 +634,12 @@ class ShadowEvidenceLog:
         log = cls(EventLedger(into), label_deadline, clock, principals=principals)
         with into.transaction() as conn:
             # constraint: checked under the same write lock as the inserts, so two
-            # replays into one database cannot both find it empty
+            # replays into one database cannot both find it empty; the list is every table
+            # this replay writes, plus the ledger
             if any(
                 conn.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-                for table in ("trials", "labels", "epochs", "ledger")
+                for table in ("trials", "labels", "epochs", "epoch_oracles", "quarantines",
+                              "ledger")
             ):
                 raise ValueError("replay needs an empty database")
             for event in ledger.events:

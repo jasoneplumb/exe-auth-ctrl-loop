@@ -518,6 +518,29 @@ class ReplayTests(AdmissionCase):
         for trial_id in [f"t-{n}" for n in (*range(7), 10, 11)]:
             self.assertEqual(replayed.status(trial_id), self.log.status(trial_id), trial_id)
 
+    def test_replay_refuses_a_database_holding_any_table_it_writes(self):
+        # PR #39 review: the empty-database guard covers every table replay writes
+        self.frozen(1)
+        for statement in ("INSERT INTO quarantines VALUES (0, 't', 'BAD_SIGNATURE')",
+                          "INSERT INTO epoch_oracles VALUES ('k', -1, 'o', '1',"
+                          " 'constraint_check', 's', 0)"):
+            with self.subTest(statement=statement):
+                into = scratch_store()
+                with into.transaction() as conn:
+                    conn.execute(statement)
+                with self.assertRaisesRegex(ValueError, "empty database"):
+                    replay(self.ledger, into)
+
+    def test_a_ledger_chained_before_step_08_is_refused(self):
+        # an unkeyed SHA-256 chain (v0.3.1 to Step 07) does not verify under the keyed one
+        self.frozen(1)
+        events = self.ledger.events
+        rehash_chain(events, 0, None)
+        rewrite_events(self.ledger, events)
+        self.assertFalse(self.ledger.verify())
+        with self.assertRaisesRegex(ValueError, "does not verify"):
+            replay(self.ledger, scratch_store())
+
 
 if __name__ == "__main__":
     unittest.main()

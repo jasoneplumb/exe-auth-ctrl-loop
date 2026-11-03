@@ -437,13 +437,17 @@ class LifecycleManager:
         """
         intent: Every epoch opening is on the record with the α it starts with (spec §7 rule
                 12), so a reset of counts is never a silent reset of the error budget
+        constraint: Joins the caller's transaction (the epoch opening), so the row and the
+                    opening commit or roll back together; the table is append-only, so a
+                    row committed on its own could never be withdrawn (PR #39 review)
         """
-        self.db.connection().execute(
-            "INSERT INTO alpha_ledger (partition, epoch, floor_sequence, alpha, reason,"
-            " opened_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (partition_text(key), record.epoch, floor, self.policy.alpha, reason,
-             self.clock().isoformat()),
-        )
+        with self.db.transaction() as conn:
+            conn.execute(
+                "INSERT INTO alpha_ledger (partition, epoch, floor_sequence, alpha, reason,"
+                " opened_at) VALUES (?, ?, ?, ?, ?, ?)",
+                (partition_text(key), record.epoch, floor, self.policy.alpha, reason,
+                 self.clock().isoformat()),
+            )
 
     def _suspended_predecessors(self, key: PartitionKey) -> list[str]:
         rows = self.db.connection().execute(
