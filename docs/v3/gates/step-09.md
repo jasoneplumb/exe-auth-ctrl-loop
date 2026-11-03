@@ -127,6 +127,13 @@ No estimator change is adopted in this step. Each adopted change becomes a `Poli
 - **Cost of pessimistic pending.** It is large with slow positive labels and will matter for O-3.
 - **Open:** epoch-0 and release epochs are still bound lazily by the first admitted label. The owner decided on 2026-11-03 to bind explicitly at every opening (issue #41), after this step. No Step 09 measurement depends on it, because every run uses one oracle.
 
-**Decision: GO** (recommended; reviewer to confirm). O-3, O-4, O-8 are the owner's to decide from the table above.
+**Owner decisions from the table (2026-11-03):**
+- **O-3:** pessimistic pending.
+- **O-4:** online α spending by registration order.
+- **O-8:** lineage spending across epochs, compounding with O-4.
+
+All three are recorded in `spec.md` §11 and are not yet in `src/`. Adopting them is issue #43: `Policy` fields, a policy-version change, and their measurement through the shipped loop.
+
+**Decision: GO** (recommended; reviewer to confirm).
 
 **Next permitted step (GO only):** issue #41 (explicit oracle binding), then Step 10, reconciliation and release plan, only on explicit request.
