@@ -110,3 +110,39 @@ Measured in seeded runs during Step 04 (not a proof; seeds 21 and 22):
 | 0.88 | 400 | 0.039, 0.030 | 0.001, 0.001 |
 
 The nominal one-sided rate for Wilson at $z = 1.96$ is 0.025. Its continuous-look rate at the boundary is four to eight times that and grows with the horizon, which is the optional-stopping problem the reviewers raised. The mixture bound stays under $\alpha$ at every setting, with room to spare: it is conservative, which is the price paid in the 53-versus-35 trial comparison above. These simulations support the proposition under its assumptions; they are not evidence about correlated, drifting, or adaptive data, which Step 08 covers as scenarios with explicit "assumption violated" labels.
+
+## 11. Monotonicity and pessimistic pending (v3 Step 09)
+
+Added by v3 Step 09 (gate criterion 3). §11.1 proves a property of the bound that §3 does not need but the pessimistic-pending rule (v3 `spec.md` O-3) does. §11.2 states and proves that rule's validity. Notation is §1–§2's: $n$ trials, $S$ successes, $F = n - S$, prior $\mathrm{Beta}(a, b)$, $\ell_S(p) = \log M(p)$ for $S$ successes among $n$, $C(S) = \{p : \ell_S(p) < \log(1/\alpha)\}$, $L(S) = \inf C(S)$.
+
+### 11.1 The bound is nondecreasing in successes at fixed $n$
+
+**Lemma.** Let $a, b > 0$ with $a + b \le 1$ (the Jeffreys prior, $a = b = 1/2$, has $a + b = 1$). For every $n \ge 1$, $\alpha \in (0, 1)$, and $0 \le S < n$: $L(S) \le L(S + 1)$. By induction, $S' \le S$ implies $L(S') \le L(S)$.
+
+*Proof.* If $S = 0$ then $L(0) = 0 \le L(1)$ (§2). Let $S \ge 1$. Since $n - S \ge 1$, the identity $B(x + 1, y - 1) = B(x, y)\, x / (y - 1)$ for $y > 1$ applies with $x = a + S$ and $y = b + n - S$, so for $p \in (0, 1)$
+
+$$\ell_{S+1}(p) - \ell_S(p) = \log \frac{a + S}{b + n - S - 1} + \log \frac{1 - p}{p}.$$
+
+The right side is strictly decreasing in $p$ and is positive exactly when $p < p^\star := (a + S)/(a + b + n - 1)$.
+
+Two facts place $L(S)$ below $p^\star$. First, $L(S) \le \hat p = S/n$: at the maximum-likelihood point the mixture likelihood is at most the maximum likelihood, so $\ell_S(\hat p) \le 0 < \log(1/\alpha)$ and $\hat p \in C(S)$. Second, $\hat p < p^\star$: $S(a + b + n - 1) < n(a + S)$ is equivalent to $S(a + b - 1) < na$, which holds because the left side is at most 0 and the right side is positive.
+
+Now take any $p < L(S)$. Because $\ell_S$ is convex, $C(S)$ is an interval with infimum $L(S)$, so $p \notin C(S)$, that is $\ell_S(p) \ge \log(1/\alpha)$. Because $p < L(S) \le \hat p < p^\star$, the difference above is positive, so $\ell_{S+1}(p) > \ell_S(p) \ge \log(1/\alpha)$ and $p \notin C(S + 1)$. Every point below $L(S)$ is therefore outside $C(S + 1)$, so $L(S + 1) = \inf C(S + 1) \ge L(S)$. $\square$
+
+The condition $a + b \le 1$ is used only in the second fact. For a prior with $a + b > 1$ the lemma is not claimed here.
+
+*The implementation.* `beta_mixture_lower_bound` approximates $L$ by 64 bisection steps on $(0, \hat p]$ (§8), so the lemma covers the exact $L$, not each computed float. `tests/test_statistics.py` checks the computed values for every $S + F \le 400$ at $\alpha \in \{0.05, 0.01\}$: they are nondecreasing in $S$ at fixed $n$. `experiments/statistics.py` relies on this to replace a bound evaluation per look with a precomputed success threshold per $n$, and a test checks that table against direct evaluation.
+
+### 11.2 Pessimistic pending
+
+**Rule.** At host time $t$, let $n_t$ be the number of trials frozen in the epoch. Each trial counts in $n$ from the moment it is frozen. It counts as a success only once an admitted `POSITIVE` label exists for it. While pending, and if `NEGATIVE`, `INCONCLUSIVE`, or censored, it counts as a failure. Write $X'_{i,t} \in \{0, 1\}$ for trial $i$'s counted value at $t$ (trials indexed in freeze order), $S'_t = \sum_{i \le n_t} X'_{i,t}$, and $L'_t = L(S'_t)$ at $n = n_t$.
+
+**Proposition.** Let $X_i$ be the verdict the epoch's bound oracle would give trial $i$, and suppose an admitted `POSITIVE` label is that verdict, so $X'_{i,t} \le X_i$ for every $i$ and $t$. If $X_1, X_2, \dots$ are i.i.d. $\mathrm{Bernoulli}(p)$ in freeze order (A1 and A3 in freeze order), then $\Pr_p(\exists t : L'_t > p) \le \alpha$, whatever the label delays, and whichever labels are withheld, censored, or made `INCONCLUSIVE`.
+
+*Proof.* At each $t$, $S'_t \le S_{n_t} := \sum_{i \le n_t} X_i$, so by §11.1 at $n = n_t$, $L'_t \le L(S_{n_t})$. Hence $\{\exists t : L'_t > p\} \subseteq \{\exists m \ge 1 : L_m > p\}$, where $L_m$ is the bound computed from the first $m$ verdicts in freeze order. Under the stated i.i.d. assumption, §3's proposition bounds the probability of the right-hand event by $\alpha$. $\square$
+
+*What it uses and what it does not.* The labeller may choose when each label arrives, or whether it arrives at all, without raising the chance of a false authorization: delay and withholding only lower $X'$. The proof needs two things. A positive must not be counted without being the oracle's verdict; signed labels from the epoch's bound oracle (v3 Step 08) enforce this only as far as the oracle is honest about its own verdicts (A5). And the verdicts must be i.i.d. in freeze order; correlated blocks violate this (A1), and no counting rule restores it in general.
+
+*Why the deadline-only rule (v0.3.1) is not covered.* Under that rule a pending trial is outside $n$ until its deadline. The counted sequence is then the labels in arrival order, and that order depends on the labels themselves whenever latency does. The claims matrix's L2 measures what this does: false authorization near 0.39 at $p = r = 0.90$ with negatives 50 trials late. The containment above fails because $n$ in the deadline-only count is not $n_t$.
+
+*Cost.* A pending trial is a failure until labelled, so with label delay this rule counts failures the deadline-only rule leaves out and should qualify later. That the bound is lower with an added failure is not proved here (§11.1 holds $n$ fixed); the cost is measured, not derived. `experiments/statistics.py` reports the median trials to qualify at $p = 0.97$ beside each false-authorization rate, as plan Step 09 requires.

@@ -1,0 +1,9 @@
+{
+  "canonical_hash": "9fbef597ddfaa4134ff1a43aa06c6ad4854aecde7e50056db3e4dab422b67fb7",
+  "canonical_hash_covers": "sorted '<file name> <sha256>' lines of every .csv and .json file in this directory except manifest.json",
+  "files": [
+    "cells.csv 16f17f85b01eff7f3372bd00246d1494b8c3fdb5a7af2f3d7b506eb6f2e092bd",
+    "families.json a9db8754e181b1b88886683131f6a6f114380d5f852f4fd5b57c47514c4e1f11",
+    "summary.json e7a00501d01ff9a2442a755efe9c8f2edb114b41d32f6608286051395426bbe3"
+  ]
+}
