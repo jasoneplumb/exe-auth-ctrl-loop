@@ -116,6 +116,8 @@ No estimator change is adopted in this step. Each adopted change becomes a `Poli
 - **The suite is slower:** about 5 minutes, up from about 2, because harness and agreement tests run through the shipped loop.
 - Python 3.10 and 3.13 were not run locally; CI covers them.
 
+**Review (PR #42):** verdict GO, no blocking issues; four non-blocking findings, all addressed with no change to any result (the fixed driver reproduces the committed cells exactly): `unittest.main()` moved below `AgreementTests`; `first_crossing` refuses two trials at one freeze step (`ValueError`, not an `assert`); the draw before `propose()` is commented; the partition-drift check raises `RuntimeError`.
+
 **Unexpected behavior / open risks:**
 - **Earlier mistakes, all caught:**
   - **Visibility bug:** the first driver draft never made a label with delay 0 visible, because the label was filed under the current step after that step's bucket had been read. It was fixed before any committed run.

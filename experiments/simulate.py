@@ -585,6 +585,8 @@ class Simulation:
         self.maybe_churn()
 
         arguments = self.next_draft()
+        # drawn before propose() so the stream stays aligned when the proposer refuses
+        # (the draw is then unused), like the kept mislabel draw in next_draft()
         good, severe = self.draw_truth()
         try:
             bundle = self.propose(arguments)
@@ -596,7 +598,7 @@ class Simulation:
             return
         proposal = bundle.proposals[0]
         if proposal.partition != make_key(self.prompt_version, proposal.partition.risk_class):
-            raise AssertionError("the proposer's partition key drifted from make_key")
+            raise RuntimeError("the proposer's partition key drifted from make_key")
         step = self.execute(bundle)
         decision = step.decision
         if step.executed:

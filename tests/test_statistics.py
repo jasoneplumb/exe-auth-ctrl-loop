@@ -170,9 +170,6 @@ class BehaviourTests(unittest.TestCase):
                          run_cells(cells, workers=2, chunk=7))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class AgreementTests(unittest.TestCase):
     """
@@ -221,3 +218,7 @@ class AgreementTests(unittest.TestCase):
             for cfg, sim, shipped in self.runs if shipped is not None
         ]
         self.assertTrue(any(late))
+
+
+if __name__ == "__main__":
+    unittest.main()

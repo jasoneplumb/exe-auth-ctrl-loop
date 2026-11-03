@@ -242,6 +242,8 @@ def first_crossing(cell: Cell, alpha: float, counted: list[Trial]) -> int | None
     threshold = success_threshold(alpha, cell.r, cell.horizon)
     due: dict[int, list[int]] = {}
     by_step = {step: (visible, value) for step, visible, value in counted}
+    if len(by_step) != len(counted):
+        raise ValueError("two trials frozen at the same step")  # PR #42 review
     frozen = resolved = successes = 0
     for t in range(cell.horizon):
         for value in due.pop(t, ()):
