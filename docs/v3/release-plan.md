@@ -1,4 +1,4 @@
-# Release plan (proposed 0.4.0) and checklist status
+# Release plan (0.4.0) and checklist status
 
 Written at v3 Step 10 (issue #46). Nothing here has been done: every step that tags, pushes a release, publishes, or deposits needs the owner's separate authorization, and this plan is not one.
 
@@ -6,9 +6,9 @@ Written at v3 Step 10 (issue #46). Nothing here has been done: every step that t
 
 | Item | Value | Status |
 |---|---|---|
-| Software version | `0.4.0` (plan §6; breaking release) | proposed. `pyproject.toml`, `src/exe_auth_ctrl_loop/__init__.py` `__version__`, and `CITATION.cff` `version` still say `0.3.1`; they are bumped in the release commit |
-| Software tag / GitHub release | `v0.4.0` | not created |
-| Zenodo version DOI for 0.4.0 | — | minted only on an authorized release; added to `CITATION.cff` `identifiers` afterwards with the actual value |
+| Software version | `0.4.0` (plan §6; breaking release) | released 2026-11-04 (owner's `/release`); `pyproject.toml`, `__init__.__version__`, and `CITATION.cff` bumped in the release commit |
+| Software tag / GitHub release | `v0.4.0` | created 2026-11-04 with the release commit |
+| Zenodo version DOI for 0.4.0 | — | minted by the Zenodo integration on the GitHub release; added to `CITATION.cff` `identifiers` in a follow-up with the actual value |
 | Concept DOI | 10.5281/zenodo.21983061 | unchanged; resolves to the latest version |
 | Release-candidate commit | the squash merge of the Step 10 PR on `mainline` | recorded in `docs/v3/gates/step-10.md` once merged |
 | Artifacts | `results-v3/` (scenarios, statistics, agreement), hashes in `docs/v3/gates/step-10.md` | three independent runs at Step 10 |
@@ -61,7 +61,7 @@ Written at v3 Step 10 (issue #46). Nothing here has been done: every step that t
 - [x] Breaking changes verified against the final API (`docs/v3/plan.md` §6).
 - [x] No synthetic experiment represented as field validation (`experiments/README.md`, README, claims L5).
 - [x] Release notes state prototype against production limits (above).
-- [ ] No confidential or non-public material from `exe-auth-ctrl-loop-ip` is in the public repository. Nothing from it was read or copied during v3; the owner should confirm before the release.
-- [ ] Release commit, tag, and GitHub release pushed only after **explicit authorization**; record the actual release SHA.
+- [x] No confidential or non-public material from `exe-auth-ctrl-loop-ip` is in the public repository. Nothing from it was read or copied during v3; confirmed by the owner on 2026-11-04.
+- [x] Release commit, tag, and GitHub release pushed after **explicit authorization** (owner's `/release`, 2026-11-04); the release SHA is the one tagged `v0.4.0`.
 - [ ] Zenodo version created only after the authorized release; use the **actual** DOI.
-- [ ] README rewritten from "On `mainline` (unreleased)" to "Since 0.4.0" in the release commit.
+- [x] README and SECURITY.md rewritten from "On `mainline` (unreleased)" to "Since 0.4.0" in the release commit.

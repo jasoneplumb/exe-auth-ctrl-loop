@@ -1,11 +1,11 @@
-# Claims delta (v3, proposed 0.4.0)
+# Claims delta (v3, 0.4.0)
 
 What changes in each claim of `docs/paper-v2/claims-matrix.md` between v0.3.0/v0.3.1 and `mainline` after the v3 program (Steps 00–10, issues #41 and #43). That matrix is not edited: it describes v0.3.0 and its `results/` artifacts, which stay in the repository unchanged (owner decision 2026-11-04, issue #46). This file is the 0.4.0 statement of each claim.
 
 **Verdicts.**
 - **kept:** the v0.3.0 statement still holds as written.
 - **changed:** it still holds, but the conditions, mechanism, or figures differ.
-- **closed:** the caveat or limitation it states no longer applies on `mainline`; what remains is in the 0.4.0 column.
+- **closed:** the caveat or limitation it states no longer applies in 0.4.0; what remains is in the 0.4.0 column.
 
 **Paths and data.** Paths are relative to the repository root on `mainline`. The 0.4.0 experimental figures come from `results-v3/`:
 - `results-v3/scenarios/`: the 15 scenarios through the shipped loop, under the default policy.

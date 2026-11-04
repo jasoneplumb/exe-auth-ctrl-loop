@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased] - proposed 0.4.0
+## [0.4.0] - 2026-11-04
 
 The v3 program (`docs/v3/plan.md`, Steps 00–10, and issues #41 and #43): durable authority state,
 a closed execution boundary, synchronous revocation, MCP server-side redemption,

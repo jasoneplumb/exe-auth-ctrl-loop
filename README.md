@@ -80,9 +80,9 @@ across an MCP `tools/call`.
 | --- | --- |
 | **Contribution** | Sole author of the controller, gateway, evidence partition, ledger, and MCP binding; AI-assisted implementation with human review. Model providers supply the proposal and execution stages only. |
 | **Status** | Research prototype. Not deployed, not hardened, no production users. |
-| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). On `mainline`, 417 tests pass offline against fake provider clients (the v0.3.1 release had 212). Fifteen seeded simulation scenarios reproduce bit-for-bit on macOS with Python 3.14. `results/` holds the v0.3.0 artifacts the paper-v2 claims matrix cites, unchanged. `results-v3/` holds the proposed 0.4.0 artifacts: the scenarios through the shipped loop, the statistical families, and the agreement check, each reproduced in three independent runs (`docs/v3/gates/step-10.md`). CI checks only a reduced-size rerun. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
+| **Evidence** | Output above, reproduced from `examples/denials.py` on Python 3.14 (macOS). In 0.4.0, 417 tests pass offline against fake provider clients (the v0.3.1 release had 212). Fifteen seeded simulation scenarios reproduce bit-for-bit on macOS with Python 3.14. `results/` holds the v0.3.0 artifacts the paper-v2 claims matrix cites, unchanged. `results-v3/` holds the 0.4.0 artifacts: the scenarios through the shipped loop, the statistical families, and the agreement check, each reproduced in three independent runs (`docs/v3/gates/step-10.md`). CI checks only a reduced-size rerun. Design disclosed at [Technical Disclosure Commons](https://www.tdcommons.org/dpubs_series/11356/) and [Zenodo](https://doi.org/10.5281/zenodo.21894658). |
 | **Reproduction** | `pip install -e ".[dev]"` then `pytest && python examples/denials.py`; `python -m experiments.run --all --output results` for the simulation. Offline; the live cross-model path needs API keys and is separate. See [docs/paper-v2/reproducibility.md](docs/paper-v2/reproducibility.md). |
-| **Limitations** | In-process only: the gateway shares an address space with its caller. On `mainline` (v3 Steps 02–03, unreleased), evidence, the ledger, shadow trials, lifecycle records, budget charges, and tokens are durable in one SQLite file and survive a restart, and a token is consumed by one database transaction, so it redeems at most once across threads, processes on one host, and restarts. In the released 0.3.1 all of this is in memory and consumption is serialized by an in-process lock. On `mainline` (v3 Step 06, unreleased), each event that withdraws authority (suspension, evidence invalidation, gate loss, oracle change, retirement, lineage suspension, policy change, newly prohibited effect, risk-rule change, approval rescission, grant revocation, principal deactivation) revokes the outstanding tokens in its scope in the same transaction, and redemption recomputes the gate from current counts. In the released 0.3.1, only when the gateway is given the live evidence store, policy, and lifecycle is a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy refused at redemption, and a loss of autonomy is seen only after a later decision has recorded it; without them the gateway checks only the token. Human approval and release are authenticated on `mainline` (v3 Step 05, unreleased: a human principal's HMAC signature, keys held by the host) and not in the released 0.3.1. On `mainline` (v3 Step 08, unreleased), the shipped loop freezes every human-routed proposal on a non-autonomous partition as a shadow trial, a trial's provenance is derived from its committed decision, oracle labels are signed by a registered oracle principal and timed by the host, and the ledger chain is keyed by the host; in the released 0.3.1 none of these hold. The simulation harness wires the components differently from the shipped loop; see [experiments/README.md](experiments/README.md), [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md), the [claims matrix](docs/paper-v2/claims-matrix.md), and the [production trust boundary](#production-trust-boundary). |
+| **Limitations** | In-process only: the gateway shares an address space with its caller. Since 0.4.0 (v3 Steps 02–03), evidence, the ledger, shadow trials, lifecycle records, budget charges, and tokens are durable in one SQLite file and survive a restart, and a token is consumed by one database transaction, so it redeems at most once across threads, processes on one host, and restarts. In 0.3.1 all of this is in memory and consumption is serialized by an in-process lock. Since 0.4.0 (v3 Step 06), each event that withdraws authority (suspension, evidence invalidation, gate loss, oracle change, retirement, lineage suspension, policy change, newly prohibited effect, risk-rule change, approval rescission, grant revocation, principal deactivation) revokes the outstanding tokens in its scope in the same transaction, and redemption recomputes the gate from current counts. In 0.3.1, only when the gateway is given the live evidence store, policy, and lifecycle is a token issued before a suspension, policy change, evidence invalidation, or loss of autonomy refused at redemption, and a loss of autonomy is seen only after a later decision has recorded it; without them the gateway checks only the token. Human approval and release are authenticated since 0.4.0 (v3 Step 05: a human principal's HMAC signature, keys held by the host) and not in 0.3.1. Since 0.4.0 (v3 Step 08), the shipped loop freezes every human-routed proposal on a non-autonomous partition as a shadow trial, a trial's provenance is derived from its committed decision, oracle labels are signed by a registered oracle principal and timed by the host, and the ledger chain is keyed by the host; in 0.3.1 none of these hold. The simulation harness wires the components differently from the shipped loop; see [experiments/README.md](experiments/README.md), [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md), the [claims matrix](docs/paper-v2/claims-matrix.md), and the [production trust boundary](#production-trust-boundary). |
 
 ## Architecture
 
@@ -159,12 +159,12 @@ A receiving server recomputes the call digest from the tool name and arguments i
 received. Edited arguments, a substituted tool, a forged or stripped signature, and an
 expired authorization each deny.
 
-On `mainline` (v3 Step 07, unreleased; extension `0.2`) the block also names the one server
+Since 0.4.0 (v3 Step 07; extension `0.2`) the block also names the one server
 it is for (`audience`, signed), and the server spends it at the host before running anything:
 a call with effects is redeemed against the host's token table in one transaction, an
 effect-free call takes a single-use nonce. A replay, to the same server or another, is
 refused, and so is a block whose token a host event has revoked; the host never spends an
-MCP-bound token itself. In the released 0.3.1 (extension `0.1`) verification is stateless,
+MCP-bound token itself. In 0.3.1 (extension `0.1`) verification is stateless,
 so a block verifies again until it expires, even after its token has been consumed or
 revoked. The audit flag also tells the server, before execution, which calls are audited.
 
@@ -173,18 +173,18 @@ verification order, and `python examples/mcp_demo.py` for a runnable round trip.
 
 ## Safety invariants
 
-1. **No capability, no execution.** A registered handler runs only after the gateway redeems a token for that exact proposal. On `mainline` (v3 Step 04, unreleased) handlers live in a `HandlerTable` that only the gateway holds, the gateway runs the handler named by the token it consumed (no caller supplies one), it issues only for a decision committed to the ledger, and the agent and proposer hold a `ToolCatalog` that cannot run anything; a reachability test finds no route to a handler from the agent, proposer, or pipeline except through the gateway. Two limits remain: in one Python process, code that inspects the interpreter (`gc.get_objects()`, frame inspection) can still reach any object, which only running the gateway in its own process closes; and a server holding the shared MCP signing secret could mint a block for another server (per-server keys are a production requirement). In the released 0.3.1 the gateway runs whichever handler its caller passes and `ToolRegistry.execute` is public.
+1. **No capability, no execution.** A registered handler runs only after the gateway redeems a token for that exact proposal. Since 0.4.0 (v3 Step 04) handlers live in a `HandlerTable` that only the gateway holds, the gateway runs the handler named by the token it consumed (no caller supplies one), it issues only for a decision committed to the ledger, and the agent and proposer hold a `ToolCatalog` that cannot run anything; a reachability test finds no route to a handler from the agent, proposer, or pipeline except through the gateway. Two limits remain: in one Python process, code that inspects the interpreter (`gc.get_objects()`, frame inspection) can still reach any object, which only running the gateway in its own process closes; and a server holding the shared MCP signing secret could mint a block for another server (per-server keys are a production requirement). In 0.3.1 the gateway runs whichever handler its caller passes and `ToolRegistry.execute` is public.
 2. **Models do not grant authority.** OpenAI and Claude outputs are untrusted requests.
-3. **Exact scope.** A token records the proposal digest, tool, effects, policy version, partition, evidence id and version, and expiry, and is consumed once. Redemption always checks the digest, tool, effects, and expiry. It checks the policy version only when the gateway has a policy provider and the evidence id only when it has an evidence store, and it compares the evidence version only to decide whether a human approval saw the current snapshot. On `mainline` (v3 Steps 03–04, unreleased) a decision gets at most one token, and `issue()` refuses a decision without its committed ledger record. In the released 0.3.1, single use is per token: one decision can be issued several tokens, and because `issue()` does not check that a decision came from the controller, any in-process caller holding one can mint more. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
+3. **Exact scope.** A token records the proposal digest, tool, effects, policy version, partition, evidence id and version, and expiry, and is consumed once. Redemption always checks the digest, tool, effects, and expiry. It checks the policy version only when the gateway has a policy provider and the evidence id only when it has an evidence store, and it compares the evidence version only to decide whether a human approval saw the current snapshot. Since 0.4.0 (v3 Steps 03–04) a decision gets at most one token, and `issue()` refuses a decision without its committed ledger record. In 0.3.1, single use is per token: one decision can be issued several tokens, and because `issue()` does not check that a decision came from the controller, any in-process caller holding one can mint more. One stated exception: a human-approved token binds the evidence snapshot it was approved against only for degradation (suspension, invalidation), not for replacement by a healthy successor record, because a human approval is consent to one operation rather than reliance on a track record (see [docs/v2/gateway-redemption.md](docs/v2/gateway-redemption.md)).
 4. **No post-approval mutation.** Changed arguments or tools require a new proposal and decision.
 5. **Conservative authority.** Autonomous execution requires the lower bound to clear the applicable risk threshold.
 6. **Sparse or stale evidence fails closed.** Missing, immature, invalid, suspended, mismatched, or expired evidence requires approval.
 7. **Early proposals cannot execute.** Draft and clarification-needed states never reach Claude.
 8. **Severe failures contract immediately.** The exact cross-model partition is suspended before ordinary updating. Exceptions: a retired partition only logs the failure, and a partition on a superseded policy version is retired instead of suspended.
 9. **Audit selection precedes outcomes.** The audit draw is realized in the decision, and the executor commits it to the ledger before asking for a token; if the commit fails, the step is refused. The order is the executor's: `issue()` does not itself require a commit. Independence from results holds given a trusted RNG and controller; it is an ordering guarantee, not a proof against a malicious host (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
-10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence. On `mainline` (v3 Step 08, unreleased) a trial is a committed decision, and its provenance is derived by the host from the decision's route and approval record; no API accepts it as an argument. A label is admitted only if a registered, active oracle principal signed it, the oracle is the one bound to the trial's epoch, the labeller did not also review the trial, and the host received it before the deadline (the labeller's claimed time is recorded and never used). In the released 0.3.1 the provenance is whatever the caller passes when it freezes a trial, and the shadow log trusts it.
+10. **Human-approved outcomes remain distinguishable.** Approval changes the treatment and must not silently inflate autonomous evidence. Since 0.4.0 (v3 Step 08) a trial is a committed decision, and its provenance is derived by the host from the decision's route and approval record; no API accepts it as an argument. A label is admitted only if a registered, active oracle principal signed it, the oracle is the one bound to the trial's epoch, the labeller did not also review the trial, and the host received it before the deadline (the labeller's claimed time is recorded and never used). In 0.3.1 the provenance is whatever the caller passes when it freezes a trial, and the shadow log trusts it.
 11. **Provider diversity is not independence.** End-to-end evidence is collected for the combined pipeline.
-12. **Authorization provenance is hash-chained.** `EventLedger` is a hash chain, durable on `mainline` (v3 Step 02) in an append-only table whose triggers refuse UPDATE and DELETE. On `mainline` (v3 Step 08, unreleased) each hash is an HMAC-SHA256 under a key the host passes to `Store(path, ledger_key=...)` and never writes to the file, and `verify()` requires sequence numbers to run without gaps, so someone who can write the database file but does not hold the key cannot edit, insert, or delete an event and re-hash the rest. It still does not detect truncation of the tail, or any rewrite by a key holder: the host, and any code in its process holding the `Store`. The tables counts are read from (trials, labels) are not themselves chained; replaying a verified ledger rebuilds them for comparison. External anchoring would close the truncation gap and is demonstrated, not provided. In the released 0.3.1 the hash is unkeyed SHA-256 and sequence gaps are not checked, so a re-hashed suffix verifies.
+12. **Authorization provenance is hash-chained.** `EventLedger` is a hash chain, durable since 0.4.0 (v3 Step 02) in an append-only table whose triggers refuse UPDATE and DELETE. Since 0.4.0 (v3 Step 08) each hash is an HMAC-SHA256 under a key the host passes to `Store(path, ledger_key=...)` and never writes to the file, and `verify()` requires sequence numbers to run without gaps, so someone who can write the database file but does not hold the key cannot edit, insert, or delete an event and re-hash the rest. It still does not detect truncation of the tail, or any rewrite by a key holder: the host, and any code in its process holding the `Store`. The tables counts are read from (trials, labels) are not themselves chained; replaying a verified ledger rebuilds them for comparison. External anchoring would close the truncation gap and is demonstrated, not provided. In 0.3.1 the hash is unkeyed SHA-256 and sequence gaps are not checked, so a re-hashed suffix verifies.
 
 ## Evidence partition
 
@@ -236,7 +236,7 @@ use: latency that depends on the label (failures counted later than successes)
 voids the guarantee, and a label still pending before its deadline is outside the
 count, so withholding negative labels raises the bound until the deadline passes.
 In v0.3.1 the error budget `alpha` restarts with every release and every successor
-partition. On `mainline` (v3 Step 09, unreleased) these are measured at 1000
+partition. Since 0.4.0 (v3 Step 09) these are measured at 1000
 sequences per cell in `results-v3/statistics/` (`experiments/statistics.py`):
 at $p = r = 0.90$, negatives labelled 50 trials late give a false-authorization
 rate of 0.39 and withheld negatives 1.0, against at most 0.012 when pending trials
@@ -297,7 +297,7 @@ alternatives and outcome-dependent costs.
 | `docs/v3/` | v3 plan, specification, threat-model delta, claims delta for 0.4.0, revocation fixture, gate reports, 0.4.0 release plan |
 | `docs/mcp-extension.md` | Key specification for the MCP extension |
 | `experiments/` | Simulation harness through the shipped loop (`simulate.py`, `run.py`), the scenario-family driver (`statistics.py`, `families.json`), configs |
-| `results/`, `results-v3/` | Hash-manifested outputs: v0.3.0 (cited by the paper-v2 matrix) and the proposed 0.4.0 (scenarios, families, agreement check) |
+| `results/`, `results-v3/` | Hash-manifested outputs: v0.3.0 (cited by the paper-v2 matrix) and 0.4.0 (scenarios, families, agreement check) |
 | `examples/example.py` | Offline deterministic example |
 | `examples/mcp_demo.py` | Offline MCP round trip, including the denial paths |
 | `examples/live_example.py` | Live OpenAI and Anthropic API example using a harmless mock handler |
@@ -363,7 +363,7 @@ loop: it labelled every autonomous execution, committed decisions itself,
 froze audits after execution, and ran human-approved executions without the
 gateway. The speed at which the gate withdraws autonomy under defection and
 shift, and the finding that audit rate changes nothing that executes, depend on
-the first of these. On `mainline` (v3 Step 09, unreleased) the harness drives
+the first of these. Since 0.4.0 (v3 Step 09) the harness drives
 the shipped `CrossModelAuthorityLoop` with fake model clients and none of these
 differences remain. Its outputs, under the default policy (pessimistic pending
 and online and lineage α spending, issue #43), are in `results-v3/scenarios/`:
@@ -383,29 +383,29 @@ python -m experiments.run --all --output results
 ## Human approval
 
 When a decision routes to `human_approval`, `ClaudeExecutionAgent.run()`
-returns without invoking the handler. On `mainline` (v3 Step 05, unreleased) a
+returns without invoking the handler. Since 0.4.0 (v3 Step 05) a
 reviewer approves with a signed `Approval`: a registered human principal's HMAC
 over the proposal's digest and partition, with an expiry. The caller passes it
 to `run(approvals=...)`; the gateway verifies it, records it, and lets it back
 exactly one token. An approval for another proposal or partition, an expired or
 rescinded one, a reused one, or one signed by anyone but an active human is
 refused. A lifecycle release likewise needs a human's signature over the
-partition, its current epoch, the reason, and (on `mainline`, issue #41) the
+partition, its current epoch, the reason, and (since 0.4.0, issue #41) the
 oracle the new epoch is bound to, so the releasing human chooses who labels next. Every token records the principal
 that asked and the grant it acted under, traceable to a human's root grant
 (`Principals.lineage`). Denials, draft states, and clarification requests cannot
 be overridden by approval; they require a corrected proposal or policy change.
-In the released 0.3.1 the approval is not authenticated: whoever calls `run()`
+In 0.3.1 the approval is not authenticated: whoever calls `run()`
 with `approved_proposal_ids` is treated as the reviewer, and a release accepts
 any non-empty actor name.
 
-On `mainline` (v3 Step 08, unreleased), with a shadow log attached, the loop
+Since 0.4.0 (v3 Step 08), with a shadow log attached, the loop
 freezes every human-routed proposal on a partition that is not `AUTONOMOUS` as a
 `SHADOW` trial when it commits the decision, before the run returns to ask for
 approval; none is skipped, so no one chooses which proposals become evidence.
 An oracle then labels each trial with a `SignedLabel`, and a partition can reach
 `AUTONOMOUS` from an empty store through the shipped loop alone. An approved
-re-run of a frozen proposal is not counted again. In the released 0.3.1 the loop
+re-run of a frozen proposal is not counted again. In 0.3.1 the loop
 does not freeze human-routed proposals; a host must call
 `ShadowEvidenceLog.freeze` itself (see
 [docs/v2/shadow-evidence.md](docs/v2/shadow-evidence.md)).
@@ -428,7 +428,7 @@ frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 | Software v0.3.0 (the v2 design) | tag `v0.3.0` (commit `78bdf9d`, merged as #10), DOI 10.5281/zenodo.23226913; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | released 2026-10-08 |
 | Paper v2 | draft in [docs/paper-v2/manuscript.md](docs/paper-v2/manuscript.md), built on the v0.3.0 artifacts | draft; not submitted, no preprint |
 | Software v0.3.1 | tag `v0.3.1` (commit `3032a11`), DOI 10.5281/zenodo.23705921; fixes and tests from the v0.3.0 claims audit (see [CHANGELOG.md](CHANGELOG.md)) | released 2026-10-27 |
-| Software 0.4.0 (v3) | `mainline`; see [docs/v3/plan.md](docs/v3/plan.md), the claims delta [docs/v3/claims-delta.md](docs/v3/claims-delta.md), the [CHANGELOG](CHANGELOG.md) entry, and the [release plan](docs/v3/release-plan.md) | proposed; not tagged or released |
+| Software v0.4.0 (v3) | tag `v0.4.0`; see [docs/v3/plan.md](docs/v3/plan.md), the claims delta [docs/v3/claims-delta.md](docs/v3/claims-delta.md), the [CHANGELOG](CHANGELOG.md) entry, and the [release plan](docs/v3/release-plan.md); Zenodo DOI added once minted | released 2026-11-04 |
 
 What v2 changes relative to the v1 design and paper, in one paragraph: a
 partition can now earn autonomy from an empty evidence store, through shadow
