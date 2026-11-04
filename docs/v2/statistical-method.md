@@ -52,11 +52,11 @@ Autonomy for a partition requires all of: lifecycle state `QUALIFYING`, $t \ge n
 
 Failure response: if $L_t$ falls below $r$ after qualification, the lifecycle withdraws autonomy (`GATE_LOST_OUTCOME`). This is a monitoring use of the same sequence; the same $\alpha$ covers the union of all looks, so no separate budget is spent.
 
-Counts after an epoch reset start from $S = F = 0$. A new epoch is a new sequence with its own $\alpha$.
+Counts after an epoch reset start from $S = F = 0$. A new epoch is a new sequence with its own $\alpha$. Since v3 issue #43 that α is, by default, a share of the partition's budget, not a fresh one (§5).
 
 ## 5. Multiplicity across partitions and risk classes
 
-The error budget is **per partition and per epoch**. Each partition's $\alpha$ is the policy's `alpha` (default 0.05). No joint claim across partitions is made. If a joint statement over $K$ partitions is wanted, the union bound gives at most $K\alpha$; a policy that wants joint error $\alpha^\star$ must set `alpha = `$\alpha^\star / K$ (Bonferroni) and record $K$. Risk classes are fields of the partition key, so they are separate partitions with separate budgets and separate thresholds $r$. No evidence pools across them.
+Through v0.3.1 the error budget was **per partition and per epoch**: each partition and each epoch got the policy's `alpha`, so no joint claim across partitions or across a partition's epochs was made (C12, L11). Since v3 issue #43 (owner decisions O-4, O-8 from Step 09) the default policy spends one budget. The $k$-th partition registered in the store gets $\alpha \cdot 6/(\pi^2 k^2)$ (`partition_alpha = "online"`), and its $e$-th epoch gets $6/(\pi^2 e^2)$ of that (`epoch_alpha = "lineage"`). Because $\sum_{k \ge 1} 6/(\pi^2 k^2) = 1$, the sum over every partition and epoch is at most $\alpha$, so by the union bound the probability of any false authorization, family-wide and lifetime, is at most $\alpha$ under each epoch's assumptions. Registration order is global to the store, across policy versions. The allocation of each epoch is recorded in `alpha_ledger` when the epoch opens, and the gate applies the recorded value. The price is that later partitions and later epochs need more evidence; Step 09 measured it (`docs/v3/gates/step-09.md`). The v0.3.1 allocation remains selectable (`per_partition`, `per_epoch`) for comparison. A declared-$K$ Bonferroni split, `alpha = `$\alpha^\star / K$, is the alternative O-4 did not choose. Risk classes are fields of the partition key, so they are separate partitions with separate budgets and separate thresholds $r$. No evidence pools across them.
 
 ## 6. Time-varying selection and adjudication
 

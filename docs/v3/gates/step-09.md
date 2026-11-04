@@ -88,7 +88,7 @@ What the table says:
 
 No estimator change is adopted in this step. Each adopted change becomes a `Policy` field, and so a policy-version change (`statistical-method.md` §7), after the owner decides.
 
-**Shipped-loop scenario results:** `results-v3/scenarios/`, with a table in `experiments/README.md`.
+**Shipped-loop scenario results:** `results-v3/scenarios/`, hash `03f7babe…` at this step, under the v0.3.1 rules. Issue #43 later regenerated that directory under the decided rules, so the figures below are this step's run, and `experiments/README.md` now shows the regenerated one.
 - **Defection costs more before it is caught.** `delayed_defection` has 106 failures after autonomy against 20 under the v0.3.x harness, and its median intervention delay is 17.5 steps against 2, because under autonomy only audits are labelled.
 - **Suspension and budgets now stop human-approved executions.** Human approvals go through the gateway: `stable` has 1347 approved-then-refused executions on suspended partitions, and in `risk_envelopes` 2462 of 2578 denials carry `BUDGET_EXCEEDED`.
 - **Cold start unchanged.** It is identical to v0.3.x: `stable` qualifies in all 10 seeds, median 84 steps.
@@ -132,7 +132,7 @@ No estimator change is adopted in this step. Each adopted change becomes a `Poli
 - **O-4:** online α spending by registration order.
 - **O-8:** lineage spending across epochs, compounding with O-4.
 
-All three are recorded in `spec.md` §11 and are not yet in `src/`. Adopting them is issue #43: `Policy` fields, a policy-version change, and their measurement through the shipped loop.
+All three are recorded in `spec.md` §11. Issue #43 adopted them after this step as `Policy` fields and defaults, measured through the shipped loop.
 
 **Decision: GO** (recommended; reviewer to confirm).
 

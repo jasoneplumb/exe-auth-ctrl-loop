@@ -78,37 +78,42 @@ All v2 scenarios start every partition at `n = 0` with an empty evidence store. 
 
 `legacy_wilson_seeded` is **not a bootstrap strategy**. Its partition is autonomous at step 0 because a snapshot was written by hand, which is what the v0.2.0 examples did and what the reviewers objected to. It is here to show what that path does, including that its gateway never refuses an outstanding token after a suspension (`stale_token_denials = 0`).
 
-## v3 results (`results-v3/scenarios/`: seeds 1–10, horizon 400, the shipped loop)
+## v3 results (`results-v3/scenarios/`: seeds 1–10, horizon 400, the shipped loop, the decided rules)
 
-Same configs, seeds, and metrics as the v0.3.x table below, through the shipped loop (v3 Step 09). Totals over the 10 runs; medians over qualified runs, censored count beside them. Canonical hash in `results-v3/scenarios/manifest.json`.
+Same configs, seeds, and metrics as the v0.3.x table below, through the shipped loop, under the default `Policy`. Since issue #43 that default is pessimistic pending, online α spending by partition registration order, and lineage spending across epochs (owner decisions O-3, O-4, O-8 from v3 Step 09). Step 09's run of the same scenarios under the v0.3.1 rules is recorded in `docs/v3/gates/step-09.md`. Totals over the 10 runs; medians over qualified runs, censored count beside them. The canonical hash is in `results-v3/scenarios/manifest.json`.
 
 | Scenario | Qualified | Steps to authority (median; censored) | Autonomous + audit executions | Failures after autonomy (severe) | Suspensions | Human reviews | Human-approved executions | Approved, then refused | Redemption refusals | Unauthorized effects | Final states |
 |---|---|---|---|---|---|---|---|---|---|---|---|
-| `stable` | 10/10 | 84; 0 | 1397 + 66 | 45 (7) | 7 | 2537 | 1119 | 1347 | 0 | 0 | 3 autonomous, 7 suspended |
+| `stable` | 10/10 | 139; 0 | 1006 + 39 | 32 (4) | 4 | 2950 | 1963 | 904 | 5 | 0 | 5 autonomous, 1 qualifying, 4 suspended |
 | `never_qualifies` | 0/10 | –; 10 | 0 | 0 | 7 | 4000 | 1979 | 1280 | 0 | 0 | 3 qualifying, 7 suspended |
-| `correlated_failures` | 3/10 | 54; 7 | 385 + 16 | 31 (4) | 6 | 3599 | 2366 | 945 | 0 | 0 | 4 qualifying, 6 suspended |
-| `distribution_shift` | 9/10 | 54; 1 | 1524 + 81 | 70 (6) | 6 | 2395 | 1369 | 661 | 0 | 0 | 4 qualifying, 6 suspended |
-| `delayed_defection` | 10/10 | 54; 0 | 418 + 16 | 106 (6) | 9 | 3566 | 1091 | 1167 | 0 | 0 | 1 qualifying, 9 suspended |
-| `turnover_fast` | 8/10 | 84; 2 | 68 + 3 | 1 (1) | 1 | 3929 | 3603 | 218 | 0 | 0 | 10 qualifying |
-| `turnover_slow` | 10/10 | 84; 0 | 1154 + 61 | 37 (4) | 4 | 2785 | 1665 | 1049 | 0 | 0 | 6 autonomous, 4 qualifying |
-| `audit_rate_0` | 5/10 | 230; 5 | 687 + 0 | 29 (2) | 3 | 3313 | 2806 | 352 | 0 | 0 | 3 autonomous, 4 qualifying, 3 suspended |
-| `audit_rate_20` | 5/10 | 230; 5 | 205 + 43 | 13 (3) | 4 | 3752 | 2953 | 625 | 0 | 0 | 2 autonomous, 4 qualifying, 4 suspended |
-| `risk_envelopes` | 5/10 | 129; 5 | 134 + 4 | 1 (0) | 1 | 1284 | 1027 | 228 | 0 | 0 | 5 autonomous, 4 qualifying, 1 suspended |
+| `correlated_failures` | 1/10 | 139; 9 | 172 + 10 | 9 (1) | 3 | 3815 | 3330 | 189 | 3 | 0 | 7 qualifying, 3 suspended |
+| `distribution_shift` | 9/10 | 118; 1 | 912 + 47 | 52 (6) | 7 | 3036 | 1737 | 918 | 5 | 0 | 3 qualifying, 7 suspended |
+| `delayed_defection` | 10/10 | 94; 0 | 361 + 11 | 76 (10) | 10 | 3628 | 1052 | 1419 | 0 | 0 | 10 suspended |
+| `turnover_fast` | 0/10 | –; 10 | 0 | 0 | 1 | 4000 | 3731 | 164 | 0 | 0 | 10 qualifying |
+| `turnover_slow` | 9/10 | 139; 1 | 343 + 15 | 13 (4) | 5 | 3642 | 2639 | 908 | 0 | 0 | 3 autonomous, 5 qualifying, 2 suspended |
+| `audit_rate_0` | 4/10 | 284; 6 | 449 + 0 | 23 (0) | 1 | 3551 | 3225 | 161 | 0 | 0 | 4 autonomous, 5 qualifying, 1 suspended |
+| `audit_rate_20` | 4/10 | 284; 6 | 98 + 14 | 7 (0) | 1 | 3876 | 3531 | 161 | 12 | 0 | 9 qualifying, 1 suspended |
+| `risk_envelopes` | 2/10 | 83; 8 | 47 + 0 | 1 (0) | 1 | 1380 | 1121 | 228 | 2 | 0 | 9 qualifying, 1 suspended |
 | `censoring` | 0/10 | –; 10 | 0 | 0 | 1 | 4000 | 3761 | 143 | 0 | 0 | 9 qualifying, 1 suspended |
-| `noisy_oracle` | 1/10 | 146; 9 | 238 + 16 | 5 (0) | 1 | 3746 | 3488 | 164 | 0 | 0 | 1 autonomous, 8 qualifying, 1 suspended |
-| `suspension_cycle` | 10/10 | 84; 0 | 720 + 34 | 23 (15) | 19 | 3246 | 2646 | 515 | 0 | 0 | 1 autonomous, 7 qualifying, 2 suspended |
+| `noisy_oracle` | 1/10 | 212; 9 | 111 + 4 | 0 (0) | 1 | 3883 | 3619 | 164 | 2 | 0 | 9 qualifying, 1 suspended |
+| `suspension_cycle` | 10/10 | 166.5; 0 | 502 + 18 | 17 (9) | 13 | 3478 | 3052 | 340 | 2 | 0 | 2 autonomous, 6 qualifying, 2 suspended |
 | `human_only` | 0/10 | n/a | 0 | 0 | 0 | 4000 | 3890 | 0 | 0 | 0 | human only |
 | `legacy_wilson_seeded` | seeded | 0 (seeded) | 2410 + 121 | 23 (6) | 0 | 1469 | 1456 | 0 | 0 | 0 | 4 seeded-autonomous, 6 suspended |
 
-What changes against v0.3.x, and why:
+What the decided rules change, against the v0.3.x harness and Step 09's v0.3.1-rule run:
 
-- **Defection costs more before it is caught.** `delayed_defection` has 106 failures after autonomy against 20, and its median intervention delay is 17.5 steps against 2; `distribution_shift` 19.5 against 14.5. Under autonomy the shipped loop labels only audits, so a failure reaches the bound only through a 5 % audit or a severe outcome. The v0.3.x speed came from the harness labelling every execution.
-- **Audit rate now changes what is learned.** `audit_rate_0` and `audit_rate_20` no longer execute the same operations: at 20 % audits there are 205 autonomous executions and 13 failures after autonomy, against 687 and 29, because audited labels reach the bound and can withdraw autonomy. The per-seed comparison is not clean: each audited label also draws from the simulation's random stream, so the two scenarios' truth sequences diverge after the first audit, and the difference is not attributable to auditing alone.
-- **A suspension now stops human-approved executions too.** The gateway refuses an approved token on a suspended partition, and approved high-value refunds draw on the partition's budget, so "approved, then refused" is large wherever a partition is suspended (`stable` 1347). In v0.3.x those executions ran without the gateway.
-- **Budget denials dominate `risk_envelopes`.** 2578 policy denials, mostly `BUDGET_EXCEEDED`, because human-approved refunds now spend the same $6000 partition budget, and 5 of 10 seeds instead of 10 qualify. Mislabelled risk classes cannot occur (the proposer derives the class), so `RISK_CLASS_MISMATCH` is gone; out-of-envelope amounts are refused by the proposer.
-- **Redemption refusals are 0.** The shipped loop issues and redeems inside one run, so no token is outstanding when state changes.
-- **Unauthorized effects are measured.** 0 everywhere, now read from the gateway's token table rather than counted by the harness.
-- **Unchanged:** cold start (`stable` qualifies in a median of 84 steps in all 10 seeds, identical to v0.3.x), below threshold never qualifies, censoring and oracle noise block qualification.
+- **Qualification costs more, as Step 09 predicted.**
+  - **Cold start:** `stable` qualifies in all 10 seeds at a median of 139 steps, against 84. Partition 1's α is 0.05·(6/π²)² ≈ 0.018, so a perfect record needs 63 trials, not 53.
+  - **Pending trials:** a pending trial counts as a failure until its label arrives two steps later.
+- **Churn is expensive under online spending.** Every churned partition registers anew, with a smaller α.
+  - `turnover_fast` (churn every 60 steps) now qualifies in no seed, against 8 of 10 under v0.3.1.
+  - `turnover_slow` qualifies in 9 of 10.
+  - This is the liveness price of a family-wise bound across partitions. It falls hardest on deployments that churn configuration often.
+- **Defection is caught sooner.** `delayed_defection` has 76 failures after autonomy, against 106 under v0.3.1, and its median intervention delay is 14 steps, against 17.5.
+- **A new effect: redemption refusals of audits.** An audit is frozen at commit, between the decision and the redemption, and under pessimistic pending that new trial counts at once as a failure. On a partition just above the threshold, the gate the lifecycle recomputes at redemption can therefore refuse the audit's own token: 12 refusals in `audit_rate_20`, none in `audit_rate_0`.
+  - It fails safe; the refused audit's trial stays a failure until labelled.
+  - It means audits on marginal partitions often do not execute. The harness schedules no label for an audit that did not execute, so such a trial expires to `INCONCLUSIVE`.
+- **Unchanged:** below-threshold never qualifies; censoring and oracle noise block qualification; human-only and the legacy comparator are unaffected; 0 unauthorized effects everywhere.
 
 ## v0.3.x results (`results/`: seeds 1–10, horizon 400, the v0.3.x harness at the commit in `results/manifest.json`)
 
