@@ -166,18 +166,27 @@ The proposition for pessimistic pending (to be proved in `statistical-method.md`
 - Python 3.10 target: no 3.11+ syntax or library features (`sqlite3` features used must exist in the SQLite bundled with CPython 3.10).
 - Estimated size, for scheduling only: Step 02 ~600 LOC, 03 ~250, 04 ~300, 05 ~450, 06 ~350, 07 ~300, 08 ~450, 09 ~700 (mostly harness), 10 docs.
 
-## 6. Breaking changes expected in 0.4.0
+## 6. Breaking changes in 0.4.0
 
-| Change | Step |
-|---|---|
-| State requires a database path; in-memory classes removed rather than kept as shims (`spec.md` O-7) | 02 |
-| `ExecutionGateway.execute(token_id, proposal)`; no `adapter` | 04 |
-| `ToolRegistry` → `ToolCatalog` + `HandlerTable` | 04 |
-| `issue(..., human_approved=bool)` → `issue(..., approval=Approval)` | 05 |
-| `release(key, actor, reason)` requires a registered `HUMAN` principal | 05 |
-| MCP extension 0.2; 0.1 blocks refused | 07 |
-| `freeze(trial_id, proposal, provenance)` → `freeze(decision_id)` | 08 |
-| `adjudicate` takes a signed label; `labeled_at` removed | 08 |
-| `Policy` gains `pending_treatment`, `alpha_spending` (if adopted) | 09 |
+The changes listed here before Step 10 were checked against the final API at Step 10 (issue #46). The check compared the signature of every public callable in `exe_auth_ctrl_loop.__all__` at tag `v0.3.1` with `mainline`. Rows marked *(added at Step 10)* were breaking but missing from the original list. The 0.4.0 CHANGELOG carries the same list.
 
-Every partition is retired on upgrade because the policy version changes; v0.3.1 evidence is not migrated.
+| Change | Step | Verified 0.4.0 API |
+|---|---|---|
+| State requires a database file; in-memory classes removed rather than kept as shims (`spec.md` O-7) | 02 | `EvidenceStore(store)`, `EventLedger(store)`, `RiskPolicy(..., *, store)`; `Store(path, *, ledger_key)` refuses `:memory:` |
+| The ledger hash chain is keyed: `Store` requires `ledger_key` *(added at Step 10)* | 08 | `Store(path, *, ledger_key: bytes)`. A pre-0.4.0 ledger fails `verify()` |
+| `ExecutionGateway.execute(token_id, proposal)`; no `adapter` | 04 | as stated |
+| `ToolRegistry` → `ToolCatalog` + `HandlerTable` | 04 | `ToolRegistry` removed; `ToolDefinition` has no `handler`; `OpenAIProposalGenerator(model, prompt_version, catalog, ...)` and `ClaudeExecutionAgent(..., catalog, ...)` take the catalog |
+| The gateway requires its store, handler table, and principals *(added at Step 10)* | 03–05 | `ExecutionGateway(..., *, store, handlers, principals)` |
+| `issue(..., human_approved=bool)` → `issue(..., approval=Approval)` | 05 | `issue(decision, proposal, policy, *, principal_id, grant_id, approval=None, audience=None)`; `issue()` also requires the decision's committed ledger row (Step 04) |
+| Approvals are signed objects through the agent and loop *(added at Step 10)* | 05 | `ClaudeExecutionAgent.run(bundle, *, approvals)`, `CrossModelAuthorityLoop.execute(bundle, approvals)`; `approved_proposal_ids` removed |
+| The agent acts as a principal under a grant *(added at Step 10)* | 05 | `ClaudeExecutionAgent(..., *, principal_id, grant_id)` |
+| `release(key, actor, reason)` requires a registered `HUMAN` principal | 05; #41 | `release(key, actor, reason, mac, *, oracle)`: the MAC covers the partition, epoch, reason, and the new epoch's oracle |
+| MCP extension 0.2; 0.1 blocks refused | 07 | `verify_call_meta(..., *, audience)`; `VerifiedAuthority` gains `audience`, `redemption` |
+| The shadow log requires principals *(added at Step 10)* | 08 | `ShadowEvidenceLog(ledger, deadline, clock, *, principals)`; `ShadowEvidenceLog.replay(..., *, principals)` |
+| `freeze(trial_id, proposal, provenance)` → `freeze(decision_id)` | 08 | `freeze(decision_id, proposal)` (the proposal is still passed; provenance is derived) |
+| `adjudicate` takes a signed label; `labeled_at` removed | 08 | `adjudicate(SignedLabel)` |
+| An epoch admits no label until its oracle is bound *(added at Step 10)* | #41 | A host binds a partition's first epoch with `ShadowEvidenceLog.bind_oracle`; otherwise its labels are quarantined `ORACLE_NOT_BOUND` |
+| `Policy` gains `pending_treatment`, `alpha_spending` (if adopted) | 09; #43 | Adopted under other names, as defaults: `Policy(..., pending="pessimistic", partition_alpha="online", epoch_alpha="lineage")`, with the v0.3.1 values selectable. A `Policy` built as in 0.3.1 now counts pending trials as failures and spends α across partitions and epochs |
+| Shadow snapshots default to the pessimistic rule *(added at Step 10)* | #43 | `ShadowEvidenceLog.snapshot/publish(..., *, pending="pessimistic")` |
+
+Upgrading: v0.3.1 kept all authority state in memory, so there is nothing on disk to migrate, and v0.3.1 evidence is not carried over. Every partition starts unestablished under the new policy version. A database written by an unreleased `mainline` build before v3 Step 08 fails `verify()`, because its ledger was chained with unkeyed SHA-256.

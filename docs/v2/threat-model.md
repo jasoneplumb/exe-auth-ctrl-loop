@@ -1,5 +1,7 @@
 # v2 threat model
 
+> **Superseded in part for 0.4.0.** `docs/v3/threat-model.md` lists every row v3 changes (TM-6, TM-7, TM-8, TM-10, TM-11) and the new rows TM-13 to TM-20, and its trust classification replaces this one. Read the two together: a row not listed there is unchanged here.
+
 Scope: the lifecycle and evidence contract in `spec.md`. Prototype scope: single process, in-memory. This document states what is trusted, what is not, and what is explicitly unsupported.
 
 ## Trust classification
