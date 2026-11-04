@@ -289,11 +289,15 @@ alternatives and outcome-dependent costs.
 | `src/exe_auth_ctrl_loop/pipeline.py` | OpenAI-to-Claude orchestration, ledger commit, audit and shadow freezing |
 | `src/exe_auth_ctrl_loop/store.py` | SQLite store for authority state: WAL, `BEGIN IMMEDIATE` transactions, versioned schema, append-only triggers (v3 Step 02) |
 | `src/exe_auth_ctrl_loop/ledger.py` | Durable hash chain, keyed by the host (v3 Step 08), with decision commit and an anchoring demonstration |
-| `src/exe_auth_ctrl_loop/mcp.py` | MCP binding: signed authority metadata on `tools/call` |
+| `src/exe_auth_ctrl_loop/principals.py` | Principals, host-held HMAC keyring, attenuating grants, signed approvals and releases, permission-change events (v3 Step 05) |
+| `src/exe_auth_ctrl_loop/revocation.py` | Synchronous revocation: one transaction per revoking event, policy authority (v3 Step 06) |
+| `src/exe_auth_ctrl_loop/mcp.py` | MCP binding: signed authority metadata on `tools/call`; extension 0.2 with server-side redemption (`McpServer`, v3 Step 07) |
 | `docs/v2/` | v2 specification, threat model, method note, per-mechanism contracts, gate reports |
-| `docs/paper-v2/` | Claims matrix, worked example from `n=0`, manuscript plan, reproducibility, release plan |
+| `docs/paper-v2/` | Claims matrix, worked example from `n=0`, manuscript plan, reproducibility, release plan (v0.3.0) |
+| `docs/v3/` | v3 plan, specification, threat-model delta, claims delta for 0.4.0, revocation fixture, gate reports, 0.4.0 release plan |
 | `docs/mcp-extension.md` | Key specification for the MCP extension |
-| `experiments/`, `results/` | Simulated evaluation harness, configs, and hash-manifested outputs |
+| `experiments/` | Simulation harness through the shipped loop (`simulate.py`, `run.py`), the scenario-family driver (`statistics.py`, `families.json`), configs |
+| `results/`, `results-v3/` | Hash-manifested outputs: v0.3.0 (cited by the paper-v2 matrix) and the proposed 0.4.0 (scenarios, families, agreement check) |
 | `examples/example.py` | Offline deterministic example |
 | `examples/mcp_demo.py` | Offline MCP round trip, including the denial paths |
 | `examples/live_example.py` | Live OpenAI and Anthropic API example using a harmless mock handler |
@@ -369,7 +373,8 @@ and online and lineage α spending, issue #43), are in `results-v3/scenarios/`:
 - **Fast churn:** with configuration changing every 60 steps, no seed qualifies,
   which is the cost of a family-wise α.
 
-`results/` is regenerated at Step 10.
+`results/` stays the v0.3.0 artifacts the paper-v2 claims matrix cites, unchanged
+(owner decision at v3 Step 10); `results-v3/` is the 0.4.0 set of record.
 
 ```sh
 python -m experiments.run --all --output results

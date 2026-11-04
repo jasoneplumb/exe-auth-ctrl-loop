@@ -12,7 +12,11 @@ python -m experiments.run --config experiments/configs/stable.json --output /tmp
 pytest -q tests/test_experiments.py tests/test_statistics.py     # reduced-size checks
 ```
 
-Run `--all` twice into two directories and compare `manifest.json → canonical_hash`. They must be identical; `tests/test_experiments.py::ArtifactTests::test_rerun_reproduces_the_canonical_hash` does this on a reduced configuration. Reduced runs via `--seeds N --horizon H` are for development only; the committed `results/` use the full configs. Full-size reproduction has been checked on one platform only (macOS, Python 3.14.4; three runs recorded in the Step 08 and 09 gate reports). CI runs the reduced test on Linux and does not regenerate `results/` or compare it with the committed manifest.
+Run `--all` twice into two directories and compare `manifest.json → canonical_hash`. They must be identical; `tests/test_experiments.py::ArtifactTests::test_rerun_reproduces_the_canonical_hash` does this on a reduced configuration. Reduced runs via `--seeds N --horizon H` are for development only; the committed `results/` and `results-v3/` use the full configs. Full-size reproduction has been checked on one platform only (macOS):
+- `results/` (v0.3.x): three runs on Python 3.14.4, recorded in `docs/v2/gates/step-08.md` and `step-09.md`.
+- `results-v3/`: three runs on Python 3.14.8, recorded in `docs/v3/gates/step-09.md` and `step-10.md`.
+
+CI runs the reduced tests on Linux and does not regenerate either set or compare it with the committed manifests.
 
 The full scenario run takes about ten minutes through the shipped loop (four with the v0.3.x harness), because the lifecycle re-reads every shadow trial at every decision (quadratic in the horizon) and every step goes through the proposer, executor, and gateway; that is the production code path, not a harness shortcut. The scenario families take about five minutes on 8 cores.
 

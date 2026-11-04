@@ -1,5 +1,7 @@
 # Risk envelopes and sequence budgets (Step 06)
 
+> **v0.3.x record.** This document describes the v2 design as released in 0.3.0 and 0.3.1. Where v3 changed it, `docs/v3/spec.md` and `docs/v3/claims-delta.md` state the 0.4.0 behaviour; this text is kept as written.
+
 Implements spec §8 in `src/exe_auth_ctrl_loop/risk.py`. Two gates now stand between a proposal and a handler, and both must open:
 
 1. **Scope** (this step): is this operation, with these exact arguments and effects, inside a host-defined envelope, and does the sequence it belongs to stay inside its budgets? Answered by `RiskPolicy`. A no is `DENY`, which no human signature overrides.
