@@ -428,7 +428,7 @@ frozen form (see [docs/v2/audit-commitment.md](docs/v2/audit-commitment.md)).
 | Software v0.3.0 (the v2 design) | tag `v0.3.0` (commit `78bdf9d`, merged as #10), DOI 10.5281/zenodo.23226913; see [docs/paper-v2/release-plan.md](docs/paper-v2/release-plan.md) | released 2026-10-08 |
 | Paper v2 | draft in [docs/paper-v2/manuscript.md](docs/paper-v2/manuscript.md), built on the v0.3.0 artifacts | draft; not submitted, no preprint |
 | Software v0.3.1 | tag `v0.3.1` (commit `3032a11`), DOI 10.5281/zenodo.23705921; fixes and tests from the v0.3.0 claims audit (see [CHANGELOG.md](CHANGELOG.md)) | released 2026-10-27 |
-| Software v0.4.0 (v3) | tag `v0.4.0`; see [docs/v3/plan.md](docs/v3/plan.md), the claims delta [docs/v3/claims-delta.md](docs/v3/claims-delta.md), the [CHANGELOG](CHANGELOG.md) entry, and the [release plan](docs/v3/release-plan.md); Zenodo DOI added once minted | released 2026-11-04 |
+| Software v0.4.0 (v3) | tag `v0.4.0` (commit `b5222c6`), DOI 10.5281/zenodo.23965556; see [docs/v3/plan.md](docs/v3/plan.md), the claims delta [docs/v3/claims-delta.md](docs/v3/claims-delta.md), the [CHANGELOG](CHANGELOG.md) entry, and the [release plan](docs/v3/release-plan.md) | released 2026-11-04 |
 
 What v2 changes relative to the v1 design and paper, in one paragraph: a
 partition can now earn autonomy from an empty evidence store, through shadow

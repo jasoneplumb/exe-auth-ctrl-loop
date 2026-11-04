@@ -8,7 +8,7 @@ Written at v3 Step 10 (issue #46). Nothing here has been done: every step that t
 |---|---|---|
 | Software version | `0.4.0` (plan §6; breaking release) | released 2026-11-04 (owner's `/release`); `pyproject.toml`, `__init__.__version__`, and `CITATION.cff` bumped in the release commit |
 | Software tag / GitHub release | `v0.4.0` | created 2026-11-04 with the release commit |
-| Zenodo version DOI for 0.4.0 | — | minted by the Zenodo integration on the GitHub release; added to `CITATION.cff` `identifiers` in a follow-up with the actual value |
+| Zenodo version DOI for 0.4.0 | 10.5281/zenodo.23965556 | minted 2026-11-04 by the Zenodo integration on the GitHub release ([record](https://zenodo.org/records/23965556)); in `CITATION.cff` `identifiers` |
 | Concept DOI | 10.5281/zenodo.21983061 | unchanged; resolves to the latest version |
 | Release-candidate commit | the squash merge of the Step 10 PR on `mainline` | recorded in `docs/v3/gates/step-10.md` once merged |
 | Artifacts | `results-v3/` (scenarios, statistics, agreement), hashes in `docs/v3/gates/step-10.md` | three independent runs at Step 10 |
@@ -63,5 +63,5 @@ Written at v3 Step 10 (issue #46). Nothing here has been done: every step that t
 - [x] Release notes state prototype against production limits (above).
 - [x] No confidential or non-public material from `exe-auth-ctrl-loop-ip` is in the public repository. Nothing from it was read or copied during v3; confirmed by the owner on 2026-11-04.
 - [x] Release commit, tag, and GitHub release pushed after **explicit authorization** (owner's `/release`, 2026-11-04); the release SHA is the one tagged `v0.4.0`.
-- [ ] Zenodo version created only after the authorized release; use the **actual** DOI.
+- [x] Zenodo version created only after the authorized release; the **actual** DOI, 10.5281/zenodo.23965556, is in `CITATION.cff`.
 - [x] README and SECURITY.md rewritten from "On `mainline` (unreleased)" to "Since 0.4.0" in the release commit.
