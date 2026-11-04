@@ -210,10 +210,17 @@ class EvidenceSnapshot:
     valid: bool = True
     suspended: bool = False
     invalidation_reason: str | None = None
+    # issue #43: the α the lifecycle allocated to this partition's current epoch (O-4,
+    # O-8); None means the policy's α. A gate reading it can only tighten: it uses the
+    # smaller of this and the policy's α, so a hand-written snapshot cannot loosen the bound.
+    alpha: float | None = None
 
     @property
     def n(self) -> int:
         return self.successes + self.failures
+
+
+SPENDING = 6 / math.pi**2  # the sum over n >= 1 of SPENDING / n^2 is 1
 
 
 @dataclass(frozen=True)
@@ -228,6 +235,17 @@ class Policy:
     bound_z: float = 1.96
     alpha: float = 0.05
     estimator: str = "beta_mixture"
+    # issue #43 (spec §11). "deadline": a pending trial is outside n until labelled or past
+    # its deadline (v0.3.1). "pessimistic" (O-3): it counts in n from freezing, as a failure
+    # until an admitted POSITIVE, valid whatever is delayed or withheld (statistical-method
+    # §11.2).
+    pending: str = "deadline"
+    # "per_partition": every partition gets α (v0.3.1). "online" (O-4): the k-th partition
+    # registered gets α·6/(π²k²), so the family across partitions stays within α.
+    partition_alpha: str = "per_partition"
+    # "per_epoch": every epoch starts with its partition's full allocation (v0.3.1, L11).
+    # "lineage" (O-8): epoch e gets 6/(π²e²) of it, so releases cannot reset the budget.
+    epoch_alpha: str = "per_epoch"
 
     def __post_init__(self) -> None:
         if self.n_min < 1:
@@ -238,8 +256,31 @@ class Policy:
             raise ValueError("alpha must be in (0, 1)")
         if self.estimator not in ESTIMATORS:
             raise ValueError(f"estimator must be one of {sorted(ESTIMATORS)}")
+        for name, value, allowed in (
+            ("pending", self.pending, PENDING_RULES),
+            ("partition_alpha", self.partition_alpha, PARTITION_ALPHA),
+            ("epoch_alpha", self.epoch_alpha, EPOCH_ALPHA),
+        ):
+            if value not in allowed:
+                raise ValueError(f"{name} must be one of {sorted(allowed)}")
 
-    def lower_bound(self, successes: int, failures: int) -> float:
+    def allocated_alpha(self, partition_index: int, epoch: int) -> float:
+        """
+        intent: The α of the k-th registered partition's e-th epoch (both from 1)
+        method: α, times 6/(π²k²) under online partition spending (O-4), times 6/(π²e²)
+                under lineage epoch spending (O-8). The two compound, so the sum over every
+                partition and epoch is at most α.
+        """
+        if partition_index < 1 or epoch < 1:
+            raise ValueError("partition_index and epoch count from 1")
+        alpha = self.alpha
+        if self.partition_alpha == "online":
+            alpha *= SPENDING / partition_index**2
+        if self.epoch_alpha == "lineage":
+            alpha *= SPENDING / epoch**2
+        return alpha
+
+    def lower_bound(self, successes: int, failures: int, alpha: float | None = None) -> float:
         """
         intent: The one place that turns counts into the bound the gate compares
         constraint: `estimator` and `alpha` are part of the policy, so changing either is
@@ -248,13 +289,20 @@ class Policy:
         effect: `beta_mixture` is valid at every look (docs/v2/statistical-method.md).
                 `wilson_legacy` is the v1 fixed-sample bound, kept for comparison only;
                 read repeatedly it exceeds its nominal error rate.
+        constraint: `alpha` is an epoch's allocation (allocated_alpha, carried by the
+                    snapshot); the bound uses the smaller of it and the policy's α, so it can
+                    tighten the gate and never loosen it
         """
         if self.estimator == "wilson_legacy":
             return wilson_lower_bound(successes, successes + failures, self.bound_z)
-        return beta_mixture_lower_bound(successes, failures, self.alpha)
+        effective = self.alpha if alpha is None else min(alpha, self.alpha)
+        return beta_mixture_lower_bound(successes, failures, effective)
 
 
 ESTIMATORS = frozenset({"beta_mixture", "wilson_legacy"})
+PENDING_RULES = frozenset({"deadline", "pessimistic"})
+PARTITION_ALPHA = frozenset({"per_partition", "online"})
+EPOCH_ALPHA = frozenset({"per_epoch", "lineage"})
 
 
 @dataclass(frozen=True)
@@ -370,29 +418,31 @@ class EvidenceStore:
             if current and snapshot.version <= current.version:
                 raise ValueError("evidence version must increase")
             self.store.connection().execute(
-                "INSERT INTO evidence_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                "INSERT INTO evidence_snapshots VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     partition_text(snapshot.key), snapshot.version, snapshot.evidence_id,
                     snapshot.successes, snapshot.failures,
                     time_text(snapshot.collected_from), time_text(snapshot.collected_until),
                     int(snapshot.valid), int(snapshot.suspended), snapshot.invalidation_reason,
+                    snapshot.alpha,
                 ),
             )
 
     def get(self, key: PartitionKey) -> EvidenceSnapshot | None:
         row = self.store.connection().execute(
             "SELECT version, evidence_id, successes, failures, collected_from,"
-            " collected_until, valid, suspended, invalidation_reason"
+            " collected_until, valid, suspended, invalidation_reason, alpha"
             " FROM evidence_snapshots WHERE partition = ? ORDER BY version DESC LIMIT 1",
             (partition_text(key),),
         ).fetchone()
         if row is None:
             return None
-        version, evidence_id, successes, failures, start, until, valid, suspended, reason = row
+        (version, evidence_id, successes, failures, start, until, valid, suspended, reason,
+         alpha) = row
         return EvidenceSnapshot(
             evidence_id, version, key, successes, failures,
             datetime.fromisoformat(start), datetime.fromisoformat(until),
-            bool(valid), bool(suspended), reason,
+            bool(valid), bool(suspended), reason, alpha,
         )
 
     def invalidate(self, key: PartitionKey, reason: str, *, revoke_tokens: bool = True) -> None:
@@ -561,7 +611,8 @@ class AuthorityController:
                 reasons.append("EVIDENCE_IMMATURE")
             if snapshot.key != proposal.partition:
                 reasons.append("PARTITION_MISMATCH")
-            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures)
+            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures,
+                                            snapshot.alpha)
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
 

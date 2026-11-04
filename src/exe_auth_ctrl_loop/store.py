@@ -396,6 +396,13 @@ _SCHEMA_V7 = (
     ),
 )
 
+# Issue #43 (O-3, O-4, O-8): a published snapshot carries the α its epoch was allocated, and
+# the α ledger records each partition's registration index, the k of online spending.
+_SCHEMA_V8 = (
+    "ALTER TABLE evidence_snapshots ADD COLUMN alpha REAL",
+    "ALTER TABLE alpha_ledger ADD COLUMN partition_index INTEGER",
+)
+
 # constraint: every table whose rows are history, across all schema versions
 APPEND_ONLY_TABLES = (
     *_V1_APPEND_ONLY, "decisions", "nonces", "epoch_oracles", "alpha_ledger", "quarantines",
@@ -405,6 +412,7 @@ APPEND_ONLY_TABLES = (
 # released. A later step adds a version; it does not change an earlier one.
 MIGRATIONS: tuple[tuple[str, ...], ...] = (
     _SCHEMA_V1, _SCHEMA_V2, _SCHEMA_V3, _SCHEMA_V4, _SCHEMA_V5, _SCHEMA_V6, _SCHEMA_V7,
+    _SCHEMA_V8,
 )
 
 

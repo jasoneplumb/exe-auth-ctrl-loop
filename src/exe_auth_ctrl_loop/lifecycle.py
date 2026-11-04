@@ -193,6 +193,9 @@ class LifecycleManager:
         if record is None:
             record = PartitionRecord(TRANSITIONS[(None, E.FIRST_PROPOSAL)])
             self._save(key, record)
+            # O-4 (issue #43): registration order is the k of online α spending, and the
+            # first epoch's allocation is on the record from the start
+            self._record_alpha(key, record, self.shadow.epoch_floor(key), "REGISTERED")
             self._log(key, record, None, E.FIRST_PROPOSAL, ())
             # constraint: a successor of a suspended (or lineage-suspended) partition, by
             # any edge -- key churn or a policy change -- starts lineage-suspended, so no
@@ -207,7 +210,7 @@ class LifecycleManager:
             return record.state
 
         self.shadow.expire_unlabeled()
-        snapshot = self.shadow.snapshot(key, self.clock())
+        snapshot = self.shadow.snapshot(key, self.clock(), pending=self.policy.pending)
         # method: publish before moving, so the transition record names the evidence
         # version the gate actually relied on
         self._sync_store(key, record)
@@ -421,7 +424,8 @@ class LifecycleManager:
             if record.state != LifecycleState.AUTONOMOUS:
                 reasons.append(f"LIFECYCLE_{record.state.value}")
             else:
-                snapshot = self.shadow.snapshot(token.partition, self.clock())
+                snapshot = self.shadow.snapshot(token.partition, self.clock(),
+                                                pending=self.policy.pending)
                 reasons.extend(self._gate_reasons(token.partition, record, snapshot))
         return tuple(dict.fromkeys(reasons))
 
@@ -454,17 +458,50 @@ class LifecycleManager:
         """
         intent: Every epoch opening is on the record with the α it starts with (spec §7 rule
                 12), so a reset of counts is never a silent reset of the error budget
+        method: The α is the policy's allocation for this partition's registration index k
+                (O-4) and this epoch e = record.epoch + 1 (O-8): Policy.allocated_alpha. A
+                REGISTERED row takes the next k; every later row reuses the partition's.
         constraint: Joins the caller's transaction (the epoch opening), so the row and the
                     opening commit or roll back together; the table is append-only, so a
                     row committed on its own could never be withdrawn (PR #39 review)
         """
         with self.db.transaction() as conn:
+            if reason == "REGISTERED":
+                (index,) = conn.execute(
+                    "SELECT COUNT(*) + 1 FROM alpha_ledger WHERE reason = 'REGISTERED'"
+                ).fetchone()
+            else:
+                index = self._partition_index(key)
+            alpha = self.policy.allocated_alpha(index, record.epoch + 1)
             conn.execute(
                 "INSERT INTO alpha_ledger (partition, epoch, floor_sequence, alpha, reason,"
-                " opened_at) VALUES (?, ?, ?, ?, ?, ?)",
-                (partition_text(key), record.epoch, floor, self.policy.alpha, reason,
-                 self.clock().isoformat()),
+                " opened_at, partition_index) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (partition_text(key), record.epoch, floor, alpha, reason,
+                 self.clock().isoformat(), index),
             )
+
+    def _partition_index(self, key: PartitionKey) -> int:
+        """The partition's registration index k, from its REGISTERED row."""
+        row = self.db.connection().execute(
+            "SELECT partition_index FROM alpha_ledger WHERE partition = ?"
+            " AND reason = 'REGISTERED'", (partition_text(key),),
+        ).fetchone()
+        if row is None:
+            raise LookupError("partition has no registration in alpha_ledger")
+        return int(row[0])
+
+    def _alpha(self, key: PartitionKey) -> float:
+        """
+        intent: The α the gate uses for the partition's current epoch: the one recorded when
+                that epoch opened, so what alpha_ledger says is what the gate applied
+        """
+        row = self.db.connection().execute(
+            "SELECT alpha FROM alpha_ledger WHERE partition = ?"
+            " ORDER BY entry_id DESC LIMIT 1", (partition_text(key),),
+        ).fetchone()
+        if row is None:
+            raise LookupError("partition has no α allocation in alpha_ledger")
+        return float(row[0])
 
     def _suspended_predecessors(self, key: PartitionKey) -> list[str]:
         rows = self.db.connection().execute(
@@ -503,7 +540,8 @@ class LifecycleManager:
             if self.clock() - snapshot.collected_until > self.policy.max_evidence_age:
                 reasons.append("EVIDENCE_STALE")
             required = self.policy.minimum_success_by_risk.get(key.risk_class, 1.0)
-            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures)
+            lower = self.policy.lower_bound(snapshot.successes, snapshot.failures,
+                                            self._alpha(key))
             if lower < required:
                 reasons.append("BOUND_BELOW_POLICY")
         reasons.extend(self._blockers(key, record))
@@ -644,7 +682,8 @@ class LifecycleManager:
         """
         current = self.store.get(key)
         suspended = record.state == LifecycleState.SUSPENDED
-        base = current if suspended else self.shadow.snapshot(key, self.clock())
+        base = current if suspended else self.shadow.snapshot(
+            key, self.clock(), pending=self.policy.pending)
         if base is None:
             base = current and self._empty(key, current.evidence_id)
         if suspended and base is None:
@@ -661,15 +700,18 @@ class LifecycleManager:
             valid=valid,
             suspended=suspended,
             invalidation_reason=record.suspension_reason if suspended else reason,
+            # the epoch's allocated α travels with the evidence, so a controller reading
+            # the store directly applies it too (it can only tighten the gate)
+            alpha=self._alpha(key),
         )
         # constraint: evidence_id is part of the comparison so a hand-seeded record with
         # the same counts as the first shadow snapshot is still replaced, and tokens bind
         # to the shadow-derived id rather than a stale one
         if current is not None and (
             (current.evidence_id, current.successes, current.failures, current.collected_until,
-             current.suspended, current.valid)
+             current.suspended, current.valid, current.alpha)
             == (desired.evidence_id, desired.successes, desired.failures, desired.collected_until,
-                desired.suspended, desired.valid)
+                desired.suspended, desired.valid, desired.alpha)
         ):
             return
         self.store.put(replace(desired, version=current.version + 1 if current else 1))

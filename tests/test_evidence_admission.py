@@ -367,7 +367,9 @@ class SignedLabelTests(AdmissionCase):
         self.assertEqual((counts.frozen, counts.positive), (1, 1))  # the old label is gone
         rows = self.log.store.connection().execute(
             "SELECT epoch, alpha, reason FROM alpha_ledger ORDER BY entry_id").fetchall()
-        self.assertEqual(rows, [(1, policy.alpha, "ORACLE_CHANGED")])
+        # registration (issue #43) opens epoch 0; the oracle change opens epoch 1
+        self.assertEqual(rows, [(0, policy.alpha, "REGISTERED"),
+                                (1, policy.alpha, "ORACLE_CHANGED")])
         with self.assertRaisesRegex(ValueError, "another oracle"):
             self.log.bind_oracle(KEY, ORACLE)
 
