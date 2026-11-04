@@ -1,5 +1,104 @@
 # Changelog
 
+## [Unreleased] - proposed 0.4.0
+
+The v3 program (`docs/v3/plan.md`, Steps 00–10, and issues #41 and #43): durable authority state,
+a closed execution boundary, synchronous revocation, MCP server-side redemption,
+authenticated evidence admission and delegation, and a statistical evaluation that drives
+the shipped loop. **This release breaks the API in many places.** Read "Breaking" and the
+verified list in `docs/v3/plan.md` §6 before upgrading. Each claim of the paper-v2
+claims matrix is restated for 0.4.0 in `docs/v3/claims-delta.md`. `results/` stays the
+v0.3.0 artifacts the paper cites; the 0.4.0 artifacts are in `results-v3/`.
+
+### Breaking
+
+- **Durable state.** Authority state lives in one SQLite file. `Store(path, *, ledger_key)`
+  is required, and `EvidenceStore`, `EventLedger`, and `RiskPolicy` take it. The
+  in-memory classes are removed, not shimmed (O-7).
+- **Execution boundary.** `ToolRegistry` is replaced by `ToolCatalog`, which validates and
+  classifies, and `HandlerTable`, which only the gateway holds. `ToolDefinition` has no
+  handler. `ExecutionGateway.execute(token_id, proposal)` takes no adapter, and the gateway
+  requires `store=`, `handlers=`, `principals=`.
+- **Principals.** `issue(..., *, principal_id, grant_id, approval=None, audience=None)`
+  replaces `human_approved=bool`. `run()` and `CrossModelAuthorityLoop.execute()` take
+  signed `approvals`. `ClaudeExecutionAgent` requires `principal_id` and `grant_id`.
+  `release(key, actor, reason, mac, *, oracle)` needs a registered human's signature over
+  the partition, epoch, reason, and oracle.
+- **MCP extension 0.2.** `verify_call_meta(..., *, audience)`; blocks of any other version
+  are refused.
+- **Evidence admission.**
+  - `ShadowEvidenceLog(..., *, principals)`.
+  - `freeze(decision_id, proposal)` derives provenance from the committed decision.
+  - `adjudicate(SignedLabel)` replaces `labeled_at`.
+  - A host binds a partition's first epoch to its oracle, and an unbound epoch admits no
+    label.
+- **Default gate rules.** A `Policy` built as in 0.3.1 now:
+  - counts pending trials as failures until labelled (`pending="pessimistic"`);
+  - spends α by partition registration order (`partition_alpha="online"`);
+  - spends α across a partition's epochs (`epoch_alpha="lineage"`).
+
+  The v0.3.1 values remain selectable. Qualification is slower; see "Results".
+- **Upgrading.** v0.3.1 state was in memory and is not migrated: every partition starts
+  unestablished.
+
+### Added
+
+- `Store`: WAL, `BEGIN IMMEDIATE` transactions, a versioned schema (v8), and append-only
+  triggers on every history table (Step 02).
+- Transactional single-use consumption across threads, processes on one host, and
+  restarts, with one token per decision, recorded handler states, and `effect_unknown()`
+  and `consumed_unrun()` for triage (Step 03).
+- `issue()` requires the decision's committed ledger row (Step 04).
+- `Principals`, `Keyring`, `Grant`, `GrantScope`, `Approval`:
+  - signed, single-use approvals and signed releases;
+  - attenuation-only delegation with per-operation argument ceilings;
+  - grant lineage on every token;
+  - six permission-change event types (Step 05).
+- Synchronous revocation: each of 13 revoking events revokes the tokens in its scope in
+  its own transaction, and redemption recomputes the gate from current counts (Step 06).
+- MCP server-side redemption (`McpServer`, `redeem_remote`, `accept_nonce`, audience-bound
+  blocks) (Step 07).
+- Evidence admission (Step 08; #41):
+  - provenance derived from the decision;
+  - the shipped loop freezes human-routed proposals as `SHADOW`;
+  - oracle-signed labels bound to the epoch's oracle;
+  - `REVIEWER_IS_ORACLE`;
+  - the deadline on host receipt time;
+  - an HMAC-keyed ledger chain with a contiguity check;
+  - replay of bindings and quarantines;
+  - explicit oracle binding at every epoch opening.
+- `Policy.pending`, `partition_alpha`, `epoch_alpha` and `allocated_alpha()`.
+  `alpha_ledger` records each partition's registration and every epoch's allocation, and
+  snapshots carry the allocation, applied min-only (#43).
+- Statistical evaluation (Step 09):
+  - the monotonicity lemma and pessimistic-pending proposition (`statistical-method.md`
+    §11);
+  - `experiments/statistics.py` with `families.json` (65 cells × 1000 sequences);
+  - the shipped-loop harness;
+  - the agreement check between them.
+
+### Changed
+
+- Every lineage successor, including one created by a policy-version change, inherits its
+  predecessor's suspension (closes L12).
+- `docs/v3/threat-model.md` (TM-6 to TM-20) supersedes the changed rows of
+  `docs/v2/threat-model.md`.
+
+### Results
+
+`results-v3/` holds the 0.4.0 artifacts, from three independent runs with identical
+hashes. The hashes are in `docs/v3/gates/step-10.md`.
+
+- **Scenarios** (`results-v3/scenarios/`, through the shipped loop under the defaults):
+  - `stable` qualifies in a median of 139 steps (84 in v0.3.0);
+  - with configuration churn every 60 steps nothing qualifies;
+  - `delayed_defection` has 76 failures after autonomy (20 in v0.3.0, whose harness
+    labelled every autonomous execution);
+  - 0 unauthorized effects, measured from the token table.
+- **Scenario families** (`results-v3/statistics/`), false-authorization rates at 1000
+  sequences per cell: negatives 50 trials late give 0.393 under the v0.3.1 rule and at
+  most 0.012 under the default.
+
 ## [0.3.1] - 2026-10-27
 
 Fixes and tests from the claims audit of the v0.3.0 artifacts (#13). Two

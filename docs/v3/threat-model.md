@@ -1,6 +1,6 @@
 # v3 threat model (delta)
 
-Changes to `docs/v2/threat-model.md` that v3 targets. Rows not listed are unchanged. "Target" columns state what v3 is meant to establish once the named step passes its gate; until then the v2 document is the operative one.
+Changes to `docs/v2/threat-model.md` that v3 targets. Rows not listed are unchanged. "Target" columns state what v3 establishes. Every named step has passed its gate (`docs/v3/gates/`), and issues #41 and #43 followed. On `mainline`, and for the proposed 0.4.0, these rows are the operative ones; a row not listed here is unchanged from the v2 document.
 
 ## Trust classification changes
 

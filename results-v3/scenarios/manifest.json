@@ -103,8 +103,8 @@
     "turnover_slow": 400
   },
   "metadata_excluded_from_canonical_hash": {
-    "code_sha": "6e6e0c20d5d74ef116ac734ba9f3a4b388d4624e",
-    "generated_at": "2026-11-04T03:27:54.881287+00:00",
+    "code_sha": "a82eeb8fac54e4758e9c3016291d1598a453fa86",
+    "generated_at": "2026-11-04T18:06:19.864466+00:00",
     "package_version": "0.3.1",
     "platform": "macOS-26.6.2-x86_64-i386-64bit-Mach-O",
     "python": "3.14.8"

@@ -75,6 +75,14 @@ truncation of the tail without an anchor held outside the host; and the tables
 counts are read from are not chained (a replay from a verified ledger rebuilds
 them for comparison, and nothing compares them automatically).
 
+On `mainline` (issue #43, unreleased) also in scope, under the default policy:
+
+- any way for a delayed or withheld label to raise a partition's bound;
+- any way for a partition or an epoch to be gated with more than the α its `alpha_ledger` row records;
+- any way for a snapshot to loosen the α the gate applies.
+
+Out of scope, and stated as limits: a labeller who delays or withholds positive labels can delay or block qualification (liveness, not safety), and later-registered partitions and later epochs need more evidence by design.
+
 Also in scope: any way for a human review to create, alter, discard, or relabel
 a frozen shadow trial; any path to `AUTONOMOUS` other than `QUALIFYING` on a
 met gate; any way to clear a suspension without a recorded human release; any
