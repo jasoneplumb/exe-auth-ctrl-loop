@@ -12,8 +12,8 @@ ROOT = Path(__file__).resolve().parent.parent
 MATRIX = (ROOT / "docs" / "paper-v2" / "claims-matrix.md").read_text()
 DELTA = (ROOT / "docs" / "v3" / "claims-delta.md").read_text()
 VERDICTS = {"kept", "changed", "closed"}
-PATH_PREFIXES = ("results-v3/", "results/", "docs/", "experiments/", "tests/", "SECURITY",
-                 "CHANGELOG")
+PATH_PREFIXES = ("results-v3/", "results/", "docs/", "experiments/", "tests/", "SECURITY.md",
+                 "CHANGELOG.md")
 
 
 def row_ids(text: str) -> list[str]:
@@ -29,11 +29,17 @@ def delta_rows() -> dict[str, list[str]]:
     return rows
 
 
-def cited_tests() -> set[tuple[str, str]]:
-    """(file, name) for every `file.py::A::B` and every `::name` that continues one."""
+def cited_tests() -> tuple[set[tuple[str, str]], list[str]]:
+    """
+    (file, name) for every `file.py::A::B` and every `::name` that continues one, plus
+    every `::name` with no file before it on its line. A markdown table row is one line,
+    so a continuation is resolved within its row; an unresolved one is an error, not a
+    silent skip (PR #47 review).
+    """
     found = set()
+    orphans = []
     for line in DELTA.splitlines():
-        current = None
+        current = None  # continuations resolve within one row (one markdown line)
         for token in re.findall(r"`([^`]+)`", line):
             if "::" not in token:
                 continue
@@ -43,10 +49,11 @@ def cited_tests() -> set[tuple[str, str]]:
             elif head:
                 continue
             if current is None:
+                orphans.append(token)
                 continue
             for name in names:
                 found.add((current, name))
-    return found
+    return found, orphans
 
 
 class ClaimsDeltaTests(unittest.TestCase):
@@ -62,7 +69,8 @@ class ClaimsDeltaTests(unittest.TestCase):
         self.assertEqual({r for r in rows if not r.startswith("N")}, set(matrix))
 
     def test_every_cited_test_exists(self):
-        cited = cited_tests()
+        cited, orphans = cited_tests()
+        self.assertEqual(orphans, [])  # every `::name` names the file it continues
         self.assertGreater(len(cited), 60)
         for file, name in sorted(cited):
             with self.subTest(file=file, name=name):

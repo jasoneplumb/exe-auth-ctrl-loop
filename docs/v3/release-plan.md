@@ -27,7 +27,7 @@ Written at v3 Step 10 (issue #46). Nothing here has been done: every step that t
 3. **Verify**: CI green on Python 3.10 and 3.13; the global gate locally; one full `results-v3/` run at the release commit reproduces the Step 10 hashes.
 4. **Tag and release** `v0.4.0` with the notes below. *Requires authorization to tag and to publish the release.* Record the actual release SHA.
 5. **Archive** to Zenodo, which is automatic on a GitHub release, as for 0.2.0 and 0.3.x. Obtain the actual version DOI and add it to `CITATION.cff` `identifiers` in a follow-up commit. *Requires authorization.*
-6. **Engineering vault**: refresh the generated project view after the release (`/project-state refresh`). It is pushed directly, with no PR.
+6. **Engineering vault**: refresh the generated project view after the release (`/project-state refresh`). This touches only the generated `projects/exe-auth-ctrl-loop/STATE.md` in `jasoneplumb/engineering-vault`, a different repository whose own CLAUDE.md allows direct pushes; nothing in this repository is pushed without a PR. If a refresh would ever change anything beyond that generated view, it goes through review instead.
 
 ## Release notes (draft for the GitHub release)
 
