@@ -368,8 +368,9 @@ class SignedLabelTests(AdmissionCase):
         rows = self.log.store.connection().execute(
             "SELECT epoch, alpha, reason FROM alpha_ledger ORDER BY entry_id").fetchall()
         # registration (issue #43) opens epoch 0; the oracle change opens epoch 1
-        self.assertEqual(rows, [(0, policy.alpha, "REGISTERED"),
-                                (1, policy.alpha, "ORACLE_CHANGED")])
+        # each epoch's allocation under the default lineage spending (issue #43)
+        self.assertEqual(rows, [(0, policy.allocated_alpha(1, 1), "REGISTERED"),
+                                (1, policy.allocated_alpha(1, 2), "ORACLE_CHANGED")])
         with self.assertRaisesRegex(ValueError, "another oracle"):
             self.log.bind_oracle(KEY, ORACLE)
 

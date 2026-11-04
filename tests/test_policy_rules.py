@@ -41,8 +41,12 @@ def key(prompt: str = "pp1") -> PartitionKey:
                         "refund-api-v2", "pol1", "prod1", "refund", "0.95-1.00", "low")
 
 
+V031 = {"pending": "deadline", "partition_alpha": "per_partition", "epoch_alpha": "per_epoch"}
+
+
 def policy(**fields) -> Policy:
-    return Policy("pol1", {"low": R}, 30, timedelta(days=30), 0.0, **fields)
+    """A policy with the v0.3.1 rules except those named, so each test turns on one rule."""
+    return Policy("pol1", {"low": R}, 30, timedelta(days=30), 0.0, **{**V031, **fields})
 
 
 def perfect_record_needs(alpha: float) -> int:
@@ -62,6 +66,12 @@ class Clock:
 
 
 class PolicyTests(unittest.TestCase):
+    def test_the_decided_rules_are_the_defaults(self):
+        # issue #43 phase 2: a Policy built without naming them gets O-3, O-4, O-8
+        default = Policy("pol1", {"low": R}, 30, timedelta(days=30), 0.0)
+        self.assertEqual((default.pending, default.partition_alpha, default.epoch_alpha),
+                         ("pessimistic", "online", "lineage"))
+
     def test_the_fields_are_validated(self):
         for field_name in ("pending", "partition_alpha", "epoch_alpha"):
             with self.subTest(field=field_name), self.assertRaises(ValueError):

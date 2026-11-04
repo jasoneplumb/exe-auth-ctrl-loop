@@ -129,6 +129,11 @@ class ScenarioConfig:
     required_high: float = 0.95
     alpha: float = 0.05
     estimator: str = "beta_mixture"
+    # issue #43: the gate's counting and α rules; the defaults are Policy's (the decided
+    # O-3, O-4, O-8), and the v0.3.1 values remain selectable for comparison
+    pending: str = "pessimistic"
+    partition_alpha: str = "online"
+    epoch_alpha: str = "lineage"
     audit_rate: float = 0.05
     max_evidence_age: int = 1000
     token_ttl: int = 5  # steps; the shipped loop redeems in the step it issues
@@ -316,7 +321,8 @@ class Simulation:
             "pol1", {"low": cfg.required_low, "high": cfg.required_high}, cfg.n_min,
             timedelta(minutes=cfg.max_evidence_age), cfg.audit_rate,
             token_ttl=timedelta(minutes=cfg.token_ttl),
-            alpha=cfg.alpha, estimator=cfg.estimator,
+            alpha=cfg.alpha, estimator=cfg.estimator, pending=cfg.pending,
+            partition_alpha=cfg.partition_alpha, epoch_alpha=cfg.epoch_alpha,
         )
         self.risk = make_risk_policy(cfg, self.db)
         # The host's catalog and handler table. The schema is permissive; the risk policy's

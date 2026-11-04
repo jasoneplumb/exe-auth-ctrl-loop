@@ -239,13 +239,13 @@ class Policy:
     # its deadline (v0.3.1). "pessimistic" (O-3): it counts in n from freezing, as a failure
     # until an admitted POSITIVE, valid whatever is delayed or withheld (statistical-method
     # §11.2).
-    pending: str = "deadline"
+    pending: str = "pessimistic"
     # "per_partition": every partition gets α (v0.3.1). "online" (O-4): the k-th partition
     # registered gets α·6/(π²k²), so the family across partitions stays within α.
-    partition_alpha: str = "per_partition"
+    partition_alpha: str = "online"
     # "per_epoch": every epoch starts with its partition's full allocation (v0.3.1, L11).
     # "lineage" (O-8): epoch e gets 6/(π²e²) of it, so releases cannot reset the budget.
-    epoch_alpha: str = "per_epoch"
+    epoch_alpha: str = "lineage"
 
     def __post_init__(self) -> None:
         if self.n_min < 1:

@@ -29,7 +29,9 @@ class HarnessTests(unittest.TestCase):
         metrics = sim.run()
         self.assertTrue(metrics.qualified, metrics)
         self.assertIsNotNone(metrics.time_to_authority)
-        self.assertEqual(sim.trace[0]["n"], 0)
+        # the store was empty before the run (asserted above); after step 0, n holds only the
+        # trial frozen in that step, a failure until labelled under pessimistic pending (#43)
+        self.assertEqual(sim.trace[0]["n"], 1)
         self.assertGreater(metrics.autonomous_executions + metrics.audit_executions, 0)
         self.assertEqual(metrics.unauthorized_side_effects, 0)
         self.assertGreater(metrics.shadow_trials, 0)

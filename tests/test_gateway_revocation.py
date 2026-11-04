@@ -16,6 +16,7 @@ from _support import (
     forge_token,
     gateway_store,
     issue,
+    positives_to_qualify,
     principals_for,
     run,
     scratch_store,
@@ -411,6 +412,7 @@ class LifecycleGuardTests(unittest.TestCase):
         )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
+        self.qualify = positives_to_qualify(self.policy, 3, 2)  # issue #43 defaults
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock
         )
@@ -446,7 +448,7 @@ class LifecycleGuardTests(unittest.TestCase):
             support_label(self.shadow, tid, key, p.proposal_digest, label, ORACLE)
 
     def autonomous_token(self):
-        self.add(60)
+        self.add(self.qualify)
         decision = self.manager.evaluate(self.proposal())
         self.assertEqual(decision.route, Route.AUTONOMOUS)
         return issue(self.gateway, decision, self.proposal(), self.policy)
