@@ -125,7 +125,7 @@ No estimator change is adopted in this step. Each adopted change becomes a `Poli
   - **Fixture choice:** an `audit_rate_20` fixture never qualified at seed 1. It was replaced by `stable` with audit rate 0.2.
   - None of these was a code defect in `src/`.
 - **Cost of pessimistic pending.** It is large with slow positive labels and will matter for O-3.
-- **Open:** epoch-0 and release epochs are still bound lazily by the first admitted label. The owner decided on 2026-11-03 to bind explicitly at every opening (issue #41), after this step. No Step 09 measurement depends on it, because every run uses one oracle.
+- **Open at this step, since resolved:** epoch-0 and release epochs were bound lazily by the first admitted label. The owner decided on 2026-11-03 to bind explicitly at every opening, and issue #41 implements it. No Step 09 measurement depends on it, because every run uses one oracle.
 
 **Owner decisions from the table (2026-11-03):**
 - **O-3:** pessimistic pending.

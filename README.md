@@ -374,7 +374,8 @@ to `run(approvals=...)`; the gateway verifies it, records it, and lets it back
 exactly one token. An approval for another proposal or partition, an expired or
 rescinded one, a reused one, or one signed by anyone but an active human is
 refused. A lifecycle release likewise needs a human's signature over the
-partition, its current epoch, and the reason. Every token records the principal
+partition, its current epoch, the reason, and (on `mainline`, issue #41) the
+oracle the new epoch is bound to, so the releasing human chooses who labels next. Every token records the principal
 that asked and the grant it acted under, traceable to a human's root grant
 (`Principals.lineage`). Denials, draft states, and clarification requests cannot
 be overridden by approval; they require a corrected proposal or policy change.

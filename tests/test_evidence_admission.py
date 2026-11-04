@@ -20,6 +20,7 @@ from _support import (
     gateway_store,
     principals_for,
     rehash_chain,
+    release,
     replay,
     rewrite_events,
     scratch_store,
@@ -60,6 +61,7 @@ from exe_auth_ctrl_loop import (
     TrialLabel,
     TrialStatus,
 )
+from exe_auth_ctrl_loop.principals import release_payload
 
 T0 = datetime(2026, 11, 1, tzinfo=timezone.utc)
 ORACLE = Oracle("constraint-v1", "1", OracleKind.CONSTRAINT_CHECK, "frozen-proposal criteria")
@@ -99,9 +101,11 @@ class AdmissionCase(unittest.TestCase):
         self.log = shadow_log(self.ledger, timedelta(hours=1), self.clock)
         self.principals = self.log.principals
 
-    def frozen(self, n: int, provenance="shadow", key: PartitionKey = KEY) -> Proposal:
+    def frozen(self, n: int, provenance="shadow", key: PartitionKey = KEY,
+               oracle: Oracle | None = ORACLE) -> Proposal:
+        """Freeze trial t-n; the epoch is bound to `oracle` first, or left unbound (None)."""
         p = proposal(n, key)
-        self.assertTrue(freeze_trial(self.log, f"t-{n}", p, provenance).accepted)
+        self.assertTrue(freeze_trial(self.log, f"t-{n}", p, provenance, oracle=oracle).accepted)
         return p
 
     def label(self, n: int, p: Proposal, value=TrialLabel.POSITIVE, oracle=ORACLE, at=None):
@@ -204,7 +208,8 @@ class ShippedLoopTests(unittest.TestCase):
     Criterion 2 (spec §7 rule 10, O-6): the shipped CrossModelAuthorityLoop, with fake
     providers and nothing else, freezes every human-routed proposal on a non-autonomous
     partition as SHADOW and takes a partition from n=0 to AUTONOMOUS. The test never calls
-    freeze(), publish(), or put(): the only outside input is the oracle's signed labels.
+    freeze(), publish(), or put(): the only outside inputs are the host binding the
+    partition's first epoch to its oracle (issue #41) and the oracle's signed labels.
     """
 
     def setUp(self):
@@ -237,6 +242,8 @@ class ShippedLoopTests(unittest.TestCase):
                                           gateway, catalog, client=object(), **AGENT)
         self.loop = CrossModelAuthorityLoop(None, self.agent, self.ledger, "pol1", "prod1",
                                             shadow=self.shadow)
+        # the host opens the partition's first epoch bound to its oracle (issue #41)
+        self.shadow.bind_oracle(KEY, ORACLE)
 
     def run_one(self, p: Proposal, approvals=()):
         self.agent.client = fake_claude(p)
@@ -331,7 +338,7 @@ class SignedLabelTests(AdmissionCase):
 
     def test_a_label_from_another_oracle_than_the_epochs_is_wrong_oracle(self):
         first, second = self.frozen(1), self.frozen(2)
-        self.assertTrue(self.label(1, first).accepted)  # binds this epoch to ORACLE
+        self.assertTrue(self.label(1, first).accepted)  # the epoch is bound to ORACLE
         self.assert_refused(2, second, sign_label("t-2", KEY, second.proposal_digest,
                                                   TrialLabel.POSITIVE, OTHER_ORACLE),
                             Reason.WRONG_ORACLE)
@@ -373,6 +380,67 @@ class SignedLabelTests(AdmissionCase):
         # the separation is per trial: the same oracle labels a trial it did not review
         other = self.frozen(2)
         self.assertTrue(self.label(2, other).accepted)
+
+
+class ExplicitBindingTests(AdmissionCase):
+    """
+    Issue #41 (spec §7 rule 11): an epoch is bound to its oracle only explicitly, at its
+    opening. No label binds one, so no oracle can capture an epoch by labelling first.
+    """
+
+    def manager(self) -> LifecycleManager:
+        store = EvidenceStore(self.log.store)
+        policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
+        return LifecycleManager(self.log, store, policy,
+                                AuthorityController(store, policy, clock=self.clock),
+                                self.clock, principals=self.principals)
+
+    def suspended(self) -> LifecycleManager:
+        manager = self.manager()
+        manager.refresh(KEY)
+        manager.record_severe(KEY, Provenance.SHADOW, "SEVERE_HARM")
+        return manager
+
+    def test_an_unbound_epoch_admits_no_label_until_the_host_binds_it(self):
+        p = self.frozen(1, oracle=None)
+        before = len(self.ledger.events)
+        self.assert_quarantined(self.label(1, p), "t-1", Reason.ORACLE_NOT_BOUND)
+        self.assertEqual(self.log.status("t-1"), TrialStatus.PENDING)
+        self.assertNotIn("shadow.oracle_bound",
+                         [e.event_type for e in self.ledger.events[before:]])
+        self.log.bind_oracle(KEY, ORACLE)
+        self.assertTrue(self.label(1, p).accepted)  # the same label, now admissible
+
+    def test_no_oracle_can_capture_an_epoch_by_labelling_first(self):
+        # v3 Step 08 bound an unbound epoch to its first admitted label's oracle
+        first, second = self.frozen(1, oracle=None), self.frozen(2, oracle=None)
+        self.assert_quarantined(self.label(1, first, oracle=OTHER_ORACLE), "t-1",
+                                Reason.ORACLE_NOT_BOUND)
+        self.log.bind_oracle(KEY, ORACLE)  # the host's choice, not the labeller's
+        self.assertTrue(self.label(1, first).accepted)
+        self.assert_quarantined(self.label(2, second, oracle=OTHER_ORACLE), "t-2",
+                                Reason.WRONG_ORACLE)
+
+    def test_a_release_binds_the_oracle_the_human_signed(self):
+        manager = self.suspended()
+        release(manager, KEY, "alice", "root cause fixed", oracle=OTHER_ORACLE)
+        self.assertEqual(manager.state(KEY), LifecycleState.QUALIFYING)
+        p = self.frozen(1, oracle=None)  # the release already bound the new epoch
+        self.assert_quarantined(self.label(1, p), "t-1", Reason.WRONG_ORACLE)
+        self.assertTrue(self.label(1, p, oracle=OTHER_ORACLE).accepted)
+
+    def test_a_caller_cannot_substitute_another_oracle_at_release(self):
+        manager = self.suspended()
+        payload = release_payload(KEY, 0, "fixed", ORACLE.oracle_id, ORACLE.oracle_version)
+        mac = TEST_KEYRING.sign(HUMANS["alice"], payload)  # alice approved ORACLE
+        epochs = self.log.store.connection().execute("SELECT COUNT(*) FROM epochs").fetchone()
+        with self.assertRaisesRegex(PermissionError, "signature"):
+            manager.release(KEY, "alice", "fixed", mac, oracle=OTHER_ORACLE)
+        self.assertEqual(manager.state(KEY), LifecycleState.SUSPENDED)
+        self.assertEqual(
+            self.log.store.connection().execute("SELECT COUNT(*) FROM epochs").fetchone(), epochs)
+        manager.release(KEY, "alice", "fixed", mac, oracle=ORACLE)  # what alice signed
+        self.assertEqual(manager.state(KEY), LifecycleState.QUALIFYING)
 
 
 class ReceiptTimeTests(AdmissionCase):

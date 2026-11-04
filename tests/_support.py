@@ -30,7 +30,13 @@ from exe_auth_ctrl_loop.principals import (
     release_payload,
     root_grant_payload,
 )
-from exe_auth_ctrl_loop.shadow import ShadowEvidenceLog, SignedLabel, label_payload
+from exe_auth_ctrl_loop.shadow import (
+    Oracle,
+    OracleKind,
+    ShadowEvidenceLog,
+    SignedLabel,
+    label_payload,
+)
 from exe_auth_ctrl_loop.store import Store, canonical_json, time_text
 
 # The ledger key every test store uses (v3 Step 08: the hash chain is keyed). Subprocess
@@ -243,13 +249,27 @@ def approve(proposal, human: str = "alice", expires_at: datetime = FAR) -> Appro
                     expires_at, mac)
 
 
-def release(manager, key, actor: str, reason: str) -> None:
-    """manager.release(...), signed by `actor` over the partition's current epoch."""
+# The oracle test partitions are bound to unless a test says otherwise (issue #41: binding
+# is explicit, so a fixture binds as the host would when it opens an epoch)
+TEST_ORACLE = Oracle("constraint-v1", "1", OracleKind.CONSTRAINT_CHECK, "frozen-proposal criteria")
+
+
+def release(manager, key, actor: str, reason: str, oracle: Oracle = TEST_ORACLE) -> None:
+    """
+    manager.release(...), signed by `actor` over the partition's current epoch and the
+    oracle the new epoch is bound to
+    """
     record = manager.record(key)
     epoch = record.epoch if record is not None else 0
-    mac = (TEST_KEYRING.sign(HUMANS[actor], release_payload(key, epoch, reason))
-           if actor in HUMANS else "")
-    manager.release(key, actor, reason, mac)
+    payload = release_payload(key, epoch, reason, oracle.oracle_id, oracle.oracle_version)
+    mac = TEST_KEYRING.sign(HUMANS[actor], payload) if actor in HUMANS else ""
+    manager.release(key, actor, reason, mac, oracle=oracle)
+
+
+def bind(log, key, oracle: Oracle = TEST_ORACLE) -> None:
+    """Bind the partition's current epoch, as the host does when it opens one (#41)."""
+    if log.bound_oracle(key) is None:
+        log.bind_oracle(key, oracle)
 
 
 
@@ -265,13 +285,16 @@ def shadow_log(ledger, deadline=None, clock=None):
                              principals=principals_for(ledger.store))
 
 
-def trial(log, trial_id: str, proposal, provenance="shadow"):
+def trial(log, trial_id: str, proposal, provenance="shadow", oracle: Oracle | None = TEST_ORACLE):
     """
     Freeze a trial the way the host does: commit a decision whose route gives the wanted
     provenance (SHADOW <- HUMAN_APPROVAL, AUTONOMOUS, AUDIT), then freeze it. A
     HUMAN_APPROVED trial also gets a token issued on a signed approval, since an approval
-    record is what makes a decision human-approved.
+    record is what makes a decision human-approved. The partition's current epoch is first
+    bound to `oracle` if it is unbound (#41); oracle=None leaves it unbound.
     """
+    if oracle is not None:
+        bind(log, proposal.partition, oracle)
     provenance = getattr(provenance, "value", provenance)
     route = Route(_ROUTE_FOR[provenance])
     decision = Decision(trial_id, proposal.proposal_id, proposal.proposal_digest, None, None,

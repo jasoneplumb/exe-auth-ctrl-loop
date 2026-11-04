@@ -213,9 +213,16 @@ def root_grant_payload(
     }
 
 
-def release_payload(partition: PartitionKey, epoch: int, reason: str) -> dict[str, Any]:
-    """The epoch is in the payload, so a signed release cannot be replayed at a later one."""
-    return {"action": "release", "partition": asdict(partition), "epoch": epoch, "reason": reason}
+def release_payload(
+    partition: PartitionKey, epoch: int, reason: str, oracle_id: str, oracle_version: str,
+) -> dict[str, Any]:
+    """
+    The epoch is in the payload, so a signed release cannot be replayed at a later one, and
+    so is the oracle the new epoch is bound to (issue #41), so the human who releases also
+    chooses who labels next and a caller cannot substitute another
+    """
+    return {"action": "release", "partition": asdict(partition), "epoch": epoch,
+            "reason": reason, "oracle_id": oracle_id, "oracle_version": oracle_version}
 
 
 def rescind_payload(approval_id: str) -> dict[str, Any]:

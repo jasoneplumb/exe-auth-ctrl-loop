@@ -85,7 +85,12 @@ Rules (in addition to v2 §3 rules 1–6):
 8. A label MUST be quarantined if its MAC fails, its oracle is not the epoch's bound oracle (`WRONG_ORACLE`), its principal is not an active `ORACLE`, or its principal recorded a human review of the same trial (`REVIEWER_IS_ORACLE`) (Step 08).
 9. The label deadline MUST be measured on `received_at`; `claimed_at` is recorded and never used for admission (Step 08).
 10. Every `HUMAN_APPROVAL`-routed proposal on an `UNESTABLISHED` or `QUALIFYING` partition MUST be frozen as `SHADOW` before the approval request is shown; no proposal in that class is skipped (O-6) (Step 08).
-11. Each epoch MUST be bound at its opening to one `(oracle_id, oracle_version)`, and a change of oracle MUST open a new epoch (RV-04) (O-2) (Step 08).
+11. Each epoch MUST be bound at its opening to one `(oracle_id, oracle_version)`, and a change of oracle MUST open a new epoch (RV-04) (O-2) (Step 08). Binding is explicit at every opening (owner decision, issue #41):
+    - **Epoch 0:** the host binds a partition's first epoch.
+    - **Human release:** the release binds its new epoch to the oracle the releasing human signed.
+    - **Oracle change:** the change binds the epoch it opens.
+
+    No label binds an epoch. A label for an unbound epoch MUST be quarantined `ORACLE_NOT_BOUND`, and it leaves the trial pending; this amends the Step 08 rule, by issue #41 (Step 08).
 12. Opening an epoch (human release, or an oracle change) MUST reset the partition's counts to zero, so no trial or label from an earlier epoch enters a later epoch's bound, and MUST record the opening in `alpha_ledger` with the α it starts with, so a reset of counts is never a silent reset of the error budget (see O-8) (Step 08).
 
 ## 8. Principals and delegation (new; F5)
