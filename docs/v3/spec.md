@@ -105,7 +105,12 @@ Rules (in addition to v2 §3 rules 1–6):
 
 ## 9. Statistics (pointer)
 
-Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ {deadline, pessimistic}` and `alpha_spending ∈ {per_partition, online}` are specified in `plan.md` Step 09 and adopted only on its evidence.
+Step 09 measured the candidates (`docs/v3/gates/step-09.md`), and the owner decided O-3, O-4, and O-8 (§11). Issue #43 adopted them as `Policy` fields and defaults:
+- `pending ∈ {pessimistic (default), deadline}`;
+- `partition_alpha ∈ {online (default), per_partition}`;
+- `epoch_alpha ∈ {lineage (default), per_epoch}`.
+
+The method and its proofs are in `docs/v2/statistical-method.md` §5 and §11.
 
 ## 10. Invariants for tests
 

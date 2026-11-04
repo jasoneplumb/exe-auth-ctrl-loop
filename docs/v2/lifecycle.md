@@ -1,5 +1,7 @@
 # Authority lifecycle (Step 03)
 
+> **v0.3.x record.** This document describes the v2 design as released in 0.3.0 and 0.3.1. Where v3 changed it, `docs/v3/spec.md` and `docs/v3/claims-delta.md` state the 0.4.0 behaviour; this text is kept as written.
+
 Implements spec §9 in `src/exe_auth_ctrl_loop/lifecycle.py` over the evidence from `shadow.py`. `AuthorityController` and `ExecutionGateway` are unchanged; `LifecycleManager` wraps the controller.
 
 ## Usage

@@ -154,7 +154,7 @@ The proposition for pessimistic pending (to be proved in `statistical-method.md`
 
 - `docs/v3/claims-delta.md`: every C and L row of `docs/paper-v2/claims-matrix.md` marked kept, changed, or closed, with the step and test that changed it; new rows for F5 and the Step 09 results. The paper-v2 matrix itself is not edited (it describes v0.3.0).
 - README, SECURITY.md, `docs/v2/threat-model.md` pointer to v3, CHANGELOG `[Unreleased] - proposed 0.4.0`.
-- Results regenerated, new canonical hash recorded, three independent runs.
+- Results regenerated, new canonical hash recorded, three independent runs. *As done (owner decision at Step 10):* `results/` was kept as the v0.3.0 artifacts the paper cites, and `results-v3/` was reproduced in three independent runs instead (`docs/v3/gates/step-10.md`).
 - Release plan for 0.4.0. Tag, push, release, Zenodo each separately authorized.
 
 ## 5. Budgets and rules

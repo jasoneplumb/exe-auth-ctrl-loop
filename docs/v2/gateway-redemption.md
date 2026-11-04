@@ -1,5 +1,7 @@
 # Gateway redemption contract (Step 05)
 
+> **v0.3.x record.** This document describes the v2 design as released in 0.3.0 and 0.3.1. Where v3 changed it, `docs/v3/spec.md` and `docs/v3/claims-delta.md` state the 0.4.0 behaviour; this text is kept as written.
+
 Implements spec §7's "live invalidation at redemption" in `ExecutionGateway` (`authority.py`), with `LifecycleManager` as a `RedemptionGuard`. Closes baseline gap 2: an issued token no longer outlives the justification it was issued on.
 
 ## Wiring

@@ -1,5 +1,7 @@
 # v2 specification: authority lifecycle and evidence admission
 
+> **v0.3.x record.** This document describes the v2 design as released in 0.3.0 and 0.3.1. Where v3 changed it, `docs/v3/spec.md` and `docs/v3/claims-delta.md` state the 0.4.0 behaviour; this text is kept as written.
+
 Status: Step 01 contract. Documentation and fixtures only; no behavior in `src/` implements this yet. Keywords MUST/MUST NOT/SHOULD are normative for later steps. Derived from `authority.py` at baseline `86fcf83` (see `baseline.md`). The machine-readable counterpart is `docs/v2/lifecycle_fixture.json`, checked by `tests/test_v2_spec_fixture.py`.
 
 ## 1. Scope and trust boundary (unchanged from v1)

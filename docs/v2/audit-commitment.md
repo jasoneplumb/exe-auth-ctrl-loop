@@ -1,5 +1,7 @@
 # Audit commitment and ledger claims (Step 07)
 
+> **v0.3.x record.** This document describes the v2 design as released in 0.3.0 and 0.3.1. Where v3 changed it, `docs/v3/spec.md` and `docs/v3/claims-delta.md` state the 0.4.0 behaviour; this text is kept as written.
+
 Three things are easy to conflate and are kept apart here:
 
 1. **Selection randomness.** Which operations get audited is decided by a draw from the controller's RNG, compared against the policy's audit rate.
