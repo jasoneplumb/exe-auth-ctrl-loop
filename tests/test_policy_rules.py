@@ -239,6 +239,53 @@ class LineageSpendingTests(GateCase):
         self.assertEqual(self.manager.state(k), LifecycleState.AUTONOMOUS)
 
 
+class ReviewFollowUpTests(GateCase):
+    """PR #45 review: defaults, the oracle-change path, and databases from before #43."""
+
+    def test_snapshot_and_publish_default_to_the_policys_default_rule(self):
+        self.make(pending="pessimistic")
+        k = key()
+        self.add(k, 3)
+        self.add(k, 2, labelled=False)
+        snapshot = self.shadow.snapshot(k, T0)  # no pending argument: Policy's default
+        self.assertEqual((snapshot.successes, snapshot.failures), (3, 2))
+        self.assertTrue(self.shadow.publish(self.store, k, T0))
+        self.assertEqual(self.store.get(k).failures, 2)
+
+    def test_an_oracle_change_opens_an_epoch_with_a_smaller_alpha(self):
+        from exe_auth_ctrl_loop import Oracle, OracleKind
+
+        self.make(epoch_alpha="lineage")
+        k = key()
+        self.manager.refresh(k)
+        other = Oracle("reviewer", "1", OracleKind.INDEPENDENT_REVIEW, "post-hoc")
+        self.manager.change_oracle(k, other, by="alice")
+        rows = self.alpha_rows()
+        self.assertEqual([(r[1], r[4]) for r in rows], [(0, "REGISTERED"), (1, "ORACLE_CHANGED")])
+        self.assertAlmostEqual(rows[-1][3], 0.05 * SPENDING / 4)
+
+    def test_a_partition_from_before_the_upgrade_is_registered_at_its_next_refresh(self):
+        self.make(partition_alpha="online")
+        k = key()
+        self.manager.refresh(k)
+        # a schema-v7 database: the partition exists, but alpha_ledger has no row for it
+        with self.db.transaction() as conn:
+            triggers = [row[0] for row in conn.execute(
+                "SELECT sql FROM sqlite_master WHERE type = 'trigger'"
+                " AND tbl_name = 'alpha_ledger'")]
+            for name in ("alpha_ledger_no_update", "alpha_ledger_no_delete"):
+                conn.execute(f"DROP TRIGGER {name}")
+            conn.execute("DELETE FROM alpha_ledger")
+            for sql in triggers:
+                conn.execute(sql)
+        self.manager.refresh(key("b"))  # a partition first seen after the upgrade: k = 1
+        self.manager.refresh(k)  # the old one registers now, as k = 2, instead of failing
+        self.assertEqual([(r[2], r[4]) for r in self.alpha_rows()],
+                         [(1, "REGISTERED"), (2, "REGISTERED")])
+        self.add(k, perfect_record_needs(0.05 * SPENDING / 4))
+        self.assertEqual(self.route(k), Route.AUTONOMOUS)
+
+
 class SnapshotAlphaTests(GateCase):
     def test_a_bare_controller_applies_the_snapshots_alpha_only_to_tighten(self):
         self.make()

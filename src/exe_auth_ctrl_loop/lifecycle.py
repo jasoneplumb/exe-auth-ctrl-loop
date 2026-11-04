@@ -203,6 +203,11 @@ class LifecycleManager:
             inherited = self._suspended_predecessors(key)
             if inherited:
                 self._suspend_lineage(key, record, inherited)
+        elif not self._registered(key):
+            # a partition from a database written before issue #43 (schema v7) has no
+            # registration; it is registered at its first refresh after the upgrade, taking
+            # the next k and its current epoch's allocation (PR #45 review)
+            self._record_alpha(key, record, self.shadow.epoch_floor(key), "REGISTERED")
         if not record.retired and key.policy_version != self.policy.version:
             self._retire(key, record, "POLICY_CHANGE")
         if record.retired or record.state == LifecycleState.SUSPENDED:
@@ -480,6 +485,12 @@ class LifecycleManager:
                  self.clock().isoformat(), index),
             )
 
+    def _registered(self, key: PartitionKey) -> bool:
+        return self.db.connection().execute(
+            "SELECT 1 FROM alpha_ledger WHERE partition = ? AND reason = 'REGISTERED'",
+            (partition_text(key),),
+        ).fetchone() is not None
+
     def _partition_index(self, key: PartitionKey) -> int:
         """The partition's registration index k, from its REGISTERED row."""
         row = self.db.connection().execute(
@@ -495,6 +506,9 @@ class LifecycleManager:
         intent: The α the gate uses for the partition's current epoch: the one recorded when
                 that epoch opened, so what alpha_ledger says is what the gate applied
         """
+        # the latest entry is the current epoch's: rows are only appended, one per epoch
+        # opening (REGISTERED, then HUMAN_RELEASE or ORACLE_CHANGED), each inside the
+        # transaction that opens the epoch, so entry order is epoch order
         row = self.db.connection().execute(
             "SELECT alpha FROM alpha_ledger WHERE partition = ?"
             " ORDER BY entry_id DESC LIMIT 1", (partition_text(key),),

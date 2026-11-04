@@ -549,7 +549,7 @@ class ShadowEvidenceLog:
         collected_from: datetime,
         version: int = 1,
         *,
-        pending: str = "deadline",
+        pending: str = "pessimistic",
     ) -> EvidenceSnapshot | None:
         """
         intent: Express admissible evidence in the shape the existing controller reads
@@ -611,7 +611,7 @@ class ShadowEvidenceLog:
         return datetime.fromisoformat(row[0])
 
     def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime,
-                *, pending: str = "deadline") -> bool:
+                *, pending: str = "pessimistic") -> bool:
         """
         intent: Hand the controller the current counting evidence for one partition
         constraint: Replaces the partition's snapshot with the log-derived counts at the next
