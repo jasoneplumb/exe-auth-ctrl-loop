@@ -293,7 +293,7 @@ alternatives and outcome-dependent costs.
 | `src/exe_auth_ctrl_loop/revocation.py` | Synchronous revocation: one transaction per revoking event, policy authority (v3 Step 06) |
 | `src/exe_auth_ctrl_loop/mcp.py` | MCP binding: signed authority metadata on `tools/call`; extension 0.2 with server-side redemption (`McpServer`, v3 Step 07) |
 | `docs/v2/` | v2 specification, threat model, method note, per-mechanism contracts, gate reports |
-| `docs/paper-v2/` | Claims matrix, worked example from `n=0`, manuscript plan, reproducibility, release plan (v0.3.0) |
+| `docs/paper-v2/` | Claims matrix, manuscript and its plan, reproducibility, release plan (v0.3.0) |
 | `docs/v3/` | v3 plan, specification, threat-model delta, claims delta for 0.4.0, revocation fixture, gate reports, 0.4.0 release plan |
 | `docs/mcp-extension.md` | Key specification for the MCP extension |
 | `experiments/` | Simulation harness through the shipped loop (`simulate.py`, `run.py`), the scenario-family driver (`statistics.py`, `families.json`), configs |

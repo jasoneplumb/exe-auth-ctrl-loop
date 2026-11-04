@@ -102,4 +102,4 @@ To be written against sources, with no priority claims. Position relative to:
 | Audit commitment threat model | §7, C20–C22 | Trusted controller; anchoring not provided |
 | Weak evaluation | §8 | Simulated; oracle has the truth |
 | Prior-art / novelty | §9 | To be written against sources |
-| Unexplained 200 observations | `worked-example.md` | — |
+| Unexplained 200 observations | `worked-example.md` (at tag `v0.3.0`; removed from `mainline` 2026-11-04) | — |
