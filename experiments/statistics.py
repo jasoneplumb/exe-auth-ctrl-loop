@@ -347,11 +347,18 @@ def run_cells(cells: Iterable[Cell], workers: int | None = None,
 # the driver must reproduce from the loop's own trials. Each covers a different path:
 # label delay, missing labels censored at the deadline, inconclusive labels, and a rate
 # near the threshold so some runs never qualify.
+# Since issue #43 the shipped defaults are pessimistic pending with online and lineage α
+# spending; the v0.3.1 rules are checked too, so the agreement covers both pending rules.
+V031_RULES = {"pending": "deadline", "partition_alpha": "per_partition",
+              "epoch_alpha": "per_epoch"}
 AGREEMENT_CONFIGS: tuple[dict[str, Any], ...] = (
     {"name": "agree_fast_labels", "p_good": 0.97, "label_delay": 0},
     {"name": "agree_delayed_labels", "p_good": 0.97, "label_delay": 5},
     {"name": "agree_censored", "p_good": 0.99, "label_delay": 2, "label_missing": 0.02,
      "oracle_inconclusive": 0.01, "label_deadline": 20},
+    {"name": "agree_delayed_labels_v031", "p_good": 0.97, "label_delay": 5, **V031_RULES},
+    {"name": "agree_censored_v031", "p_good": 0.99, "label_delay": 2, "label_missing": 0.02,
+     "oracle_inconclusive": 0.01, "label_deadline": 20, **V031_RULES},
 )
 AGREEMENT_BASE = {"horizon": 200, "severe_given_bad": 0.0, "audit_rate": 0.0}
 
@@ -382,13 +389,21 @@ def shipped_trials(sim: Any, key: Any) -> list[Trial]:
     return sorted((at, *resolved.get(trial_id, (never, 0))) for trial_id, at in frozen.items())
 
 
+def agreement_cell(cfg: Any, policy: Any) -> Cell:
+    """The driver cell matching a harness config, under the harness policy's pending rule."""
+    return Cell("agreement", f"agreement/{cfg.name}", p=cfg.p_good, r=cfg.required_low,
+                alpha=cfg.alpha, n_min=cfg.n_min, horizon=cfg.horizon,
+                deadline=cfg.label_deadline, pending=policy.pending, pre_registered=False)
+
+
 def agreement(seeds: Iterable[int] = range(1, 51)) -> list[dict[str, Any]]:
     """
     intent: Show the driver and the shipped loop make the same qualification decision
     method: For each config and seed, run the shipped-loop harness, rebuild its trials from
             the ledger, and compare the harness's time to authority with first_crossing on
-            those trials under the shipped (deadline-only) rule. A mismatch is reported,
-            not raised, so the artifact records it.
+            those trials under the harness policy's own pending rule and the α it allocates
+            to the run's one partition and epoch (k = e = 1). A mismatch is reported, not
+            raised, so the artifact records it.
     """
     from .simulate import ScenarioConfig, Simulation
 
@@ -396,14 +411,13 @@ def agreement(seeds: Iterable[int] = range(1, 51)) -> list[dict[str, Any]]:
     seeds = list(seeds)
     for config in AGREEMENT_CONFIGS:
         cfg = ScenarioConfig.from_dict({**AGREEMENT_BASE, **config, "seeds": seeds})
-        cell = Cell("agreement", f"agreement/{cfg.name}", p=cfg.p_good, r=cfg.required_low,
-                    alpha=cfg.alpha, n_min=cfg.n_min, horizon=cfg.horizon,
-                    deadline=cfg.label_deadline, pending="deadline", pre_registered=False)
         rows = []
         for seed in seeds:
             sim = Simulation(cfg, seed)
             metrics = sim.run()
-            driver = first_crossing(cell, cell.alpha, shipped_trials(sim, sim.key))
+            cell = agreement_cell(cfg, sim.policy)
+            driver = first_crossing(cell, sim.policy.allocated_alpha(1, 1),
+                                    shipped_trials(sim, sim.key))
             rows.append({"seed": seed, "shipped_loop": metrics.time_to_authority,
                          "driver": driver})
         out.append({

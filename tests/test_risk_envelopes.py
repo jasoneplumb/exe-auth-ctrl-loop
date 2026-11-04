@@ -14,6 +14,7 @@ from _support import (
     AdapterHandlers,
     gateway_store,
     issue,
+    positives_to_qualify,
     principals_for,
     run,
     scratch_store,
@@ -449,7 +450,8 @@ class LifecycleInteractionTests(unittest.TestCase):
         )
 
     def qualify(self, risk_class, usd):
-        for _ in range(60):
+        # enough for the first partitions these tests register (issue #43 defaults)
+        for _ in range(positives_to_qualify(self.policy, 3, 1, required=.90)):
             p = self.proposal(usd, risk_class)
             trial(self.shadow, p.proposal_id, p, Provenance.SHADOW)
             support_label(self.shadow, p.proposal_id, p.partition, p.proposal_digest,

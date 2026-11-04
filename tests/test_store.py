@@ -28,7 +28,7 @@ KEY = PartitionKey(
 SEED = (
     "INSERT INTO ledger VALUES (0, 'e', 'a', 'controller', 't', '{}', 'GENESIS', 'h')",
     "INSERT INTO ledger_anchor (sequence, event_hash, anchored_at) VALUES (0, 'h', 't')",
-    "INSERT INTO evidence_snapshots VALUES ('k', 1, 'ev', 1, 0, 't', 't', 1, 0, NULL)",
+    "INSERT INTO evidence_snapshots VALUES ('k', 1, 'ev', 1, 0, 't', 't', 1, 0, NULL, NULL)",
     "INSERT INTO trials VALUES ('tr', 'shadow', 'k', 'd', 't', 0, 0)",
     "INSERT INTO labels VALUES ('tr', 'positive', 0, 't', 0, NULL)",
     "INSERT INTO epochs VALUES ('k', 3)",

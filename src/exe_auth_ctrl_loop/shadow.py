@@ -407,6 +407,10 @@ class ShadowEvidenceLog:
         ).fetchone()
         return -1 if row[0] is None else int(row[0])
 
+    def epoch_floor(self, key: PartitionKey) -> int:
+        """The ledger sequence that opened the partition's current epoch (-1 before any)."""
+        return self._floor(key)
+
     def bound_oracle(self, key: PartitionKey) -> tuple[str, str] | None:
         """The (oracle_id, oracle_version) the partition's current epoch is bound to, if any."""
         return self._bound_oracle(key, self._floor(key))
@@ -544,6 +548,8 @@ class ShadowEvidenceLog:
         key: PartitionKey,
         collected_from: datetime,
         version: int = 1,
+        *,
+        pending: str = "pessimistic",
     ) -> EvidenceSnapshot | None:
         """
         intent: Express admissible evidence in the shape the existing controller reads
@@ -569,9 +575,14 @@ class ShadowEvidenceLog:
             collected_until = self._evidence_time(key)
         successes = sum(c.positive for c in parts)
         failures = sum(c.negative + c.inconclusive for c in parts)
-        # constraint: pending trials are excluded from n until labeled or expired; they stay
-        # visible through counts()/coverage. publish() expires overdue ones first, so
-        # withholding a label cannot keep a bad trial out of the bound.
+        if pending == "pessimistic":
+            # O-3 (issue #43): a pending trial is in n from freezing and a failure until an
+            # admitted POSITIVE, so delay or withholding can only lower the bound
+            # (statistical-method.md §11.2)
+            failures += sum(c.pending for c in parts)
+        # constraint: under "deadline" (v0.3.1) pending trials are excluded from n until
+        # labeled or expired; they stay visible through counts()/coverage. publish() expires
+        # overdue ones first, so withholding cannot keep a bad trial out past its deadline.
         return EvidenceSnapshot(
             evidence_id=f"shadow-{digest(_partition_payload(key))[:16]}",
             version=version,
@@ -599,7 +610,8 @@ class ShadowEvidenceLog:
             raise LookupError("no counting trials in the current epoch")
         return datetime.fromisoformat(row[0])
 
-    def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime) -> bool:
+    def publish(self, store: EvidenceStore, key: PartitionKey, collected_from: datetime,
+                *, pending: str = "pessimistic") -> bool:
         """
         intent: Hand the controller the current counting evidence for one partition
         constraint: Replaces the partition's snapshot with the log-derived counts at the next
@@ -608,7 +620,8 @@ class ShadowEvidenceLog:
         """
         self.expire_unlabeled()
         current = store.get(key)
-        snapshot = self.snapshot(key, collected_from, current.version + 1 if current else 1)
+        snapshot = self.snapshot(key, collected_from, current.version + 1 if current else 1,
+                                 pending=pending)
         if snapshot is None:
             return False
         store.put(snapshot)

@@ -119,7 +119,7 @@ Unchanged until Step 09 reports. Candidate policy fields `pending_treatment ∈ 
 
 ## 11. Decisions
 
-O-1, O-2, O-5, O-6, O-7, O-9 are closed and written into the rules above (§2 rule 5, §5 RV-04, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 were closed on 2026-11-03 from the Step 09 measurements (`docs/v3/gates/step-09.md`, criterion 4). They are not yet in `src/`: each becomes a `Policy` field and therefore a policy-version change (issue #43).
+O-1, O-2, O-5, O-6, O-7, O-9 are closed and written into the rules above (§2 rule 5, §5 RV-04, §6 rule 3, §7 rules 10–12). O-3, O-4, O-8 were closed on 2026-11-03 from the Step 09 measurements (`docs/v3/gates/step-09.md`, criterion 4). Issue #43 adopts them as `Policy` fields and defaults (`pending`, `partition_alpha`, `epoch_alpha`). The v0.3.1 values remain selectable for comparison, and changing any of them is a policy-version change.
 
 | ID | Statement |
 |---|---|

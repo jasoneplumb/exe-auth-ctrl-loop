@@ -1,28 +1,27 @@
 {
-  "approved_refused_total": 1167,
+  "approved_refused_total": 1419,
   "assumptions_violated": [
     "A1",
     "A2"
   ],
-  "audit_executions_total": 16,
-  "audit_overhead_mean": 0.0371,
-  "autonomous_executions_total": 418,
-  "censored_fraction_mean": 0.0056,
+  "audit_executions_total": 11,
+  "audit_overhead_mean": 0.0347,
+  "autonomous_executions_total": 361,
+  "censored_fraction_mean": 0.0055,
   "comparator": "v2",
-  "failures_after_autonomy_total": 106,
-  "failures_human_missed_total": 43,
+  "failures_after_autonomy_total": 76,
+  "failures_human_missed_total": 0,
   "final_states": {
-    "QUALIFYING": 1,
-    "SUSPENDED": 9
+    "SUSPENDED": 10
   },
   "horizon": 400,
-  "human_approved_executions_total": 1091,
-  "human_reviews_total": 3566,
+  "human_approved_executions_total": 1052,
+  "human_reviews_total": 3628,
   "intervention_delay": {
     "censored_runs": 0,
-    "max": 45,
-    "mean": 20.2,
-    "median": 17.5,
+    "max": 59,
+    "mean": 14.5,
+    "median": 14.0,
     "min": 0
   },
   "issue_denials_total": 0,
@@ -34,17 +33,17 @@
   "requalifications_total": 0,
   "runs": 10,
   "scenario": "delayed_defection",
-  "severe_after_autonomy_total": 6,
+  "severe_after_autonomy_total": 10,
   "shadow_censored_total": 20,
-  "shadow_trials_total": 3566,
+  "shadow_trials_total": 3628,
   "stale_token_denials_total": 0,
-  "suspensions_total": 9,
+  "suspensions_total": 10,
   "time_to_authority": {
     "censored_runs": 0,
-    "max": 84,
-    "mean": 63.0,
-    "median": 54.0,
-    "min": 54
+    "max": 139,
+    "mean": 105.7,
+    "median": 94.0,
+    "min": 94
   },
   "turnovers_total": 0,
   "unauthorized_side_effects_total": 0

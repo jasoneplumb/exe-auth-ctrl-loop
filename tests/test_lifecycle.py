@@ -9,6 +9,7 @@ from _support import (
     AdapterHandlers,
     gateway_store,
     issue,
+    positives_to_qualify,
     principals_for,
     release,
     run,
@@ -63,6 +64,9 @@ class LifecycleTests(unittest.TestCase):
         )
         self.store = EvidenceStore(self.db)
         self.policy = Policy("pol1", {"low": .90}, 30, timedelta(days=30), 0.0)
+        # enough perfect trials for any partition (k <= 3) and epoch (e <= 2) these tests
+        # open, under the default online and lineage α spending (issue #43)
+        self.qualify = positives_to_qualify(self.policy, 3, 2)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock
         )
@@ -100,7 +104,7 @@ class LifecycleTests(unittest.TestCase):
         return self.manager.evaluate(self.proposal(key))
 
     def autonomous(self, key=None):
-        self.add(60, key=key)
+        self.add(self.qualify, key=key)
         decision = self.decide(key)
         self.assertEqual(decision.route, Route.AUTONOMOUS)
         return decision
@@ -125,7 +129,7 @@ class LifecycleTests(unittest.TestCase):
                          (S.QUALIFYING, Route.HUMAN_APPROVAL))
         self.assertIn("EVIDENCE_IMMATURE", thin.reason_codes)
 
-        self.add(31)
+        self.add(self.qualify - 29)
         decision = self.decide()
         self.assertEqual((self.manager.state(self.key), decision.route),
                          (S.AUTONOMOUS, Route.AUTONOMOUS))
@@ -188,7 +192,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertEqual(self.transitions()[-1][2], "EVIDENCE_EXPIRED")
 
     def test_republishing_does_not_freshen_old_evidence(self):
-        self.add(60)
+        self.add(self.qualify)
         self.clock.now = T0 + timedelta(days=31)
         self.assertNotEqual(self.decide().route, Route.AUTONOMOUS)
         self.assertEqual(self.store.get(self.key).collected_until, T0)
@@ -197,7 +201,7 @@ class LifecycleTests(unittest.TestCase):
         self.autonomous()
         self.manager.record_severe(self.key, Provenance.HUMAN_APPROVED, "wrong_recipient")
         self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
-        self.add(60)
+        self.add(self.qualify)
         decision = self.decide()
         self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
         self.assertEqual(decision.route, Route.HUMAN_APPROVAL)
@@ -213,7 +217,7 @@ class LifecycleTests(unittest.TestCase):
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "bad")
         self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
         self.assertTrue(self.store.get(self.key).suspended)
-        self.add(60)
+        self.add(self.qualify)
         self.assertEqual(self.decide().route, Route.HUMAN_APPROVAL)
 
     def test_full_suspension_to_requalification_cycle(self):
@@ -232,7 +236,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertIn("EVIDENCE_IMMATURE", decision.reason_codes)
         self.assertEqual(self.store.get(self.key).n, 0)
         self.assertFalse(self.store.get(self.key).suspended)
-        self.add(60)
+        self.add(self.qualify)
         self.assertEqual(self.decide().route, Route.AUTONOMOUS)
         self.assertEqual(
             [t[:3] for t in self.transitions()][-3:],
@@ -257,7 +261,7 @@ class LifecycleTests(unittest.TestCase):
         self.assertNotEqual(decision.route, Route.AUTONOMOUS)
 
     def test_sufficient_evidence_at_first_proposal_reaches_autonomous_immediately(self):
-        self.add(60)  # labels accrue before the controller ever sees this partition
+        self.add(self.qualify)  # labels accrue before the controller ever sees this partition
         decision = self.decide()
         self.assertEqual(decision.route, Route.AUTONOMOUS)
         self.assertEqual(
@@ -337,7 +341,7 @@ class LifecycleTests(unittest.TestCase):
         self.autonomous()
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "bad")
         for _ in range(3):
-            self.add(60)
+            self.add(self.qualify)
             self.assertEqual(self.decide().route, Route.HUMAN_APPROVAL)
         self.assertEqual(self.manager.state(self.key), S.SUSPENDED)
 
@@ -372,14 +376,14 @@ class LifecycleTests(unittest.TestCase):
         self.manager.record_severe(self.key, Provenance.AUTONOMOUS, "bad")
         new = self.make_key(tool="refund-api-v3")
         self.manager.on_churn(self.key, new)
-        self.add(60, key=new)
+        self.add(self.qualify, key=new)
         decision = self.decide(new)
         self.assertEqual(self.manager.state(new), S.QUALIFYING)
         self.assertNotEqual(decision.route, Route.AUTONOMOUS)
         self.assertIn("LINEAGE_SUSPENDED", decision.reason_codes)
         release(self.manager, new, "alice", "lineage reviewed")
         self.assertNotEqual(self.decide(new).route, Route.AUTONOMOUS)  # pre-release trials excluded
-        self.add(60, key=new)
+        self.add(self.qualify, key=new)
         self.assertEqual(self.decide(new).route, Route.AUTONOMOUS)
 
     def test_hand_seeded_snapshot_cannot_bypass_the_lifecycle(self):

@@ -266,6 +266,23 @@ def release(manager, key, actor: str, reason: str, oracle: Oracle = TEST_ORACLE)
     manager.release(key, actor, reason, mac, oracle=oracle)
 
 
+def positives_to_qualify(policy, partition_index: int = 1, epoch: int = 1,
+                         required: float = 0.90) -> int:
+    """
+    The fewest all-positive trials (at least n_min) whose bound reaches `required` under the
+    α the policy allocates to the given partition and epoch (issue #43). Tests that need "a
+    record that qualifies" use this instead of a fixed count, so they hold under online and
+    lineage α spending.
+    """
+    from exe_auth_ctrl_loop.sequential import beta_mixture_lower_bound
+
+    alpha = policy.allocated_alpha(partition_index, epoch)
+    n = policy.n_min
+    while beta_mixture_lower_bound(n, 0, alpha) < required:
+        n += 1
+    return n
+
+
 def bind(log, key, oracle: Oracle = TEST_ORACLE) -> None:
     """
     Bind the partition's current epoch, as the host does when it opens one (#41). An epoch

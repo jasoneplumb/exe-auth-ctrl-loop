@@ -190,30 +190,33 @@ class AgreementTests(unittest.TestCase):
                 sim = Simulation(cfg, seed)
                 cls.runs.append((cfg, sim, sim.run().time_to_authority))
 
-    def cell(self, cfg):
-        return Cell("agreement", "agreement/test", p=cfg.p_good, r=cfg.required_low,
-                    alpha=cfg.alpha, n_min=cfg.n_min, horizon=cfg.horizon,
-                    deadline=cfg.label_deadline)
+    @staticmethod
+    def crossing(sim, trials):
+        """The driver's step for these trials, under the harness policy's rules (#43)."""
+        from experiments.statistics import agreement_cell, first_crossing
+
+        return first_crossing(agreement_cell(sim.cfg, sim.policy),
+                              sim.policy.allocated_alpha(1, 1), trials)
 
     def test_the_driver_reproduces_the_shipped_loops_qualification_step(self):
-        from experiments.statistics import first_crossing, shipped_trials
+        from experiments.statistics import shipped_trials
 
         qualified = 0
         for cfg, sim, shipped in self.runs:
             with self.subTest(config=cfg.name, seed=sim.seed):
-                cell = self.cell(cfg)
-                self.assertEqual(first_crossing(cell, cell.alpha, shipped_trials(sim, sim.key)),
-                                 shipped)
+                self.assertEqual(self.crossing(sim, shipped_trials(sim, sim.key)), shipped)
                 qualified += shipped is not None
         self.assertGreaterEqual(qualified, 5)  # agreement on "never" alone would be weak
+        # both pending rules are covered (issue #43 defaults and v0.3.1)
+        self.assertEqual({sim.policy.pending for _, sim, _ in self.runs},
+                         {"pessimistic", "deadline"})
 
     def test_the_check_detects_a_one_step_timing_error(self):
         # if the driver saw each label one step late, the check must notice
-        from experiments.statistics import first_crossing, shipped_trials
+        from experiments.statistics import shipped_trials
 
         late = [
-            first_crossing(self.cell(cfg), cfg.alpha,
-                           [(f, v + 1, x) for f, v, x in shipped_trials(sim, sim.key)])
+            self.crossing(sim, [(f, v + 1, x) for f, v, x in shipped_trials(sim, sim.key)])
             != shipped
             for cfg, sim, shipped in self.runs if shipped is not None
         ]

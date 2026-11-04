@@ -24,6 +24,7 @@ from _support import (
     approve,
     commit,
     issue,
+    positives_to_qualify,
     principals_for,
     run,
     scratch_store,
@@ -99,6 +100,9 @@ class World(unittest.TestCase):
         # redemption before expiry would refuse the token anyway
         self.policy = Policy("pol1", {"low": .50}, 10, timedelta(days=30), 0.0,
                              token_ttl=timedelta(days=60))
+        # enough positives for any partition (k <= 3) these tests register, under the
+        # default online α spending (issue #43)
+        self.qualify = positives_to_qualify(self.policy, 3, 1, required=.50)
         self.risk = RiskPolicy("risk-v1", (envelope(),), (budget(),), store=self.db)
         self.controller = AuthorityController(
             self.store, self.policy, random.Random(1), self.clock, guards=(self.risk,)
@@ -135,7 +139,7 @@ class World(unittest.TestCase):
         self.assertTrue(result.accepted, result.reason)
 
     def earn(self, k: PartitionKey) -> None:
-        for _ in range(10):
+        for _ in range(self.qualify):
             self.label(k, TrialLabel.POSITIVE)
         self.assertEqual(self.manager.refresh(k), LifecycleState.AUTONOMOUS)
 

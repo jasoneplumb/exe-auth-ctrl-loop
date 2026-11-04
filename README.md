@@ -235,15 +235,20 @@ validity), and reference vectors. Two of those assumptions are easy to break in
 use: latency that depends on the label (failures counted later than successes)
 voids the guarantee, and a label still pending before its deadline is outside the
 count, so withholding negative labels raises the bound until the deadline passes.
-The error budget `alpha` restarts with every release and every successor
+In v0.3.1 the error budget `alpha` restarts with every release and every successor
 partition. On `mainline` (v3 Step 09, unreleased) these are measured at 1000
 sequences per cell in `results-v3/statistics/` (`experiments/statistics.py`):
 at $p = r = 0.90$, negatives labelled 50 trials late give a false-authorization
 rate of 0.39 and withheld negatives 1.0, against at most 0.012 when pending trials
 count as failures (proved valid in `statistical-method.md` §11, and costly when
 positive labels are late too); 100 partitions at per-partition α give 0.26
-family-wise. Which rules to adopt (`spec.md` O-3, O-4, O-8) is the owner's
-decision, from the table in `docs/v3/gates/step-09.md`. The v0.2.0 one-sided Wilson bound is retained as
+family-wise. From that table the owner chose (`spec.md` O-3, O-4, O-8), and since issue
+#43 the default `Policy` applies them:
+- **Pending trials** count as failures until labelled (`pending = "pessimistic"`).
+- **Partitions** spend α by registration order (`partition_alpha = "online"`).
+- **Epochs** spend their partition's α across releases (`epoch_alpha = "lineage"`).
+
+So one α covers every partition and epoch, and delayed or withheld labels cannot open the gate. The cost: qualification is slower when labels are slow, and slower for later partitions and epochs. The v0.2.0 one-sided Wilson bound is retained as
 `estimator = "wilson_legacy"` for comparison only; it is a fixed-sample interval
 and exceeds its nominal error rate when read repeatedly. Neither bound protects
 against an agent that behaves until it qualifies and then defects; that is the
@@ -356,9 +361,15 @@ gateway. The speed at which the gate withdraws autonomy under defection and
 shift, and the finding that audit rate changes nothing that executes, depend on
 the first of these. On `mainline` (v3 Step 09, unreleased) the harness drives
 the shipped `CrossModelAuthorityLoop` with fake model clients and none of these
-differences remain; its outputs are in `results-v3/scenarios/`, where
-`delayed_defection` has 106 failures after autonomy against 20, because under
-autonomy only audits are labelled. `results/` is regenerated at Step 10.
+differences remain. Its outputs, under the default policy (pessimistic pending
+and online and lineage α spending, issue #43), are in `results-v3/scenarios/`:
+- **Defection:** `delayed_defection` has 76 failures after autonomy, against 20 in
+  `results/`, because under autonomy only audits are labelled.
+- **Cold start:** it takes a median of 139 steps, against 84.
+- **Fast churn:** with configuration changing every 60 steps, no seed qualifies,
+  which is the cost of a family-wise α.
+
+`results/` is regenerated at Step 10.
 
 ```sh
 python -m experiments.run --all --output results

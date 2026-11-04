@@ -1,28 +1,28 @@
 {
-  "approved_refused_total": 661,
+  "approved_refused_total": 918,
   "assumptions_violated": [
     "A2"
   ],
-  "audit_executions_total": 81,
-  "audit_overhead_mean": 0.052,
-  "autonomous_executions_total": 1524,
-  "censored_fraction_mean": 0.0088,
+  "audit_executions_total": 47,
+  "audit_overhead_mean": 0.0484,
+  "autonomous_executions_total": 912,
+  "censored_fraction_mean": 0.0067,
   "comparator": "v2",
-  "failures_after_autonomy_total": 70,
-  "failures_human_missed_total": 18,
+  "failures_after_autonomy_total": 52,
+  "failures_human_missed_total": 17,
   "final_states": {
-    "QUALIFYING": 4,
-    "SUSPENDED": 6
+    "QUALIFYING": 3,
+    "SUSPENDED": 7
   },
   "horizon": 400,
-  "human_approved_executions_total": 1369,
-  "human_reviews_total": 2395,
+  "human_approved_executions_total": 1737,
+  "human_reviews_total": 3036,
   "intervention_delay": {
-    "censored_runs": 1,
-    "max": 36,
-    "mean": 19.625,
-    "median": 19.5,
-    "min": 0
+    "censored_runs": 4,
+    "max": 24,
+    "mean": 16.4,
+    "median": 16,
+    "min": 8
   },
   "issue_denials_total": 0,
   "policy_denials_total": 0,
@@ -35,15 +35,15 @@
   "scenario": "distribution_shift",
   "severe_after_autonomy_total": 6,
   "shadow_censored_total": 20,
-  "shadow_trials_total": 2395,
-  "stale_token_denials_total": 0,
-  "suspensions_total": 6,
+  "shadow_trials_total": 3036,
+  "stale_token_denials_total": 5,
+  "suspensions_total": 7,
   "time_to_authority": {
     "censored_runs": 1,
-    "max": 127,
-    "mean": 74.6667,
-    "median": 54,
-    "min": 54
+    "max": 158,
+    "mean": 120.8889,
+    "median": 118,
+    "min": 94
   },
   "turnovers_total": 0,
   "unauthorized_side_effects_total": 0
