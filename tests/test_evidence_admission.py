@@ -358,7 +358,7 @@ class SignedLabelTests(AdmissionCase):
         old = self.frozen(1)
         self.assertTrue(self.label(1, old).accepted)
         manager.change_oracle(KEY, OTHER_ORACLE, by="alice")
-        new = self.frozen(2)
+        new = self.frozen(2, oracle=OTHER_ORACLE)  # asserts the change bound it
         self.assert_refused(2, new, sign_label("t-2", KEY, new.proposal_digest,
                                                TrialLabel.POSITIVE, ORACLE),
                             Reason.WRONG_ORACLE)
@@ -558,9 +558,9 @@ class ReplayTests(AdmissionCase):
         # a second epoch with another oracle; its first label binds nothing new
         self.log.open_epoch(KEY)
         self.log.bind_oracle(KEY, OTHER_ORACLE)
-        later = self.frozen(10)
+        later = self.frozen(10, oracle=OTHER_ORACLE)
         self.label(10, later, oracle=OTHER_ORACLE, at=T0 + timedelta(hours=2))
-        self.frozen(11)
+        self.frozen(11, oracle=OTHER_ORACLE)
         self.clock.now = T0 + timedelta(hours=4)
         self.log.expire_unlabeled()                                           # t-6, t-11
 

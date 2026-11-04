@@ -597,12 +597,12 @@ class Simulation:
             self.t += 1
             return
         proposal = bundle.proposals[0]
+        if proposal.partition != make_key(self.prompt_version, proposal.partition.risk_class):
+            raise RuntimeError("the proposer's partition key drifted from make_key")
         if self.cfg.comparator == "v2":
             # the host binds a partition's first epoch to its oracle when it first sees it
             # (issue #41: no label binds an epoch); idempotent once bound
             self.shadow.bind_oracle(proposal.partition, ORACLE)
-        if proposal.partition != make_key(self.prompt_version, proposal.partition.risk_class):
-            raise RuntimeError("the proposer's partition key drifted from make_key")
         step = self.execute(bundle)
         decision = step.decision
         if step.executed:

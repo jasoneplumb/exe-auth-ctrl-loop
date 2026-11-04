@@ -267,9 +267,17 @@ def release(manager, key, actor: str, reason: str, oracle: Oracle = TEST_ORACLE)
 
 
 def bind(log, key, oracle: Oracle = TEST_ORACLE) -> None:
-    """Bind the partition's current epoch, as the host does when it opens one (#41)."""
-    if log.bound_oracle(key) is None:
+    """
+    Bind the partition's current epoch, as the host does when it opens one (#41). An epoch
+    already bound to `oracle` is left as is; one bound to another oracle raises, so a test
+    cannot silently run against an oracle it did not name (PR #44 review).
+    """
+    current = log.bound_oracle(key)
+    if current is None:
         log.bind_oracle(key, oracle)
+    elif current != (oracle.oracle_id, oracle.oracle_version):
+        raise ValueError(f"epoch already bound to {current}, not {oracle.oracle_id}"
+                         f"@{oracle.oracle_version}; pass oracle=None or the bound oracle")
 
 
 

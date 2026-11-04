@@ -310,7 +310,10 @@ class LifecycleManager:
             ))
         else:
             self._save(key, record)
-            self._log(key, record, record.state, None, ("LINEAGE_RELEASED", actor, reason))
+            self._log(key, record, record.state, None, (
+                "LINEAGE_RELEASED", actor, reason,
+                f"ORACLE:{oracle.oracle_id}@{oracle.oracle_version}",
+            ))
         self._sync_store(key, record)
 
     def on_churn(self, old: PartitionKey, new: PartitionKey) -> None:
