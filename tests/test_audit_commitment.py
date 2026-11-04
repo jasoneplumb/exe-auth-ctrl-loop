@@ -298,6 +298,7 @@ class AuditDrawTests(unittest.TestCase):
         ))
         # the label lands on the frozen form, under the decision id, as AUDIT provenance
         oracle = Oracle("reviewer", "1", OracleKind.INDEPENDENT_REVIEW, "post-hoc")
+        shadow.bind_oracle(h.key, oracle)  # the host binds the epoch explicitly (#41)
         result = support_label(shadow, decision.decision_id, h.key, h.proposal.proposal_digest,
                                TrialLabel.POSITIVE, oracle, NOW + timedelta(minutes=5))
         self.assertTrue(result.accepted)

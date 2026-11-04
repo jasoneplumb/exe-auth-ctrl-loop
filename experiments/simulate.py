@@ -599,6 +599,10 @@ class Simulation:
         proposal = bundle.proposals[0]
         if proposal.partition != make_key(self.prompt_version, proposal.partition.risk_class):
             raise RuntimeError("the proposer's partition key drifted from make_key")
+        if self.cfg.comparator == "v2":
+            # the host binds a partition's first epoch to its oracle when it first sees it
+            # (issue #41: no label binds an epoch); idempotent once bound
+            self.shadow.bind_oracle(proposal.partition, ORACLE)
         step = self.execute(bundle)
         decision = step.decision
         if step.executed:
@@ -648,9 +652,11 @@ class Simulation:
             reason = "simulated post-incident review"
             record = self.manager.record(self.key)
             epoch = record.epoch if record is not None else 0
-            self.manager.release(self.key, "operator", reason, self.keyring.sign(
-                SIM_KEYS["operator"], release_payload(self.key, epoch, reason)
-            ))
+            # the operator signs the release and the oracle the new epoch is bound to (#41)
+            payload = release_payload(self.key, epoch, reason, ORACLE.oracle_id,
+                                      ORACLE.oracle_version)
+            self.manager.release(self.key, "operator", reason,
+                                 self.keyring.sign(SIM_KEYS["operator"], payload), oracle=ORACLE)
             self.metrics.releases += 1
             self.suspended_at = None
 

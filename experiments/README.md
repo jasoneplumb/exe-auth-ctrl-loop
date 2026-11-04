@@ -20,7 +20,7 @@ The full scenario run takes about ten minutes through the shipped loop (four wit
 
 One proposal for the current partition, through the shipped loop. In order:
 
-1. Due oracle labels are delivered to the shadow log, signed by the registered oracle principal `sim-oracle`.
+1. Due oracle labels are delivered to the shadow log, signed by the registered oracle principal `sim-oracle`. The host binds each partition's first epoch to `sim-oracle` when it first sees the partition, and each release binds the oracle the operator signs, so no label binds an epoch (issue #41).
 2. If a suspension is `release_after` steps old, a simulated operator releases it with a signed release (new epoch).
 3. Every `churn_every` steps the proposer's prompt version changes: the old partition is retired and the new one starts at `n = 0`.
 4. The simulated OpenAI client returns a draft (amount, payee); the shipped proposer turns it into a bundle and derives the partition, including the risk class, from the host's envelopes. A draft no envelope admits is refused here (`PROPOSER: ...` in `denial_reasons`). The bundle is ledgered by `loop.propose`.

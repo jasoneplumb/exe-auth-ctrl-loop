@@ -28,7 +28,7 @@ Changes to `docs/v2/threat-model.md` that v3 targets. Rows not listed are unchan
 | ID | Threat | v3 containment (step) | Residual |
 |---|---|---|---|
 | TM-13 | Replay of a valid MCP block, to the same or another server | Audience in the MAC; server-side redemption or insert-once nonce (Step 07) | A server holding the shared secret can mint blocks; per-server keys are a production requirement |
-| TM-14 | Oracle impersonation, backdated labels, reviewer acting as oracle | Oracle principals and signed labels; `received_at` governs the deadline; `REVIEWER_IS_ORACLE` quarantine (Step 08) | Collusion between distinct principals |
+| TM-14 | Oracle impersonation, backdated labels, reviewer acting as oracle, an oracle capturing an epoch by labelling first | Oracle principals and signed labels; `received_at` governs the deadline; `REVIEWER_IS_ORACLE` quarantine (Step 08). Every epoch is bound explicitly at its opening: the host binds epoch 0, a release binds the oracle the releasing human signed, and an unbound epoch admits no label (`ORACLE_NOT_BOUND`, issue #41) | Collusion between distinct principals; a host that binds the wrong oracle |
 | TM-15 | Delegation escalation: a delegate grants itself or a child more than it holds | Attenuation-only grants checked at creation; grant chain on every token; revocation cascades (Steps 05, 06) | None within the trust boundary |
 | TM-16 | Agent invokes a handler directly | Handlers only in the gateway's table; tool chosen from the token (Step 04) | Interpreter reflection in the same process (spec §4.3); closed only by process separation |
 | TM-17 | Unrecorded permission change | Every permission change is one of six ledger event types; no API path without one (Step 05) | Direct database writes by the host |

@@ -258,7 +258,9 @@ class LifecycleManager:
         self._move(key, record, E.SEVERE_FAILURE, reasons)
         self._sync_store(key, record)
 
-    def release(self, key: PartitionKey, actor: str, reason: str, mac: str) -> None:
+    def release(
+        self, key: PartitionKey, actor: str, reason: str, mac: str, *, oracle: Oracle,
+    ) -> None:
         """
         intent: The documented restoration step: a verified human, a stated reason, a new
                 epoch
@@ -266,16 +268,22 @@ class LifecycleManager:
                 from zero, so requalification needs fresh admissible trials.
         constraint: Also the only way to clear lineage_suspended on a successor partition.
         constraint: `actor` must be an active HUMAN principal and `mac` that human's
-                    signature over principals.release_payload(key, epoch, reason) for the
-                    partition's current epoch, so a signed release cannot be replayed at a
-                    later suspension (spec §8; closes L9's "any non-empty actor name").
+                    signature over principals.release_payload(key, epoch, reason,
+                    oracle_id, oracle_version) for the partition's current epoch, so a
+                    signed release cannot be replayed at a later suspension (spec §8; closes
+                    L9's "any non-empty actor name").
+        effect: The new epoch is bound to `oracle` in the same transaction (spec §7 rule 11,
+                issue #41): the human who releases chooses who labels next, and no label
+                can bind the epoch by arriving first.
         """
         if not actor or not reason:
             raise ValueError("release requires a named actor and a reason")
         with self.db.transaction():
-            self._release(key, actor, reason, mac)
+            self._release(key, actor, reason, mac, oracle)
 
-    def _release(self, key: PartitionKey, actor: str, reason: str, mac: str) -> None:
+    def _release(
+        self, key: PartitionKey, actor: str, reason: str, mac: str, oracle: Oracle,
+    ) -> None:
         record = self._load(key)
         if record is None or (
             record.state != LifecycleState.SUSPENDED and not record.lineage_suspended
@@ -284,19 +292,28 @@ class LifecycleManager:
         if record.retired:
             raise ValueError("retired partition cannot be released")
         if self.principals is None or not self.principals.verify_human(
-            actor, release_payload(key, record.epoch, reason), mac
+            actor,
+            release_payload(key, record.epoch, reason, oracle.oracle_id, oracle.oracle_version),
+            mac,
         ):
             raise PermissionError("release needs a valid signature from an active human")
         floor = self.shadow.open_epoch(key)
+        self.shadow.bind_oracle(key, oracle)
         record.epoch += 1
         self._record_alpha(key, record, floor, "HUMAN_RELEASE")
         record.lineage_suspended = False
         if record.state == LifecycleState.SUSPENDED:
             record.suspension_reason = None
-            self._move(key, record, E.HUMAN_RELEASE, (f"RELEASED_BY:{actor}", reason))
+            self._move(key, record, E.HUMAN_RELEASE, (
+                f"RELEASED_BY:{actor}", reason,
+                f"ORACLE:{oracle.oracle_id}@{oracle.oracle_version}",
+            ))
         else:
             self._save(key, record)
-            self._log(key, record, record.state, None, ("LINEAGE_RELEASED", actor, reason))
+            self._log(key, record, record.state, None, (
+                "LINEAGE_RELEASED", actor, reason,
+                f"ORACLE:{oracle.oracle_id}@{oracle.oracle_version}",
+            ))
         self._sync_store(key, record)
 
     def on_churn(self, old: PartitionKey, new: PartitionKey) -> None:

@@ -12,6 +12,7 @@ from _support import (
     HUMANS,
     ROOT_GRANT,
     TEST_KEYRING,
+    TEST_ORACLE,
     AdapterHandlers,
     approve,
     commit,
@@ -193,16 +194,18 @@ class ReleaseTests(Fixture):
         for actor, mac in (("alice", ""), ("alice", "f" * 64), ("agent", ""),
                            ("constraint-v1", ""), ("nobody", "")):
             with self.subTest(actor=actor), self.assertRaises(PermissionError):
-                self.manager.release(KEY, actor, "because", mac)
+                self.manager.release(KEY, actor, "because", mac, oracle=TEST_ORACLE)
         self.assertEqual(self.manager.state(KEY), LifecycleState.SUSPENDED)
 
     def test_a_signed_release_cannot_be_replayed_at_a_later_epoch(self):
         from exe_auth_ctrl_loop.principals import release_payload
-        mac = TEST_KEYRING.sign(HUMANS["alice"], release_payload(KEY, 0, "fixed"))
-        self.manager.release(KEY, "alice", "fixed", mac)
+        payload = release_payload(KEY, 0, "fixed", TEST_ORACLE.oracle_id,
+                                  TEST_ORACLE.oracle_version)
+        mac = TEST_KEYRING.sign(HUMANS["alice"], payload)
+        self.manager.release(KEY, "alice", "fixed", mac, oracle=TEST_ORACLE)
         self.manager.record_severe(KEY, Provenance.SHADOW, "SEVERE_AGAIN")
         with self.assertRaises(PermissionError):
-            self.manager.release(KEY, "alice", "fixed", mac)
+            self.manager.release(KEY, "alice", "fixed", mac, oracle=TEST_ORACLE)
 
     def test_a_manager_without_principals_cannot_release(self):
         bare = LifecycleManager(self.shadow, self.store, POLICY, self.controller, lambda: NOW)

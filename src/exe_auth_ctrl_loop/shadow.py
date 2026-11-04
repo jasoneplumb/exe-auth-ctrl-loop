@@ -82,6 +82,8 @@ class Reason(str, Enum):
     BAD_SIGNATURE = "BAD_SIGNATURE"
     WRONG_ORACLE = "WRONG_ORACLE"
     REVIEWER_IS_ORACLE = "REVIEWER_IS_ORACLE"
+    # issue #41: the epoch has no bound oracle yet, so no label can be admitted to it
+    ORACLE_NOT_BOUND = "ORACLE_NOT_BOUND"
 
 
 class ReviewAction(str, Enum):
@@ -305,9 +307,11 @@ class ShadowEvidenceLog:
     def bind_oracle(self, key: PartitionKey, oracle: Oracle) -> None:
         """
         intent: Bind the partition's current epoch to one oracle (spec §7 rule 11, O-2)
-        constraint: An epoch is bound once. A different oracle needs a new epoch
-                    (LifecycleManager.change_oracle); the first admitted label binds an
-                    unbound epoch to its own oracle.
+        constraint: An epoch is bound once, and only explicitly (issue #41): the host binds
+                    a partition's first epoch here, LifecycleManager.release binds the epoch
+                    it opens to the oracle the releasing human signed, and change_oracle
+                    binds the epoch it opens. A label never binds an epoch; one arriving
+                    before the binding is quarantined ORACLE_NOT_BOUND.
         """
         with self.store.transaction():
             floor = self._floor(key)
@@ -324,9 +328,11 @@ class ShadowEvidenceLog:
         method: In order: the trial exists and the label names its partition and frozen
                 digest; the labeller is an active ORACLE principal and the MAC verifies
                 under its key; the trial is still pending; the labeller did not review this
-                trial; the oracle is the one bound to the trial's epoch (the first admitted
-                label binds an unbound one); the label arrived (host clock) inside the
-                deadline. Any failure is quarantined and ledgered (spec §7 rules 8, 9).
+                trial; the trial's epoch is bound (ORACLE_NOT_BOUND otherwise) and to this
+                oracle (WRONG_ORACLE otherwise); the label arrived (host clock) inside the
+                deadline. Any failure is quarantined and ledgered (spec §7 rules 8, 9, 11).
+                A quarantined label leaves the trial pending, so the bound oracle's label can
+                still land before the deadline.
         effect: A late label also censors the trial, so a favourable label cannot be held
                 back until it is convenient. The labeller's claimed_at is recorded and never
                 used: a backdated claim cannot make a late label admissible.
@@ -358,15 +364,15 @@ class ShadowEvidenceLog:
                 return self._quarantine(trial_id, Reason.REVIEWER_IS_ORACLE)
             floor = self._trial_floor(trial)
             bound = self._bound_oracle(trial.partition, floor)
-            if bound is not None and bound != (oracle.oracle_id, oracle.oracle_version):
+            if bound is None:
+                return self._quarantine(trial_id, Reason.ORACLE_NOT_BOUND)
+            if bound != (oracle.oracle_id, oracle.oracle_version):
                 return self._quarantine(trial_id, Reason.WRONG_ORACLE)
             if received < trial.frozen_at:
                 return self._quarantine(trial_id, Reason.LABEL_BEFORE_FREEZE)
             if received > trial.frozen_at + self.label_deadline:
                 self._censor(trial_id, Reason.LATE_LABEL)
                 return self._quarantine(trial_id, Reason.LATE_LABEL)
-            if bound is None:
-                self._bind(trial.partition, floor, oracle)
             self.ledger.append(
                 "shadow.labeled",
                 trial_id,
@@ -400,6 +406,10 @@ class ShadowEvidenceLog:
             (partition_text(trial.partition), trial.frozen_sequence),
         ).fetchone()
         return -1 if row[0] is None else int(row[0])
+
+    def bound_oracle(self, key: PartitionKey) -> tuple[str, str] | None:
+        """The (oracle_id, oracle_version) the partition's current epoch is bound to, if any."""
+        return self._bound_oracle(key, self._floor(key))
 
     def _bound_oracle(self, key: PartitionKey, floor: int) -> tuple[str, str] | None:
         row = self.store.connection().execute(
