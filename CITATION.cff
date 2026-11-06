@@ -27,6 +27,9 @@ identifiers:
     value: 10.5281/zenodo.23705921
     description: "Software archive, v0.3.1 (Zenodo)"
   - type: doi
+    value: 10.5281/zenodo.23965556
+    description: "Software archive, v0.4.0 (Zenodo)"
+  - type: doi
     value: 10.5281/zenodo.21894658
     description: "Timestamped design disclosure (Zenodo)"
   - type: url
